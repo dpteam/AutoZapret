@@ -430,6 +430,31 @@
         <div class="row">
           <div>
             <div class="row-label">Движок zapret</div>
+            <div class="row-hint" id="upd-engine-state">проверка не выполнялась</div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn" id="btn-upd-engine-check">Проверить</button>
+            <button class="btn primary" id="btn-upd-engine-install" style="display:none">Обновить</button>
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Приложение</div>
+            <div class="row-hint" id="upd-app-state">проверка не выполнялась</div>
+          </div>
+          <button class="btn" id="btn-upd-app-check">Проверить</button>
+        </div>
+
+        <div id="upd-progress" class="row-hint" style="margin-top:10px;display:none"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Автоматически</div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Движок</div>
             <div class="row-hint">winws и драйвер</div>
           </div>
           <div class="switch" id="set-update-engine"></div>

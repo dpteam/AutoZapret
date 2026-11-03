@@ -57,7 +57,6 @@ jobs:
             if (Test-Path selftest.txt) { Get-Content selftest.txt -Encoding UTF8 | Write-Host }
             if ($p.ExitCode -ne 0) { throw "selftest failed" }
           } finally { Pop-Location }
-
       # portable-архив: exe + dll + ассеты + ЛИЦЕНЗИИ (обязательно, см. ROADMAP §3)
       - name: Assemble portable package
         shell: pwsh

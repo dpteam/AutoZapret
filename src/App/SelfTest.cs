@@ -24,12 +24,16 @@ namespace AutoZapret.App
     {
         private static readonly StringBuilder Report = new StringBuilder();
         private static int _failures;
+        private static int _skipped;
+        private static bool _requireEngine;
 
-        public static int Run()
+        public static int Run(bool requireEngine = false)
         {
             Log.Info("APP", "selftest старт");
             Report.Length = 0;
             _failures = 0;
+            _skipped = 0;
+            _requireEngine = requireEngine;
 
             string settingsPath = Paths.SettingsFile;
             string settingsBackup = AtomicFile.ReadAllTextOrNull(settingsPath);
@@ -83,6 +87,9 @@ namespace AutoZapret.App
 
                 Section("прокси: крипто");
                 TestProxyCrypto();
+
+                Section("обновления");
+                TestUpdates();
             }
             catch (Exception ex)
             {
@@ -95,9 +102,13 @@ namespace AutoZapret.App
             }
 
             Report.AppendLine();
-            Report.AppendLine(_failures == 0
-                ? "RESULT: ok"
-                : "RESULT: " + _failures.ToString(CultureInfo.InvariantCulture) + " failed");
+            string verdict = _failures == 0
+                ? (_skipped > 0
+                    ? "RESULT: ok (" + _skipped.ToString(CultureInfo.InvariantCulture) + " skipped)"
+                    : "RESULT: ok")
+                : "RESULT: " + _failures.ToString(CultureInfo.InvariantCulture) + " failed" +
+                  (_skipped > 0 ? ", " + _skipped.ToString(CultureInfo.InvariantCulture) + " skipped" : "");
+            Report.AppendLine(verdict);
 
             string outPath = Path.Combine(Paths.BaseDir, "selftest.txt");
             try { File.WriteAllText(outPath, Report.ToString(), new UTF8Encoding(false)); }
@@ -328,10 +339,19 @@ namespace AutoZapret.App
         private static void TestEngine()
         {
             AutoZapret.Zapret.EngineLocator engine = new AutoZapret.Zapret.EngineLocator();
-            Check("движок установлен", engine.Ready, engine.Problem ?? engine.StatusLine());
 
-            if (!engine.Ready) return;
+            if (!engine.Ready)
+            {
+                // Движок не скачан — это нормальное состояние чистого клона
+                // (engine/ в .gitignore). Не провал, а пропуск.
+                if (_requireEngine)
+                    Check("движок установлен (обязательно)", false, engine.Problem);
+                else
+                    Skip("движок установлен", engine.Problem + " (запустите tools\\fetch-engine.ps1)");
+                return;
+            }
 
+            Check("движок установлен", true, engine.StatusLine());
             Check("winws.exe найден", engine.WinwsPath != null, engine.WinwsPath ?? "null");
             Check("версия прочитана", !string.IsNullOrEmpty(engine.Version), engine.Version);
             Check("WinDivert64.sys на месте",
@@ -354,7 +374,7 @@ namespace AutoZapret.App
             AutoZapret.Zapret.EngineLocator engine = new AutoZapret.Zapret.EngineLocator();
             if (!engine.Ready)
             {
-                Check("парсер стратегий", false, "движок не установлен — нечего разбирать");
+                Skip("парсер стратегий", "движок не установлен — разбирать нечего");
                 return;
             }
 
@@ -365,7 +385,7 @@ namespace AutoZapret.App
 
             if (!System.IO.Directory.Exists(batDir))
             {
-                Check("каталог .bat найден", false, batDir);
+                Skip("каталог .bat найден", batDir + " — пропускаю разбор");
                 return;
             }
 
@@ -557,11 +577,19 @@ namespace AutoZapret.App
             AutoZapret.Payloads.PayloadLibrary library = new AutoZapret.Payloads.PayloadLibrary();
             int total = library.Scan();
 
+            if (total == 0)
+            {
+                // Фейки лежат в engine\bin, а его на чистом клоне нет.
+                if (_requireEngine)
+                    Check("фейки найдены (обязательно)", false, "0 файлов");
+                else
+                    Skip("фейки найдены", "engine не установлен");
+                return;
+            }
+
             Check("фейки найдены", total > 0, total + " файлов");
             Check("все фейки валидны", library.ValidCount == total,
                 library.ValidCount + "/" + total);
-
-            if (total == 0) return;
 
             int tls = library.ByKind(AutoZapret.Payloads.PayloadKind.TlsClientHello).Count;
             int quic = library.ByKind(AutoZapret.Payloads.PayloadKind.QuicInitial).Count;
@@ -780,6 +808,44 @@ namespace AutoZapret.App
             return true;
         }
 
+        private static void TestUpdates()
+        {
+            // Сравнение версий — самое важное: «1.10.4 > 1.9» должно быть верно,
+            // а не «строка длиннее = новее».
+            Check("1.10.4 > 1.9",
+                AutoZapret.Update.UpdateCheck.CompareVersions("1.10.4", "1.9") > 0,
+                "1.10.4 vs 1.9");
+            Check("1.10.4 == 1.10.4",
+                AutoZapret.Update.UpdateCheck.CompareVersions("1.10.4", "1.10.4") == 0, "равны");
+            Check("1.9 < 1.10",
+                AutoZapret.Update.UpdateCheck.CompareVersions("1.9", "1.10") < 0, "1.9 vs 1.10");
+            Check("2.0 > 1.99.99",
+                AutoZapret.Update.UpdateCheck.CompareVersions("2.0", "1.99.99") > 0, "2.0 vs 1.99.99");
+            Check("v-префикс игнорируется",
+                AutoZapret.Update.UpdateCheck.CompareVersions("v1.2.3", "1.2.3") == 0, "v1.2.3");
+            Check("пре-релиз не новее релиза",
+                AutoZapret.Update.UpdateCheck.CompareVersions("1.2.3-beta", "1.2.3") == 0, "beta");
+            Check("пустая версия", AutoZapret.Update.UpdateCheck.CompareVersions("", "1.0") < 0, "пустая");
+
+            // HasUpdate
+            AutoZapret.Update.UpdateCheck check = new AutoZapret.Update.UpdateCheck
+            {
+                CurrentVersion = "1.9",
+                LatestVersion = "1.10.4"
+            };
+            Check("есть обновление", check.HasUpdate, "1.9 -> 1.10.4");
+
+            check.CurrentVersion = "1.10.4";
+            Check("нет обновления", !check.HasUpdate, "равные версии");
+
+            // движок должен определять свою версию
+            AutoZapret.Zapret.EngineLocator engine = new AutoZapret.Zapret.EngineLocator();
+            if (engine.Ready)
+                Check("версия движка читается", engine.Version.Length > 0, engine.Version);
+            else
+                Skip("версия движка читается", "engine не установлен");
+        }
+
         private static void Section(string title)
         {
             Report.AppendLine();
@@ -791,6 +857,17 @@ namespace AutoZapret.App
             Report.AppendLine((ok ? "[ok]   " : "[FAIL] ") + name +
                               (string.IsNullOrEmpty(detail) ? "" : " -> " + detail));
             if (!ok) _failures++;
+        }
+
+        /// <summary>
+        /// Проверка, которую нельзя выполнить из-за отсутствия данных (например,
+        /// движок не скачан). Это НЕ провал: на чистом клоне engine/ нет по определению.
+        /// Если нужна строгость — запускайте с --require-engine.
+        /// </summary>
+        private static void Skip(string name, string reason)
+        {
+            Report.AppendLine("[skip] " + name + (string.IsNullOrEmpty(reason) ? "" : " -> " + reason));
+            _skipped++;
         }
 
         private static void RestoreSettings(string path, string backup)

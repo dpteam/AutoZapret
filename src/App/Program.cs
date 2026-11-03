@@ -36,8 +36,10 @@ namespace AutoZapret.App
             if (HasFlag(args, "--update-lists")) return Diag.DiagCommand.RunUpdateLists(args);
             if (HasFlag(args, "--fakes")) return Diag.DiagCommand.RunFakes(args);
             if (HasFlag(args, "--test-proxy")) return Diag.DiagCommand.RunTestProxy(args);
+            if (HasFlag(args, "--check-updates")) return Diag.DiagCommand.RunCheckUpdates(args);
+            if (HasFlag(args, "--update-engine")) return Diag.DiagCommand.RunUpdateEngine(args);
             if (HasFlag(args, "--deep")) return Diag.DiagCommand.RunDeep(args);
-            if (HasFlag(args, "--selftest")) return SelfTest.Run();
+            if (HasFlag(args, "--selftest")) return SelfTest.Run(HasFlag(args, "--require-engine"));
             if (HasFlag(args, "--test-all")) return Diag.DiagCommand.RunTestAll(args);
             if (HasFlag(args, "--test-winws"))
             {

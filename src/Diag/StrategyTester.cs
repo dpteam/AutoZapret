@@ -142,6 +142,87 @@ namespace AutoZapret.Diag
     /// <summary>Консольные команды диагностики: --probe, --test-all.</summary>
     public static class DiagCommand
     {
+        /// <summary>--update-engine: скачать и применить движок (с остановкой обхода).</summary>
+        public static int RunUpdateEngine(string[] args)
+        {
+            Console.WriteLine("== обновление движка ==");
+            Console.WriteLine();
+
+            Update.EngineUpdater updater = new Update.EngineUpdater();
+            updater.Progress += line => Console.WriteLine("  " + line);
+
+            Update.UpdateCheck check = updater.Check();
+            Console.WriteLine("  " + check.Message);
+
+            if (!check.HasUpdate && !HasFlagLocal(args, "--force"))
+            {
+                Console.WriteLine();
+                Console.WriteLine("обновление не требуется (используйте --force для переустановки)");
+                return 0;
+            }
+
+            Console.WriteLine();
+            string error = updater.Install(delegate
+            {
+                // останавливаем чужой winws, если он есть
+                System.Diagnostics.Process[] procs = System.Diagnostics.Process.GetProcessesByName("winws");
+                foreach (System.Diagnostics.Process p in procs)
+                {
+                    try { p.Kill(); } catch { }
+                    try { p.Dispose(); } catch { }
+                }
+                System.Threading.Thread.Sleep(1500);
+                return true;
+            });
+
+            Console.WriteLine();
+            if (error != null)
+            {
+                Console.WriteLine("ОШИБКА: " + error);
+                return 1;
+            }
+
+            Console.WriteLine("готово, версия: " + updater.Check().CurrentVersion);
+            return 0;
+        }
+
+        private static bool HasFlagLocal(string[] args, string flag)
+        {
+            foreach (string a in args)
+                if (string.Equals(a, flag, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        /// <summary>--check-updates: проверить версии движка и приложения.</summary>
+        public static int RunCheckUpdates(string[] args)
+        {
+            Console.WriteLine("== проверка обновлений ==");
+            Console.WriteLine();
+
+            Update.EngineUpdater engine = new Update.EngineUpdater();
+            engine.Progress += line => Console.WriteLine("  " + line);
+            Update.UpdateCheck engineCheck = engine.Check();
+
+            Console.WriteLine("  движок:      " + (engineCheck.Ok ? "[ok] " : "[FAIL] ") + engineCheck.Message);
+            if (engineCheck.Ok)
+                Console.WriteLine("               сейчас " +
+                                  (engineCheck.CurrentVersion.Length > 0 ? engineCheck.CurrentVersion : "—") +
+                                  " → " + engineCheck.LatestVersion +
+                                  (engineCheck.HasUpdate ? "  (есть обновление)" : "  (актуально)"));
+
+            Update.SelfUpdater app = new Update.SelfUpdater();
+            app.Progress += line => Console.WriteLine("  " + line);
+            Update.UpdateCheck appCheck = app.Check(true);
+
+            Console.WriteLine("  приложение:  " + (appCheck.Ok ? "[ok] " : "[FAIL] ") + appCheck.Message);
+            if (appCheck.Ok)
+                Console.WriteLine("               сейчас " + appCheck.CurrentVersion + " → " + appCheck.LatestVersion);
+
+            Console.WriteLine();
+            Console.WriteLine("версии сравниваются по числам: 1.10.4 > 1.9 (а не как строки)");
+            return 0;
+        }
+
         /// <summary>--test-proxy [dc]: проверить путь до Telegram и работу прокси.</summary>
         public static int RunTestProxy(string[] args)
         {

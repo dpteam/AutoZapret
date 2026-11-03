@@ -56,11 +56,17 @@ build.cmd                              :: csc.exe, без MSBuild
 powershell -File tools\fetch-webview2.ps1
 powershell -File tools\fetch-engine.ps1
 AutoZapret.exe --selftest              :: пишет selftest.txt, код возврата 0/1
+AutoZapret.exe --selftest --require-engine  :: строго: без движка падает
 powershell -File tools\ci-test.ps1     :: всё сразу
 ```
 
 Правило: **не коммитить, если `build.cmd` или `--selftest` не зелёные.**
 Перед тестами остановить `AutoZapret.exe` и `winws.exe` (иначе `CS0016`: файл занят).
+
+**Про skip и CI.** `engine/` в `.gitignore`, поэтому на чистом клоне проверки движка
+дают `[skip]`, а не `[FAIL]` — иначе CI краснеет на нормальном состоянии.
+CI качает движок (`tools\fetch-engine.ps1`) и запускает `--require-engine`,
+чтобы проверки движка реально выполнялись.
 
 ---
 
@@ -151,6 +157,7 @@ powershell -File tools\ci-test.ps1     :: всё сразу
 | **`ProcessStartInfo.ArgumentList` не существует в net48** | Появился только в .NET Core 2.1+. В net48 — только строка `Arguments`, квотировать самому (`CommandLine.Build` по правилам MS C runtime) |
 | `Process.Kill(entireProcessTree)` нет в net48 | Только .NET Core 3+. Дерево убивать через `taskkill /PID n /T /F` |
 | `CodePagesEncodingProvider` нет в net48 | Только .NET Core. `Encoding.GetEncoding(866)` в net48 работает из коробки |
+| **`--selftest` на CI падал** | `engine/` в `.gitignore`, на чистом клоне его нет, а проверки движка считались провалом. Теперь отсутствие движка = `[skip]`, а строгий режим включается флагом `--require-engine` (CI качает движок и запускает строго) |
 
 ---
 

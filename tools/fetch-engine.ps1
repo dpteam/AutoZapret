@@ -89,47 +89,36 @@ try {
     EnsureDir $utilDir
     EnsureDir $temp
 
-    # ---------------------------------------------------------------- bundle
-    Write-Host "[1/5] zapret-win-bundle ($BundleRef) ..."
-    $bundleDir = Join-Path $temp 'bundle'
-    CloneRepo 'https://github.com/bol-van/zapret-win-bundle.git' $bundleDir $BundleRef
+    # ---------------------------------------------------------------- flowseal
+    #
+    # ВАЖНО: источник бинарников — Flowseal, а не бандл.
+    # Причина: Flowseal шипит ПОЛНЫЙ проверенный комплект (winws.exe, cygwin1.dll,
+    # WinDivert.dll/.sys и все .bin-фейки) и тестирует свои 22 стратегии именно
+    # с этими файлами. Их winws.exe отличается от бандлового (203 КБ против 223 КБ).
+    # Смешивать нельзя: получится комбинация, которую никто не проверял.
+    #
+    # Бандл нужен только для того, чего у Flowseal нет:
+    #   elevator.exe, killall.exe, windivert.filter/, lua/ (для zapret2).
+    Write-Host "[1/5] конфиги и бинарники Flowseal ($FlowsealRef) ..."
+    $flowDir = Join-Path $temp 'flowseal'
+    CloneRepo 'https://github.com/Flowseal/zapret-discord-youtube.git' $flowDir $FlowsealRef
 
-    $winwsSrc = Join-Path $bundleDir 'zapret-winws'
-    if (-not (Test-Path $winwsSrc)) { throw 'в бандле нет каталога zapret-winws' }
-
-    # то, без чего winws не запустится
+    $flowBin = Join-Path $flowDir 'bin'
     $must = @('winws.exe', 'cygwin1.dll', 'WinDivert.dll', 'WinDivert64.sys')
     foreach ($f in $must) {
-        $p = Join-Path $winwsSrc $f
-        if (-not (Test-Path $p)) { throw "в бандле нет обязательного файла: $f" }
+        $p = Join-Path $flowBin $f
+        if (-not (Test-Path $p)) { throw "у Flowseal нет обязательного файла bin\$f" }
         Copy-Item $p (Join-Path $binDir $f) -Force
         Write-Host "      bin\$f"
     }
 
-    # необязательное, но полезное
-    foreach ($f in @('elevator.exe', 'killall.exe', 'windivert_delete.cmd', 'enable_timestamps.cmd', '_CMD_ADMIN.cmd')) {
-        $p = Join-Path $winwsSrc $f
-        if (Test-Path $p) { Copy-Item $p (Join-Path $binDir $f) -Force }
+    # фейки Flowseal
+    $fakeCount = 0
+    Get-ChildItem $flowBin -File -Filter '*.bin' | ForEach-Object {
+        Copy-Item $_.FullName (Join-Path $binDir $_.Name) -Force
+        $fakeCount++
     }
-
-    # фейки и kernel-фильтры из бандла
-    $filesSrc = Join-Path $winwsSrc 'files'
-    if (Test-Path $filesSrc) {
-        $n = 0
-        Get-ChildItem $filesSrc -File | ForEach-Object { Copy-Item $_.FullName (Join-Path $binDir $_.Name) -Force; $n++ }
-        Write-Host "      bin\*.bin ($n файлов)"
-    }
-
-    $filterSrc = Join-Path $winwsSrc 'windivert.filter'
-    if (Test-Path $filterSrc) {
-        Copy-Item $filterSrc (Join-Path $binDir 'windivert.filter') -Recurse -Force
-        Write-Host "      bin\windivert.filter\"
-    }
-
-    # ---------------------------------------------------------------- flowseal
-    Write-Host "[2/5] конфиги Flowseal ($FlowsealRef) ..."
-    $flowDir = Join-Path $temp 'flowseal'
-    CloneRepo 'https://github.com/Flowseal/zapret-discord-youtube.git' $flowDir $FlowsealRef
+    Write-Host "      bin\*.bin ($fakeCount файлов)"
 
     # списки
     $listsSrc = Join-Path $flowDir 'lists'
@@ -142,17 +131,6 @@ try {
     }
     Write-Host "      lists\*.txt ($listCount файлов)"
 
-    # фейки Flowseal (свежее бандловых, перекрывают их)
-    $binSrc = Join-Path $flowDir 'bin'
-    $fakeCount = 0
-    if (Test-Path $binSrc) {
-        Get-ChildItem $binSrc -File -Filter '*.bin' | ForEach-Object {
-            Copy-Item $_.FullName (Join-Path $binDir $_.Name) -Force
-            $fakeCount++
-        }
-    }
-    Write-Host "      bin\*.bin ($fakeCount файлов)"
-
     # версия Flowseal
     $flowVersion = 'unknown'
     $versionFile = Join-Path $flowDir '.service\version.txt'
@@ -163,6 +141,51 @@ try {
         if (Test-Path $serviceBat) {
             $m = Select-String -Path $serviceBat -Pattern 'LOCAL_VERSION=([\d\.]+)' | Select-Object -First 1
             if ($m) { $flowVersion = $m.Matches[0].Groups[1].Value }
+        }
+    }
+
+    # ---------------------------------------------------------------- bundle
+    # Только дополнения, которых нет у Flowseal.
+    Write-Host "[2/5] дополнения из zapret-win-bundle ($BundleRef) ..."
+    $bundleDir = Join-Path $temp 'bundle'
+    $bundleOk = $true
+    try {
+        CloneRepo 'https://github.com/bol-van/zapret-win-bundle.git' $bundleDir $BundleRef
+    } catch {
+        $bundleOk = $false
+        Write-Host "      [warn] бандл недоступен — обойдёмся без дополнений" -ForegroundColor Yellow
+    }
+
+    if ($bundleOk) {
+        $winwsSrc = Join-Path $bundleDir 'zapret-winws'
+
+        foreach ($f in @('elevator.exe', 'killall.exe', 'windivert_delete.cmd', 'enable_timestamps.cmd', '_CMD_ADMIN.cmd')) {
+            $p = Join-Path $winwsSrc $f
+            if (Test-Path $p) { Copy-Item $p (Join-Path $binDir $f) -Force }
+        }
+
+        $filterSrc = Join-Path $winwsSrc 'windivert.filter'
+        if (Test-Path $filterSrc) {
+            Copy-Item $filterSrc (Join-Path $binDir 'windivert.filter') -Recurse -Force
+            Write-Host "      bin\windivert.filter\"
+        }
+
+        # lua нужен только для zapret2, но пусть лежит
+        $luaSrc = Join-Path $winwsSrc 'lua'
+        if (Test-Path $luaSrc) {
+            Copy-Item $luaSrc (Join-Path $engine 'lua') -Recurse -Force
+            Write-Host "      lua\ (для zapret2)"
+        }
+
+        # фейки бандла — только те, которых нет у Flowseal
+        $filesSrc = Join-Path $winwsSrc 'files'
+        if (Test-Path $filesSrc) {
+            $added = 0
+            Get-ChildItem $filesSrc -File | ForEach-Object {
+                $dest = Join-Path $binDir $_.Name
+                if (-not (Test-Path $dest)) { Copy-Item $_.FullName $dest -Force; $added++ }
+            }
+            if ($added -gt 0) { Write-Host "      bin\*.bin (+$added из бандла)" }
         }
     }
 

@@ -675,6 +675,46 @@
         box.style.display = "";
     }
 
+    function initUpdates() {
+        bindAction("btn-upd-engine-check", "upd.engine.check", "Проверяю…");
+        bindAction("btn-upd-app-check", "upd.app.check", "Проверяю…");
+
+        var install = document.getElementById("btn-upd-engine-install");
+        if (install) install.addEventListener("click", function () {
+            install.disabled = true;
+            install.textContent = "Обновляю…";
+            send("upd.engine.install");
+        });
+    }
+
+    function renderUpdateState(msg) {
+        var el = document.getElementById("upd-" + msg.target + "-state");
+        if (!el) return;
+
+        el.textContent = msg.message || "";
+        el.className = "row-hint " + (msg.ok ? (msg.hasUpdate ? "diag-warn" : "diag-ok") : "diag-bad");
+
+        if (msg.target === "engine") {
+            var install = document.getElementById("btn-upd-engine-install");
+            if (install) {
+                install.style.display = msg.hasUpdate ? "" : "none";
+                install.disabled = false;
+                install.textContent = "Обновить";
+            }
+        }
+    }
+
+    function renderUpdateProgress(msg) {
+        var el = document.getElementById("upd-progress");
+        if (!el) return;
+
+        el.textContent = msg.line || "";
+        el.style.display = msg.line ? "" : "none";
+        if (msg.done) {
+            el.className = "row-hint " + (msg.ok ? "diag-ok" : "diag-bad");
+        }
+    }
+
     function initButtons() {
         var power = document.getElementById("power");
         if (power) power.addEventListener("click", function () { send("toggle"); });
@@ -755,6 +795,14 @@
                 renderProxyTest(msg);
                 break;
 
+            case "upd.state":
+                renderUpdateState(msg);
+                break;
+
+            case "upd.progress":
+                renderUpdateProgress(msg);
+                break;
+
             case "logs":
                 logLines = msg.lines || [];
                 text("log-file", msg.file);
@@ -791,6 +839,7 @@
         initDiag();
         initLists();
         initProxy();
+        initUpdates();
         initButtons();
 
         if (host) {

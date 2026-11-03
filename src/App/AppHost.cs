@@ -10,6 +10,7 @@ using AutoZapret.Diag;
 using AutoZapret.Lists;
 using AutoZapret.Payloads;
 using AutoZapret.Proxy;
+using AutoZapret.Update;
 using AutoZapret.Zapret;
 
 namespace AutoZapret.App
@@ -279,6 +280,79 @@ namespace AutoZapret.App
                 catch (Exception ex) { Log.Warn("PROXY", "открыть ссылку: " + ex.Message); }
             });
             bridge.Register("proxy.test", msg => RunInBackground("proxy-test", RunProxyTestUi));
+
+            // ---- обновления
+            bridge.Register("upd.engine.check", msg => RunInBackground("upd-engine", CheckEngineUi));
+            bridge.Register("upd.engine.install", msg => RunInBackground("upd-install", InstallEngineUi));
+            bridge.Register("upd.app.check", msg => RunInBackground("upd-app", CheckAppUi));
+        }
+
+        // --------------------------------------------------------------- updates
+
+        private void CheckEngineUi()
+        {
+            EngineUpdater updater = new EngineUpdater();
+            updater.Progress += line => SendUpdateProgress(line, false, true);
+
+            UpdateCheck check = updater.Check();
+
+            _form.Bridge.Send(WebBridge.Msg("upd.state",
+                "target", "engine",
+                "ok", check.Ok,
+                "hasUpdate", check.HasUpdate,
+                "current", check.CurrentVersion ?? "",
+                "latest", check.LatestVersion ?? "",
+                "message", check.Message ?? ""));
+        }
+
+        private void InstallEngineUi()
+        {
+            EngineUpdater updater = new EngineUpdater();
+            updater.Progress += line => SendUpdateProgress(line, false, true);
+
+            // останавливаем обход перед заменой файлов
+            string error = updater.Install(delegate
+            {
+                _zapret.Stop();
+                return true;
+            });
+
+            if (error != null)
+            {
+                SendUpdateProgress("ошибка: " + error, true, false);
+                _tray.Notify(AppInfo.Name, "Обновление движка не удалось: " + error, ToolTipIcon.Error);
+            }
+            else
+            {
+                SendUpdateProgress("движок обновлён", true, true);
+                _tray.Notify(AppInfo.Name, "Движок обновлён", ToolTipIcon.Info);
+            }
+
+            CheckEngineUi();
+        }
+
+        private void CheckAppUi()
+        {
+            SelfUpdater updater = new SelfUpdater();
+            updater.Progress += line => SendUpdateProgress(line, false, true);
+
+            UpdateCheck check = updater.Check(true);
+
+            _form.Bridge.Send(WebBridge.Msg("upd.state",
+                "target", "app",
+                "ok", check.Ok,
+                "hasUpdate", check.HasUpdate,
+                "current", check.CurrentVersion ?? "",
+                "latest", check.LatestVersion ?? "",
+                "message", check.Message ?? ""));
+        }
+
+        private void SendUpdateProgress(string line, bool done, bool ok)
+        {
+            _form.Bridge.Send(WebBridge.Msg("upd.progress",
+                "line", line ?? "",
+                "done", done,
+                "ok", ok));
         }
 
         // ---------------------------------------------------------------- proxy

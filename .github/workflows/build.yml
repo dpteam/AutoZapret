@@ -68,10 +68,14 @@ jobs:
           if ($size -lt 100000) { throw "exe suspiciously small: $size" }
           if (-not (Test-Path 'bin/WebView2Loader.dll')) { throw "WebView2Loader.dll not copied" }
 
-      # --selftest проверяет настройки, json, атомарную запись, ресурсы UI.
-      # WebView2 Runtime на раннере есть (Edge предустановлен), поэтому
-      # проверка runtime тоже должна пройти.
-      - name: Selftest
+      # --selftest проверяет настройки, json, атомарную запись, ресурсы UI,
+      # списки, фейки, прокси-крипто и обновления.
+      #
+      # Движок (engine\) в репозитории отсутствует — он в .gitignore. Поэтому
+      # без него проверки движка помечаются [skip], а не [FAIL]: чистый клон
+      # обязан проходить selftest. Чтобы проверить и движок, качаем его ниже
+      # и запускаем с --require-engine.
+      - name: Selftest (without engine)
         shell: pwsh
         run: |
           Push-Location bin
@@ -80,6 +84,33 @@ jobs:
             Write-Host "exit code: $($p.ExitCode)"
             if (Test-Path selftest.txt) { Get-Content selftest.txt -Encoding UTF8 | Write-Host }
             if ($p.ExitCode -ne 0) { throw "selftest failed with $($p.ExitCode)" }
+          } finally { Pop-Location }
+
+      # Движок качается через git clone (zip блокируют антивирусы из-за WinDivert64.sys).
+      # Это заодно проверяет, что tools\fetch-engine.ps1 работает на чистой машине.
+      - name: Fetch engine
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          ./tools/fetch-engine.ps1
+          if (-not (Test-Path 'engine/bin/winws.exe')) {
+            Write-Host "::warning::engine not fetched (network or upstream unavailable) - engine checks will be skipped"
+            exit 0
+          }
+          # движок должен лежать рядом с exe
+          New-Item -ItemType Directory -Path bin/engine -Force | Out-Null
+          robocopy engine bin/engine /E /XO /NJH /NJS /NDL /NFL /NP /R:1 /W:1 | Out-Null
+
+      - name: Selftest (with engine, strict)
+        if: hashFiles('engine/bin/winws.exe') != ''
+        shell: pwsh
+        run: |
+          Push-Location bin
+          try {
+            $p = Start-Process -FilePath ./AutoZapret.exe -ArgumentList '--selftest','--require-engine' -Wait -PassThru -NoNewWindow
+            Write-Host "exit code: $($p.ExitCode)"
+            if (Test-Path selftest.txt) { Get-Content selftest.txt -Encoding UTF8 | Write-Host }
+            if ($p.ExitCode -ne 0) { throw "strict selftest failed with $($p.ExitCode)" }
           } finally { Pop-Location }
 
       - name: Upload selftest report
