@@ -1,0 +1,78 @@
+# ---------------------------------------------------------------------------
+#  AutoZapret - repository ignore rules
+# ---------------------------------------------------------------------------
+
+# research material: cloned upstreams, huge, not ours to publish
+refs/
+_refs/
+__refs/
+
+# zapret binaries: fetched by tools\fetch-engine.ps1, never committed
+engine/
+engine-*/
+*.sys
+WinDivert*.dll
+cygwin1.dll
+winws.exe
+winws2.exe
+elevator.exe
+killall.exe
+
+# build output
+bin/
+obj/
+*.exe
+*.pdb
+*.ilk
+*.cache
+*.rsp
+*.suo
+*.user
+
+# WebView2 SDK is fetched by tools\fetch-webview2.ps1, keep it out of the repo
+lib/webview2/*.dll
+lib/webview2/*.xml
+
+# runtime state: settings, strategy scores, proxy secret, logs
+data/state/
+data/profiles/
+*.log
+logs/
+launcher.log
+selftest*.txt
+
+# generated lists: downloaded, regenerated, never committed
+data/lists/*.txt
+!assets/lists/*.txt
+
+# generated payloads (the .bin fakes) - shipped subset lives in assets/fakes
+data/fakes/
+*.bin.upd
+
+# secrets and signing
+*.pfx
+*.snk
+*.key
+*.pem
+
+# editor / OS noise
+.vs/
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# local scratch
+tmp/
+scratch/
+*.7z
+*.zip
+*.tmp
+*.bak
+
+# but DO keep the hand-written assets
+!assets/**/*.json
+!assets/**/*.ico
+!assets/**/*.png
+!assets/fakes/**/*.bin

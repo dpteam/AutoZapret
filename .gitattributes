@@ -1,0 +1,21 @@
+# normalize line endings
+* text=auto
+
+# markdown and json: LF, no exceptions
+*.md        text eol=lf
+*.json      text eol=lf
+*.cs        text eol=crlf
+*.cmd       text eol=crlf
+*.bat       text eol=crlf
+
+# PowerShell must be CRLF + UTF-8 with BOM (PS 5.1 reads BOM-less -File as ANSI)
+*.ps1       text eol=crlf working-tree-encoding=UTF-8
+
+# binary
+*.bin       binary
+*.ico       binary
+*.png       binary
+*.jpg       binary
+*.dll       binary
+*.sys       binary
+*.exe       binary
