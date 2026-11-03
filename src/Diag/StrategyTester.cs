@@ -142,6 +142,49 @@ namespace AutoZapret.Diag
     /// <summary>Консольные команды диагностики: --probe, --test-all.</summary>
     public static class DiagCommand
     {
+        /// <summary>--test-proxy [dc]: проверить путь до Telegram и работу прокси.</summary>
+        public static int RunTestProxy(string[] args)
+        {
+            int dc = 2;
+            for (int i = 0; i < args.Length; i++)
+                if (string.Equals(args[i], "--test-proxy", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                    int.TryParse(args[i + 1], out dc);
+
+            Console.WriteLine("== проверка Telegram-прокси (DC " + dc + ") ==");
+            Console.WriteLine();
+
+            System.Collections.Generic.List<Proxy.ProxySelfTest.Step> steps =
+                Proxy.ProxySelfTest.Run(dc, true);
+
+            Console.WriteLine();
+            bool allOk = true;
+            foreach (Proxy.ProxySelfTest.Step step in steps)
+            {
+                Console.WriteLine("  " + (step.Ok ? "[ok]  " : "[FAIL]") + " " +
+                                  step.Name.PadRight(24) + step.Detail);
+                if (!step.Ok) allOk = false;
+            }
+
+            Console.WriteLine();
+            if (allOk)
+            {
+                Console.WriteLine("всё работает: включите прокси в интерфейсе и откройте ссылку в Telegram");
+            }
+            else
+            {
+                Proxy.ProxySelfTest.Step first = null;
+                foreach (Proxy.ProxySelfTest.Step s in steps) { if (!s.Ok) { first = s; break; } }
+
+                Console.WriteLine("первая проблема: " + first.Name);
+                if (first.Name.IndexOf("Telegram", StringComparison.Ordinal) >= 0)
+                    Console.WriteLine("  сеть не пускает до kws*.web.telegram.org — нужен обход DPI (zapret)");
+                else if (first.Name.IndexOf("WebSocket", StringComparison.Ordinal) >= 0)
+                    Console.WriteLine("  эндпоинт /apiws не отвечает — возможно, изменился у Telegram");
+            }
+
+            return allOk ? 0 : 1;
+        }
+
         /// <summary>--fakes: список .bin-фейков с проверкой формата.</summary>
         public static int RunFakes(string[] args)
         {

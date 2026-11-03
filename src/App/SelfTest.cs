@@ -80,6 +80,9 @@ namespace AutoZapret.App
 
                 Section("фейки");
                 TestPayloads();
+
+                Section("прокси: крипто");
+                TestProxyCrypto();
             }
             catch (Exception ex)
             {
@@ -603,6 +606,178 @@ namespace AutoZapret.App
             {
                 try { System.IO.Directory.Delete(dir, true); } catch { }
             }
+        }
+
+        private static void TestProxyCrypto()
+        {
+            // ---- AES-CTR: симметричность и независимость от размера пачки
+            byte[] key = new byte[32];
+            byte[] iv = new byte[16];
+            new Random(1).NextBytes(key);
+            new Random(2).NextBytes(iv);
+
+            byte[] plain = new byte[1000];
+            new Random(3).NextBytes(plain);
+
+            byte[] encrypted;
+            using (AutoZapret.Proxy.AesCtr ctr = new AutoZapret.Proxy.AesCtr(key, iv))
+                encrypted = ctr.Transform(plain);
+
+            Check("AES-CTR шифрует", !ByteEquals(plain, encrypted), "ok");
+
+            byte[] decrypted;
+            using (AutoZapret.Proxy.AesCtr ctr = new AutoZapret.Proxy.AesCtr(key, iv))
+                decrypted = ctr.Transform(encrypted);
+
+            Check("AES-CTR обратим", ByteEquals(plain, decrypted), "ok");
+
+            // Тот же результат при шифровании кусками разного размера:
+            // это проверяет, что позиция keystream не сбивается между пачками.
+            byte[] chunked = new byte[1000];
+            using (AutoZapret.Proxy.AesCtr ctr = new AutoZapret.Proxy.AesCtr(key, iv))
+            {
+                Buffer.BlockCopy(plain, 0, chunked, 0, plain.Length);
+                int pos = 0;
+                int[] sizes = { 1, 7, 16, 100, 333, 543 };
+                int si = 0;
+                while (pos < chunked.Length)
+                {
+                    int take = Math.Min(sizes[si++ % sizes.Length], chunked.Length - pos);
+                    ctr.Transform(chunked, pos, take);
+                    pos += take;
+                }
+            }
+            Check("AES-CTR не зависит от размера пачки", ByteEquals(chunked, encrypted), "ok");
+
+            // ---- secret parsing
+            string hex = "00112233445566778899aabbccddeeff";
+            byte[] parsed = AutoZapret.Proxy.TgProxyServer.ParseSecret(hex);
+            Check("секрет разобран", parsed != null && parsed.Length == 16, parsed == null ? "null" : "16 байт");
+
+            byte[] withPrefix = AutoZapret.Proxy.TgProxyServer.ParseSecret("dd" + hex);
+            Check("секрет с dd-префиксом", withPrefix != null && ByteEquals(parsed, withPrefix), "ok");
+
+            Check("короткий секрет отклонён",
+                AutoZapret.Proxy.TgProxyServer.ParseSecret("aabb") == null, "ok");
+            Check("не-hex секрет отклонён",
+                AutoZapret.Proxy.TgProxyServer.ParseSecret(new string('z', 32)) == null, "ok");
+
+            // ---- handshake: полный цикл encode -> decode
+            byte[] secret = new byte[16];
+            new Random(4).NextBytes(secret);
+
+            // строим init так, как его построил бы клиент
+            byte[] init = BuildTestInit(secret, dc: 2, media: false, tag: AutoZapret.Proxy.MtProtoTag.Intermediate);
+
+            AutoZapret.Proxy.HandshakeResult hs = AutoZapret.Proxy.MtProtoHandshake.Decode(init, secret);
+            Check("handshake разобран", hs.Ok, hs.Error);
+            Check("DC определён", hs.Dc == 2, hs.Dc.ToString());
+            Check("media = false", !hs.IsMedia, hs.IsMedia.ToString());
+            Check("тег intermediate", hs.Tag == AutoZapret.Proxy.MtProtoTag.Intermediate,
+                AutoZapret.Proxy.MtProtoHandshake.TagName(hs.Tag));
+
+            // media: отрицательный DC
+            byte[] initMedia = BuildTestInit(secret, dc: 4, media: true, tag: AutoZapret.Proxy.MtProtoTag.Abridged);
+            AutoZapret.Proxy.HandshakeResult hsMedia = AutoZapret.Proxy.MtProtoHandshake.Decode(initMedia, secret);
+            Check("media определён", hsMedia.Ok && hsMedia.IsMedia && hsMedia.Dc == 4,
+                hsMedia.Ok ? hsMedia.Dc + " media=" + hsMedia.IsMedia : hsMedia.Error);
+
+            // неверный секрет должен отклоняться
+            byte[] wrongSecret = new byte[16];
+            new Random(5).NextBytes(wrongSecret);
+            AutoZapret.Proxy.HandshakeResult hsBad = AutoZapret.Proxy.MtProtoHandshake.Decode(init, wrongSecret);
+            Check("неверный секрет отклонён", !hsBad.Ok, hsBad.Error);
+
+            // ---- обратный ключ: расшифровка того, что мы зашифровали
+            byte[] fwdKey, fwdIv;
+            AutoZapret.Proxy.MtProtoHandshake.DeriveReverse(init, secret, out fwdKey, out fwdIv);
+            Check("обратный ключ 32 байта", fwdKey != null && fwdKey.Length == 32, "ok");
+            Check("обратный ключ отличается от прямого",
+                !ByteEquals(fwdKey, hs.ClientKey), "ok");
+
+            // ---- relay init: не похож на HTTP/TLS
+            bool reserved = false;
+            for (int i = 0; i < 50; i++)
+            {
+                byte[] relay = AutoZapret.Proxy.MtProtoHandshake.GenerateRelayInit(2, false);
+                if (relay[0] == 0xEF) reserved = true;
+                if (relay[0] == (byte)'G' && relay[1] == (byte)'E') reserved = true;
+                if (relay[0] == 0x16 && relay[1] == 0x03) reserved = true;
+            }
+            Check("relay init без запрещённых начал", !reserved, "50 попыток");
+
+            // ---- сплиттер: склейка пакетов
+            AutoZapret.Proxy.MtProtoSplitter splitter =
+                new AutoZapret.Proxy.MtProtoSplitter(AutoZapret.Proxy.MtProtoTag.Intermediate);
+
+            // intermediate: длина 4 байта LE + payload
+            byte[] p1 = new byte[8];
+            p1[0] = 4; p1[1] = 0; p1[2] = 0; p1[3] = 0;
+            p1[4] = 0xAA; p1[5] = 0xBB; p1[6] = 0xCC; p1[7] = 0xDD;
+
+            System.Collections.Generic.List<byte[]> got = splitter.Feed(p1, 0, p1.Length);
+            Check("сплиттер: один пакет", got.Count == 1, got.Count + " шт.");
+            Check("сплиттер: длина верна", got.Count == 1 && got[0].Length == 8,
+                got.Count == 1 ? got[0].Length + " байт" : "—");
+
+            // два пакета в одном чанке
+            byte[] two = new byte[16];
+            Buffer.BlockCopy(p1, 0, two, 0, 8);
+            Buffer.BlockCopy(p1, 0, two, 8, 8);
+            System.Collections.Generic.List<byte[]> got2 = splitter.Feed(two, 0, two.Length);
+            Check("сплиттер: два пакета", got2.Count == 2, got2.Count + " шт.");
+
+            // разорванный пакет: сначала половина, потом остаток
+            AutoZapret.Proxy.MtProtoSplitter splitter2 =
+                new AutoZapret.Proxy.MtProtoSplitter(AutoZapret.Proxy.MtProtoTag.Intermediate);
+            System.Collections.Generic.List<byte[]> part1 = splitter2.Feed(p1, 0, 3);
+            System.Collections.Generic.List<byte[]> part2 = splitter2.Feed(p1, 3, 5);
+            Check("сплиттер: ждёт целый пакет", part1.Count == 0 && part2.Count == 1,
+                part1.Count + "/" + part2.Count);
+        }
+
+        /// <summary>Строит 64-байтовый init так, как это сделал бы клиент Telegram.</summary>
+        private static byte[] BuildTestInit(byte[] secret, int dc, bool media, AutoZapret.Proxy.MtProtoTag tag)
+        {
+            byte[] init = new byte[64];
+            new Random(100 + dc).NextBytes(init);
+
+            // Ключ КЛИЕНТА: SHA256(prekey || secret), а не сам prekey.
+            // (prekey напрямую — это уже ключ к Telegram, другая история.)
+            byte[] prekey = new byte[32];
+            Buffer.BlockCopy(init, 8, prekey, 0, 32);
+            byte[] key = AutoZapret.Proxy.MtProtoHandshake.DeriveKey(prekey, secret);
+
+            byte[] iv = new byte[16];
+            Buffer.BlockCopy(init, 40, iv, 0, 16);
+
+            byte[] tail = new byte[8];
+            byte[] tagBytes = tag == AutoZapret.Proxy.MtProtoTag.Abridged
+                ? AutoZapret.Proxy.MtProtoHandshake.TagAbridged
+                : AutoZapret.Proxy.MtProtoHandshake.TagIntermediate;
+            Buffer.BlockCopy(tagBytes, 0, tail, 0, 4);
+
+            int dcValue = media ? -dc : dc;
+            tail[4] = (byte)(dcValue & 0xFF);
+            tail[5] = (byte)((dcValue >> 8) & 0xFF);
+
+            using (AutoZapret.Proxy.AesCtr ctr = new AutoZapret.Proxy.AesCtr(key, iv))
+            {
+                ctr.Skip(56);
+                ctr.Transform(tail, 0, 8);
+            }
+
+            Buffer.BlockCopy(tail, 0, init, 56, 8);
+            return init;
+        }
+
+        private static bool ByteEquals(byte[] a, byte[] b)
+        {
+            if (a == null || b == null) return a == b;
+            if (a.Length != b.Length) return false;
+            for (int i = 0; i < a.Length; i++)
+                if (a[i] != b[i]) return false;
+            return true;
         }
 
         private static void Section(string title)

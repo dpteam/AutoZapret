@@ -52,6 +52,9 @@
             send("lists.get", { kind: "exclude" });
             send("fakes.scan");
         }
+        if (name === "proxy") {
+            send("proxy.state");
+        }
     }
 
     function initNav() {
@@ -606,6 +609,72 @@
         if (el) el.textContent = msg.text || "—";
     }
 
+    function initProxy() {
+        var toggle = document.getElementById("proxy-toggle");
+        if (toggle) toggle.addEventListener("click", function () {
+            var next = !toggle.classList.contains("on");
+            toggle.classList.toggle("on", next);
+            send("proxy.toggle", { enabled: next });
+        });
+
+        var copy = document.getElementById("btn-proxy-copy");
+        if (copy) copy.addEventListener("click", function () { send("proxy.copyLink"); });
+
+        var open = document.getElementById("btn-proxy-open");
+        if (open) open.addEventListener("click", function () { send("proxy.openLink"); });
+
+        var test = document.getElementById("btn-proxy-test");
+        if (test) test.addEventListener("click", function () {
+            test.disabled = true;
+            test.textContent = "Проверяю…";
+            send("proxy.test");
+        });
+    }
+
+    function renderProxy(msg) {
+        var running = !!msg.running;
+        setSwitch("proxy-toggle", running);
+
+        text("proxy-status-line", msg.statusLine || (running ? "работает" : "выключен"));
+        text("proxy-address", (msg.host || "127.0.0.1") + ":" + (msg.port || 1443));
+        text("proxy-active", msg.active || 0);
+        text("proxy-total", msg.total || 0);
+        text("proxy-failed", msg.failed || 0);
+
+        if (msg.error) {
+            var line = document.getElementById("proxy-status-line");
+            if (line) { line.textContent = msg.error; line.className = "row-hint diag-bad"; }
+        }
+    }
+
+    function renderProxyTest(msg) {
+        var btn = document.getElementById("btn-proxy-test");
+        if (btn) { btn.disabled = false; btn.textContent = "Проверить"; }
+
+        var box = document.getElementById("proxy-test-result");
+        if (!box) return;
+
+        box.innerHTML = "";
+        (msg.steps || []).forEach(function (s) {
+            var div = document.createElement("div");
+            div.className = "diag-row";
+            div.innerHTML =
+                '<span class="badge ' + (s.ok ? "ok" : "bad") + '">' + (s.ok ? "OK" : "✕") + '</span>' +
+                '<span class="name">' + s.name + '</span>' +
+                '<span class="verdict ' + (s.ok ? "diag-ok" : "diag-bad") + '">' + (s.detail || "") + '</span>';
+            box.appendChild(div);
+        });
+
+        if (msg.advice) {
+            var adv = document.createElement("div");
+            adv.className = "advice";
+            adv.innerHTML = msg.advice;
+            box.appendChild(adv);
+        }
+
+        box.style.display = "";
+    }
+
     function initButtons() {
         var power = document.getElementById("power");
         if (power) power.addEventListener("click", function () { send("toggle"); });
@@ -678,6 +747,14 @@
                 renderFakes(msg);
                 break;
 
+            case "proxy":
+                renderProxy(msg);
+                break;
+
+            case "proxy.test":
+                renderProxyTest(msg);
+                break;
+
             case "logs":
                 logLines = msg.lines || [];
                 text("log-file", msg.file);
@@ -713,6 +790,7 @@
         initSettings();
         initDiag();
         initLists();
+        initProxy();
         initButtons();
 
         if (host) {

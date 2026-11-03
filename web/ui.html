@@ -27,6 +27,7 @@
     <div class="nav">
       <button class="nav-item active" data-screen="home"><span class="nav-icon">◉</span> Главная</button>
       <button class="nav-item" data-screen="diag"><span class="nav-icon">⚕</span> Диагностика</button>
+      <button class="nav-item" data-screen="proxy"><span class="nav-icon">✈</span> Telegram</button>
       <button class="nav-item" data-screen="lists"><span class="nav-icon">▤</span> Списки</button>
       <button class="nav-item" data-screen="logs"><span class="nav-icon">≡</span> Логи</button>
       <button class="nav-item" data-screen="settings"><span class="nav-icon">⚙</span> Настройки</button>
@@ -185,6 +186,57 @@
             <button class="btn" id="btn-diag-apply" style="display:none">Применить лучшую</button>
           </div>
         </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ ПРОКСИ -->
+    <section class="screen" id="screen-proxy">
+      <h1>Telegram-прокси</h1>
+      <p class="subtitle">MTProto через WebSocket — Telegram без VPN</p>
+
+      <div class="card">
+        <div class="row">
+          <div>
+            <div class="row-label">Прокси</div>
+            <div class="row-hint" id="proxy-status-line">выключен</div>
+          </div>
+          <div class="switch" id="proxy-toggle"></div>
+        </div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Адрес</div>
+            <div class="row-hint mono" id="proxy-address">127.0.0.1:1443</div>
+          </div>
+          <button class="btn" id="btn-proxy-copy">Скопировать ссылку</button>
+        </div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Открыть в Telegram</div>
+            <div class="row-hint">Приложение спросит подтверждение — это нормально</div>
+          </div>
+          <button class="btn primary" id="btn-proxy-open">Открыть</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Проверка</div>
+        <div class="row">
+          <div>
+            <div class="row-label">Маршрут до Telegram</div>
+            <div class="row-hint">TCP, TLS, WebSocket и наш handshake по шагам</div>
+          </div>
+          <button class="btn" id="btn-proxy-test">Проверить</button>
+        </div>
+        <div id="proxy-test-result" class="diag-list" style="margin-top:10px;display:none"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Статистика</div>
+        <div class="row"><span class="row-label">Соединений сейчас</span><span class="tag mono" id="proxy-active">0</span></div>
+        <div class="row"><span class="row-label">Всего подключений</span><span class="tag mono" id="proxy-total">0</span></div>
+        <div class="row"><span class="row-label">Ошибок</span><span class="tag mono" id="proxy-failed">0</span></div>
       </div>
     </section>
 

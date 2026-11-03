@@ -9,6 +9,7 @@ using AutoZapret.Core;
 using AutoZapret.Diag;
 using AutoZapret.Lists;
 using AutoZapret.Payloads;
+using AutoZapret.Proxy;
 using AutoZapret.Zapret;
 
 namespace AutoZapret.App
@@ -22,6 +23,7 @@ namespace AutoZapret.App
         private readonly TrayController _tray;
         private readonly Settings _settings;
         private readonly ZapretService _zapret;
+        private readonly TgProxyServer _proxy;
         private bool _disposed;
         private bool _exiting;
 
@@ -32,10 +34,12 @@ namespace AutoZapret.App
             _form = new MainForm();
             _tray = new TrayController(_form);
             _zapret = new ZapretService();
+            _proxy = new TgProxyServer();
 
             WireForm();
             WireTray();
             WireEngine();
+            WireProxy();
             RegisterBridgeHandlers();
 
             _tray.SetState(TrayState.Off);
@@ -94,8 +98,7 @@ namespace AutoZapret.App
 
         private void WireEngine()
         {
-            _zapret.StateChanged += (state, error) =>
-            {
+            _zapret.StateChanged += (state, error) =>            {
                 // состояние приходит из фонового потока — уведомляем трей и UI
                 TrayState trayState;
                 switch (state)
@@ -114,6 +117,17 @@ namespace AutoZapret.App
                     _tray.Notify(AppInfo.Name, error, ToolTipIcon.Error);
 
                 PushState();
+            };
+        }
+
+        private void WireProxy()
+        {
+            _proxy.StateChanged += (state, error) =>
+            {
+                if (state == ProxyState.Error && !string.IsNullOrEmpty(error))
+                    _tray.Notify(AppInfo.Name, "Прокси: " + error, ToolTipIcon.Error);
+
+                SendProxyState();
             };
         }
 
@@ -237,6 +251,110 @@ namespace AutoZapret.App
 
             // ---- фейки
             bridge.Register("fakes.scan", msg => RunInBackground("fakes", SendFakes));
+
+            // ---- прокси
+            bridge.Register("proxy.state", msg => SendProxyState());
+            bridge.Register("proxy.toggle", msg => RunInBackground("proxy-toggle", () =>
+            {
+                bool enabled = Json.GetBool(msg, "enabled", false);
+                if (enabled) StartProxy();
+                else StopProxy();
+                SendProxyState();
+            }));
+            bridge.Register("proxy.copyLink", msg =>
+            {
+                try
+                {
+                    Clipboard.SetText(_settings.BuildProxyLink());
+                    _tray.Notify(AppInfo.Name, "Ссылка скопирована", ToolTipIcon.Info);
+                }
+                catch (Exception ex) { Log.Warn("PROXY", "буфер обмена: " + ex.Message); }
+            });
+            bridge.Register("proxy.openLink", msg =>
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo(_settings.BuildProxyLink()) { UseShellExecute = true });
+                }
+                catch (Exception ex) { Log.Warn("PROXY", "открыть ссылку: " + ex.Message); }
+            });
+            bridge.Register("proxy.test", msg => RunInBackground("proxy-test", RunProxyTestUi));
+        }
+
+        // ---------------------------------------------------------------- proxy
+
+        private void StartProxy()
+        {
+            string error = _proxy.Start(_settings.ProxyHost, _settings.ProxyPort, _settings.ProxySecret);
+            if (error != null)
+            {
+                Log.Error("PROXY", "не удалось запустить: " + error);
+                _tray.Notify(AppInfo.Name, error, ToolTipIcon.Error);
+                return;
+            }
+
+            _settings.ProxyEnabled = true;
+            _settings.Save();
+            _tray.Notify(AppInfo.Name, "Прокси запущен на порту " + _settings.ProxyPort, ToolTipIcon.Info);
+        }
+
+        private void StopProxy()
+        {
+            _proxy.Stop();
+            _settings.ProxyEnabled = false;
+            _settings.Save();
+        }
+
+        private void SendProxyState()
+        {
+            _form.Bridge.Send(WebBridge.Msg("proxy",
+                "running", _proxy.IsRunning,
+                "host", _settings.ProxyHost,
+                "port", (long)_settings.ProxyPort,
+                "statusLine", _proxy.StatusLine(),
+                "active", (long)_proxy.Stats.Active,
+                "total", _proxy.Stats.TotalConnections,
+                "failed", _proxy.Stats.Failed,
+                "error", _proxy.LastError ?? ""));
+        }
+
+        private void RunProxyTestUi()
+        {
+            List<ProxySelfTest.Step> steps = ProxySelfTest.Run(2, false);
+
+            List<object> items = new List<object>();
+            bool allOk = true;
+            string firstFail = null;
+
+            foreach (ProxySelfTest.Step step in steps)
+            {
+                items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    { "name", step.Name },
+                    { "ok", step.Ok },
+                    { "detail", step.Detail ?? "" }
+                });
+
+                if (!step.Ok)
+                {
+                    allOk = false;
+                    if (firstFail == null) firstFail = step.Name;
+                }
+            }
+
+            string advice = "";
+            if (!allOk)
+            {
+                if (firstFail != null && firstFail.IndexOf("Telegram", StringComparison.Ordinal) >= 0)
+                    advice = "Сеть не пускает до kws*.web.telegram.org. Это блокировка на уровне TCP — " +
+                             "desync-стратегии её обычно не пробивают. Нужен VPN/прокси (см. план P11).";
+                else if (firstFail != null && firstFail.IndexOf("WebSocket", StringComparison.Ordinal) >= 0)
+                    advice = "Эндпоинт /apiws не отвечает. Telegram мог его изменить — попробуйте позже.";
+                else
+                    advice = "Прокси не смог ответить: проверьте порт и что он не занят другим приложением.";
+            }
+
+            _form.Bridge.Send(WebBridge.Msg("proxy.test", "steps", items, "advice", advice));
         }
 
         // ---------------------------------------------------------------- fakes
@@ -684,6 +802,7 @@ namespace AutoZapret.App
 
             // сначала гасим winws, потом всё остальное
             try { _zapret.Dispose(); } catch (Exception ex) { Log.Exception("APP", "остановка движка", ex); }
+            try { _proxy.Dispose(); } catch (Exception ex) { Log.Exception("APP", "остановка прокси", ex); }
 
             try
             {
@@ -714,6 +833,7 @@ namespace AutoZapret.App
             _disposed = true;
 
             try { _zapret.Dispose(); } catch { }
+            try { _proxy.Dispose(); } catch { }
             try { _tray.Dispose(); } catch { }
             try { _form.Dispose(); } catch { }
         }

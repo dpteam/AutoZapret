@@ -389,30 +389,43 @@ AutoZapret/
 
 ---
 
-### P6 — Telegram WS Proxy `[ ]`
+### P6 — Telegram WS Proxy `[~]`
 
 Цель: замена `tg-ws-proxy` (Python) на встроенный C# — без внешнего процесса.
 
-- [ ] `WsServer` — **руками** на `TcpListener`: чтение запроса, ответ `101`, ручной кодек кадров.
-      `System.Net.WebSockets` в BCL — только клиент, серверной части нет.
-- [ ] `TgProtocol`: obfuscated2 handshake — `key = SHA256(preinit[8..40] || secret)`,
-      `iv = preinit[40..56]`, `AES-256-CTR`, тег в `[56..60]`, `dc = |int16 LE [60..62]|`, media = отрицательный.
-- [ ] `AesCtr` — свой CTR поверх AES-ECB, **128-битный big-endian инкремент счётчика**
-      (не по младшим 32 битам!), шифрование блоками по 4-64 КБ.
-- [ ] Обратный handshake: `key = SHA256(reverse(preinit[8..56])[0..32] || secret)`, пропуск 64 байт keystream.
-- [ ] `TgPacketSplitter`: abridged (`0x7F`/`0xFF` + int24 слов), intermediate/padded (int32 LE & `0x7FFFFFFF`).
-- [ ] `WsClient` к Telegram: `GET /apiws`, `Upgrade`, `Sec-WebSocket-Protocol: binary`, маскирование исходящих.
-- [ ] `DcTable`: DC 1-5 + 203, IP по умолчанию, `kws{N}.web.telegram.org`, media → `kws{N}-1`.
-- [ ] Cloudflare-фронты: свой домен, Worker, fallback-список; cooldown 30/60 с, «предпочтительный маршрут».
-- [ ] **Детектор «не релеит»**: клиент отправил, Telegram молчит 10 с → рвать сессию
-      (Telegram переподключится сам другим маршрутом).
-- [ ] `tg://proxy?server=…&port=…&secret=dd…` — генерация ссылки + кнопка «Открыть в Telegram».
-- [ ] UI: вкл/выкл, порт, секрет (регенерация), статус соединений, «скопировать ссылку».
+- [x] `AesCtr` — свой CTR поверх AES-ECB, **128-битный big-endian инкремент**,
+      шифрование пачками по 1 КБ, `Skip()` для «проглатывания» keystream.
+- [x] `MtProtoHandshake` — obfuscated2: разбор init, три тега, DC со знаком (media),
+      test-DC, **асимметричные ключи направлений**, генерация relay-init
+      с защитой от HTTP/TLS-подобных начал.
+- [x] `MtProtoSplitter` — abridged (1 байт / 0x7F+3) и intermediate/padded (int32 LE),
+      quick-ack бит не ломает разбор, буферизация разорванных пакетов.
+- [x] `WsClient` — ручной RFC 6455: апгрейд с «телеграмными» заголовками, маскирование,
+      PING→PONG, лимит 16 МБ, склейка фрагментов.
+- [x] `DcTable` — DC 1-5/203, тестовые DC, `kws{N}.web.telegram.org`, media → `-1`.
+- [x] `TgProxyServer` — TCP-листенер, поток на сессию, дренаж при плохом handshake,
+      понятные ошибки bind (10048 → «порт занят»), статистика.
+- [x] `ProxySelfTest` — 3 шага (TCP+TLS → WS /apiws → наш handshake), чтобы ошибка
+      была локализована.
+- [x] Экран **Telegram**: тумблер, адрес, ссылка `tg://proxy`, «открыть в Telegram»,
+      проверка маршрута, статистика.
+- [x] `--test-proxy` для консольной проверки.
+- [x] selftest: AES-CTR обратимость + независимость от размера пачки, разбор секрета,
+      полный цикл handshake (encode→decode), media/DC/тег, отклонение чужого секрета,
+      сплиттер (склейка, разрыв, два пакета в чанке).
+- [ ] Cloudflare-фронты (20 доменов `.co.uk`) — **отложено**, см. ниже.
+- [ ] Fake-TLS (`ee`-секрет) — не нужен для `dd`-режима.
+- [ ] HTTP/2-мультиплексирование (`/api`) — не портируем (в net48 нет h2-клиента).
 
-**DoD:** Telegram Desktop работает через наш прокси; при недоступности WS — падение на TCP-fallback;
-при смерти маршрута сессия восстанавливается без вмешательства.
-
-**Не в v1:** HTTP/2-мультиплексирование (`/api`) и Fake-TLS (`ee`-секрет) — см. `docs/research/tg-ws-proxy.md` §10.
+**Найдено при проверке (важно):**
+`kws*.web.telegram.org` **блокируется на уровне TCP** — не TLS, не SNI, а сам коннект.
+Ни одна из 22 desync-стратегий его не пробивает, и это согласуется с тем, что
+`web.telegram.org` не проходил ни в одном тесте. Значит:
+  * прокси технически готов и корректен (handshake проходит в selftest);
+  * но в этой сети он не заработает без внешнего туннеля;
+  * Cloudflare-фронты из `tg-ws-proxy` сейчас отдают 404 на `/apiws` и 501 на `/api`
+    (проверены все 20 доменов) — похоже, публичный пул мёртв, нужен свой домен
+    или Worker (см. `docs/research/tg-ws-proxy.md` §2.5, варианты C и D).
 
 ---
 
