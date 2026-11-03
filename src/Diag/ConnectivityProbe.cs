@@ -17,11 +17,20 @@ namespace AutoZapret.Diag
         public string Url = "";
         public bool Critical;   // без него результат считается провальным
 
-        public ProbeTarget(string name, string url, bool critical = false)
+        /// <summary>
+        /// Каким движком лечится: "zapret" или "proxy".
+        /// Telegram по HTTPS не пробивается ни одной desync-стратегией —
+        /// ему нужен WS-прокси. Без этого разделения он портит рейтинг:
+        /// все стратегии выглядят как «4/5», хотя пробивают всё, что могут.
+        /// </summary>
+        public string Engine = "zapret";
+
+        public ProbeTarget(string name, string url, bool critical = false, string engine = "zapret")
         {
             Name = name;
             Url = url;
             Critical = critical;
+            Engine = engine;
         }
     }
 
@@ -90,8 +99,20 @@ namespace AutoZapret.Diag
                 new ProbeTarget("discord-cdn", "https://cdn.discordapp.com"),
                 new ProbeTarget("google",   "https://www.google.com"),
                 new ProbeTarget("twitch",   "https://www.twitch.tv"),
-                new ProbeTarget("telegram", "https://web.telegram.org")
+
+                // Telegram по HTTPS не лечится desync: нужен WS-прокси (P6).
+                // Держим отдельно, чтобы не портить рейтинг стратегий zapret.
+                new ProbeTarget("telegram", "https://web.telegram.org", false, "proxy")
             };
+        }
+
+        /// <summary>Только цели, которые имеет смысл пробивать zapret'ом.</summary>
+        public static List<ProbeTarget> ZapretTargets()
+        {
+            List<ProbeTarget> result = new List<ProbeTarget>();
+            foreach (ProbeTarget t in DefaultTargets())
+                if (t.Engine == "zapret") result.Add(t);
+            return result;
         }
 
         public ProbeReport CheckAll(List<ProbeTarget> targets, int timeoutSec = 10, int parallel = 4)

@@ -18,6 +18,7 @@ namespace AutoZapret.Diag
         public int Total;
         public int AvgMs;
         public string Error = "";
+        public List<string> Failed = new List<string>();
 
         public double Rate { get { return Total == 0 ? 0 : (double)OkCount / Total; } }
 
@@ -26,6 +27,13 @@ namespace AutoZapret.Diag
             string mark = Rate >= 1.0 ? "🟢" : Rate > 0 ? "🟡" : "🔴";
             return mark + " " + Name.PadRight(28) + OkCount + "/" + Total +
                    "  " + AvgMs + "ms" + (Error.Length > 0 ? "  (" + Error + ")" : "");
+        }
+
+        /// <summary>Что именно не пробило — без этого «4/5» ничего не говорит.</summary>
+        public string FailedLine()
+        {
+            if (Failed.Count == 0) return "";
+            return "   не прошло: " + string.Join(", ", Failed.ToArray());
         }
     }
 
@@ -92,6 +100,10 @@ namespace AutoZapret.Diag
                 score.OkCount = report.OkCount;
                 score.Total = report.Total;
                 score.AvgMs = report.AvgMs;
+
+                foreach (ProbeResult r in report.Results)
+                    if (!r.Ok) score.Failed.Add(r.Name);
+
                 scores.Add(score);
 
                 _zapret.Stop();
@@ -101,6 +113,7 @@ namespace AutoZapret.Diag
 
                 Log.Info("DIAG", score.ToLine());
                 Report(score.ToLine());
+                if (score.Failed.Count > 0) Report(score.FailedLine());
             }
 
             // возвращаем «выключено» — тестер не должен оставлять обход включённым
@@ -128,6 +141,32 @@ namespace AutoZapret.Diag
     /// <summary>Консольные команды диагностики: --probe, --test-all.</summary>
     public static class DiagCommand
     {
+        /// <summary>
+        /// --strategies: список стратегий с идентификаторами (для отладки и для --only).
+        /// Заодно создаёт кэш strategies.v1.json.
+        /// </summary>
+        public static int RunStrategies(string[] args)
+        {
+            using (ZapretService svc = new ZapretService())
+            {
+                svc.EnsureStrategies();
+
+                Console.WriteLine("== стратегии (" + svc.Strategies.Count + ") ==");
+                foreach (Strategy s in svc.Strategies.All)
+                {
+                    Console.WriteLine("  " + s.Id.PadRight(32) +
+                                      s.Name.PadRight(30) +
+                                      "профилей: " + s.Profiles.Count.ToString().PadRight(3) +
+                                      s.Note);
+                }
+
+                string cache = System.IO.Path.Combine(Paths.StrategiesDir, "strategies.v1.json");
+                Console.WriteLine();
+                Console.WriteLine("кэш: " + cache + (System.IO.File.Exists(cache) ? " (есть)" : " (нет)"));
+                return 0;
+            }
+        }
+
         /// <summary>--probe [seconds]: базовый замер, что заблокировано без обхода.</summary>
         public static int RunProbe(string[] args)
         {
@@ -157,6 +196,14 @@ namespace AutoZapret.Diag
             Console.WriteLine("Дальше имеет смысл тестировать только эти цели:");
             foreach (ProbeTarget t in snapshot.BlockedTargets())
                 Console.WriteLine("  · " + t.Name + "  " + t.Url);
+
+            List<string> proxyOnly = snapshot.ProxyOnly();
+            if (proxyOnly.Count > 0)
+            {
+                Console.WriteLine();
+                Console.WriteLine("zapret'ом не лечится (нужен Telegram-прокси, P6): " +
+                                  string.Join(", ", proxyOnly.ToArray()));
+            }
 
             return 0;
         }
@@ -238,19 +285,27 @@ namespace AutoZapret.Diag
             return 0;
         }
 
-        private static string HostOf(string url)
+        private static string[] ToArray(HashSet<string> set)
         {
+            List<string> list = new List<string>(set);
+            list.Sort(StringComparer.Ordinal);
+            return list.ToArray();
+        }
+
+        private static string HostOf(string url)        {
             try { return new Uri(url).Host; }
             catch { return url; }
         }
 
         /// <summary>
-        /// --test-all [лимит] [секунд_удержания]: перебор стратегий против заблокированных целей.
+        /// --test-all [лимит] [секунд_удержания] [--only id1,id2]
+        /// Перебор стратегий против заблокированных целей.
         /// </summary>
         public static int RunTestAll(string[] args)
         {
             int limit = 6;
             int hold = 4;
+            string only = null;
 
             for (int i = 0; i < args.Length; i++)
             {
@@ -259,6 +314,8 @@ namespace AutoZapret.Diag
                     if (i + 1 < args.Length) int.TryParse(args[i + 1], out limit);
                     if (i + 2 < args.Length) int.TryParse(args[i + 2], out hold);
                 }
+                if (string.Equals(args[i], "--only", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                    only = args[i + 1];
             }
 
             string foreign = WinwsSupervisor.DetectForeignWinws();
@@ -289,10 +346,34 @@ namespace AutoZapret.Diag
                 svc.EnsureStrategies();
 
                 List<string> ids = new List<string>();
-                foreach (Strategy s in svc.Strategies.All)
+                if (!string.IsNullOrEmpty(only))
                 {
-                    ids.Add(s.Id);
-                    if (ids.Count >= limit) break;
+                    // явный список: --only flowseal.faketlsauto,flowseal.alt12
+                    foreach (string raw in only.Split(','))
+                    {
+                        string id = raw.Trim();
+                        if (id.Length == 0) continue;
+                        if (svc.Strategies.Find(id) == null)
+                        {
+                            Console.WriteLine("нет такой стратегии: " + id);
+                            continue;
+                        }
+                        ids.Add(id);
+                    }
+                }
+                else
+                {
+                    foreach (Strategy s in svc.Strategies.All)
+                    {
+                        ids.Add(s.Id);
+                        if (ids.Count >= limit) break;
+                    }
+                }
+
+                if (ids.Count == 0)
+                {
+                    Console.WriteLine("нечего тестировать");
+                    return 1;
                 }
 
                 StrategyTester tester = new StrategyTester(svc, new ConnectivityProbe());
@@ -302,7 +383,30 @@ namespace AutoZapret.Diag
 
                 Console.WriteLine();
                 Console.WriteLine("== рейтинг ==");
-                foreach (StrategyScore s in scores) Console.WriteLine(s.ToLine());
+                foreach (StrategyScore s in scores)
+                {
+                    Console.WriteLine(s.ToLine());
+                    if (s.Failed.Count > 0) Console.WriteLine(s.FailedLine());
+                }
+
+                // что не пробивает вообще ни одна — это отдельная проблема, не выбор стратегии
+                HashSet<string> stillBlocked = new HashSet<string>(StringComparer.Ordinal);
+                if (scores.Count > 0)
+                {
+                    foreach (string f in scores[0].Failed) stillBlocked.Add(f);
+                    foreach (StrategyScore s in scores)
+                    {
+                        HashSet<string> own = new HashSet<string>(s.Failed, StringComparer.Ordinal);
+                        stillBlocked.IntersectWith(own);
+                    }
+                }
+
+                if (stillBlocked.Count > 0)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine("не пробивает НИ ОДНА стратегия: " + string.Join(", ", ToArray(stillBlocked)));
+                    Console.WriteLine("   для этих целей нужен другой подход (DoH, hosts, прокси)");
+                }
 
                 StrategyScore best = scores.Count > 0 ? scores[0] : null;
                 if (best != null && best.OkCount > 0)

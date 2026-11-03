@@ -17,6 +17,12 @@ namespace AutoZapret.Zapret
     {
         public const int CurrentSchema = 1;
 
+        /// <summary>
+        /// Версия формата идентификаторов. Меняется, когда меняется NormalizeId,
+        /// иначе старый кэш принесёт id, которых больше нет.
+        /// </summary>
+        public const int IdFormat = 2;
+
         private readonly List<Strategy> _strategies = new List<Strategy>();
         private readonly object _gate = new object();
 
@@ -96,6 +102,7 @@ namespace AutoZapret.Zapret
             Dictionary<string, object> root = new Dictionary<string, object>(StringComparer.Ordinal)
             {
                 { "schema", CurrentSchema },
+                { "idFormat", IdFormat },
                 { "engine", "v1" },
                 { "sourceVersion", sourceVersion ?? "" },
                 { "importedAt", DateTime.Now.ToString("o") }
@@ -126,6 +133,14 @@ namespace AutoZapret.Zapret
             if (root == null)
             {
                 Log.Warn("WINWS", "strategies.json не разобрался");
+                return false;
+            }
+
+            // кэш от старой версии парсера: id другие, доверять нельзя
+            int idFormat = Json.GetInt(root, "idFormat", 0);
+            if (idFormat != IdFormat)
+            {
+                Log.Info("WINWS", "кэш стратегий устарел (idFormat " + idFormat + " != " + IdFormat + "), переимпорт");
                 return false;
             }
 

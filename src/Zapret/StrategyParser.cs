@@ -385,16 +385,37 @@ namespace AutoZapret.Zapret
             return sb.ToString();
         }
 
+        /// <summary>
+        /// Имя файла -> идентификатор стратегии.
+        /// "general (ALT12)"            -> "general-alt12"
+        /// "general (FAKE TLS AUTO ALT)"-> "general-fake-tls-auto-alt"
+        /// "general"                    -> "general"
+        /// Читаемость важна: id попадает в настройки и в логи.
+        /// </summary>
         private static string NormalizeId(string name)
         {
             StringBuilder sb = new StringBuilder(name.Length);
-            foreach (char c in name.ToLowerInvariant())
+            bool lastDash = false;
+
+            foreach (char raw in name.ToLowerInvariant())
             {
-                if (char.IsLetterOrDigit(c)) sb.Append(c);
-                else if (c == ' ' || c == '(' || c == ')' || c == '-' || c == '_') { }
-                else sb.Append('_');
+                char c = raw;
+                if (char.IsLetterOrDigit(c))
+                {
+                    sb.Append(c);
+                    lastDash = false;
+                    continue;
+                }
+
+                // всё остальное (пробел, скобки, дефис, подчёркивание) - разделитель
+                if (!lastDash && sb.Length > 0)
+                {
+                    sb.Append('-');
+                    lastDash = true;
+                }
             }
-            string id = sb.ToString();
+
+            string id = sb.ToString().Trim('-');
             return id.Length == 0 ? "strategy" : id;
         }
 

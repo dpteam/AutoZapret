@@ -84,10 +84,10 @@ namespace AutoZapret.Diag
                 return s;
             }
 
-            /// <summary>Список целей, которые имеет смысл тестировать (заблокированные).</summary>
+            /// <summary>Список целей, которые имеет смысл тестировать (заблокированные, лечащиеся zapret'ом).</summary>
             public List<ProbeTarget> BlockedTargets()
             {
-                List<ProbeTarget> all = ConnectivityProbe.DefaultTargets();
+                List<ProbeTarget> all = ConnectivityProbe.ZapretTargets();
                 List<ProbeTarget> result = new List<ProbeTarget>();
 
                 foreach (ProbeTarget t in all)
@@ -97,6 +97,15 @@ namespace AutoZapret.Diag
                 }
 
                 return result.Count > 0 ? result : all;
+            }
+
+            /// <summary>Заблокированные цели, которые zapret не лечит (нужен прокси/DoH).</summary>
+            public List<string> ProxyOnly()
+            {
+                List<string> result = new List<string>();
+                foreach (ProbeTarget t in ConnectivityProbe.DefaultTargets())
+                    if (t.Engine == "proxy" && Blocked.Contains(t.Name)) result.Add(t.Name);
+                return result;
             }
         }
 
