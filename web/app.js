@@ -357,6 +357,150 @@
 
     // ------------------------------------------------------------ кнопки
 
+    function initDiag() {
+        var probe = document.getElementById("btn-diag-probe");
+        if (probe) probe.addEventListener("click", function () {
+            probe.disabled = true;
+            probe.textContent = "Проверяю…";
+            send("diag.probe");
+        });
+
+        var deep = document.getElementById("btn-diag-deep");
+        if (deep) deep.addEventListener("click", function () {
+            deep.disabled = true;
+            deep.textContent = "Определяю…";
+            send("diag.deep");
+        });
+
+        var test = document.getElementById("btn-diag-test");
+        if (test) test.addEventListener("click", function () {
+            var count = parseInt(document.getElementById("diag-test-count").value, 10) || 5;
+            test.disabled = true;
+            test.textContent = "Идёт перебор…";
+            document.getElementById("diag-test-progress").style.display = "";
+            document.getElementById("diag-test-result").style.display = "none";
+            send("diag.test", { count: count });
+        });
+
+        var apply = document.getElementById("btn-diag-apply");
+        if (apply) apply.addEventListener("click", function () {
+            if (!lastBestStrategy) return;
+            send("strategy.select", { id: lastBestStrategy });
+            apply.textContent = "Применено";
+            apply.disabled = true;
+        });
+    }
+
+    var lastBestStrategy = null;
+
+    function renderProbeResult(msg) {
+        var box = document.getElementById("diag-probe-result");
+        var list = document.getElementById("diag-probe-list");
+        var btn = document.getElementById("btn-diag-probe");
+        if (btn) { btn.disabled = false; btn.textContent = "Проверить"; }
+        if (!box || !list) return;
+
+        var items = msg.items || [];
+        list.innerHTML = "";
+
+        items.forEach(function (t) {
+            var ok = t.ok;
+            var div = document.createElement("div");
+            div.className = "diag-row";
+            div.innerHTML =
+                '<span class="badge ' + (ok ? "ok" : "bad") + '">' + (ok ? "OK" : "✕") + '</span>' +
+                '<span class="name">' + t.name + '</span>' +
+                '<span class="verdict ' + (ok ? "diag-ok" : "diag-bad") + '">' +
+                    (ok ? "открывается" : "заблокировано") + '</span>' +
+                '<span class="detail">' + (t.detail || "") + '</span>';
+            list.appendChild(div);
+        });
+
+        document.getElementById("diag-probe-summary").innerHTML = msg.summary || "";
+        box.style.display = "";
+    }
+
+    function renderDeepResult(msg) {
+        var box = document.getElementById("diag-deep-result");
+        var list = document.getElementById("diag-deep-list");
+        var advice = document.getElementById("diag-deep-advice");
+        var btn = document.getElementById("btn-diag-deep");
+        if (btn) { btn.disabled = false; btn.textContent = "Определить"; }
+        if (!box || !list) return;
+
+        var items = msg.items || [];
+        list.innerHTML = "";
+        advice.innerHTML = "";
+
+        items.forEach(function (t) {
+            var cls = t.ok ? "ok" : (t.kind === "TIMEOUT" ? "warn" : "bad");
+            var div = document.createElement("div");
+            div.className = "diag-row";
+            div.innerHTML =
+                '<span class="badge ' + cls + '">' + (t.ok ? "OK" : t.kind) + '</span>' +
+                '<span class="name">' + t.name + '</span>' +
+                '<span class="verdict">' + t.russian + '</span>' +
+                '<span class="detail">' + (t.detail || "") + '</span>';
+            list.appendChild(div);
+        });
+
+        (msg.advice || []).forEach(function (a) {
+            var div = document.createElement("div");
+            div.className = "advice";
+            div.innerHTML = "<b>" + a.kind + "</b> — " + a.russian +
+                '<div class="hint">' + a.suggest.join(" · ") + "</div>";
+            advice.appendChild(div);
+        });
+
+        box.style.display = "";
+    }
+
+    function renderTestProgress(msg) {
+        var el = document.getElementById("diag-test-status");
+        if (el) el.textContent = msg.line || "";
+    }
+
+    function renderTestResult(msg) {
+        var btn = document.getElementById("btn-diag-test");
+        if (btn) { btn.disabled = false; btn.textContent = "Подобрать"; }
+
+        document.getElementById("diag-test-progress").style.display = "none";
+        var box = document.getElementById("diag-test-result");
+        var body = document.getElementById("diag-test-body");
+        if (!box || !body) return;
+
+        var items = msg.items || [];
+        body.innerHTML = "";
+        lastBestStrategy = null;
+
+        items.forEach(function (s, index) {
+            var tr = document.createElement("tr");
+            if (index === 0 && s.okCount > 0) { tr.className = "best"; lastBestStrategy = s.id; }
+
+            var mark = s.okCount === s.total ? "🟢" : (s.okCount > 0 ? "🟡" : "🔴");
+            var failed = (s.failed && s.failed.length > 0)
+                ? '<div class="detail">не прошло: ' + s.failed.join(", ") + "</div>" : "";
+
+            tr.innerHTML =
+                "<td>" + mark + "</td>" +
+                "<td>" + s.name + failed + "</td>" +
+                "<td>" + s.okCount + "/" + s.total + "</td>" +
+                "<td>" + (s.okCount > 0 ? s.avgMs + " ms" : "—") + "</td>";
+            body.appendChild(tr);
+        });
+
+        document.getElementById("diag-test-summary").textContent = msg.summary || "";
+
+        var apply = document.getElementById("btn-diag-apply");
+        if (apply) {
+            apply.style.display = lastBestStrategy ? "" : "none";
+            apply.disabled = false;
+            apply.textContent = "Применить лучшую";
+        }
+
+        box.style.display = "";
+    }
+
     function initButtons() {
         var power = document.getElementById("power");
         if (power) power.addEventListener("click", function () { send("toggle"); });
@@ -397,6 +541,22 @@
                 renderStrategies(strategyItems);
                 break;
 
+            case "diag.probe":
+                renderProbeResult(msg);
+                break;
+
+            case "diag.deep":
+                renderDeepResult(msg);
+                break;
+
+            case "diag.progress":
+                renderTestProgress(msg);
+                break;
+
+            case "diag.test":
+                renderTestResult(msg);
+                break;
+
             case "logs":
                 logLines = msg.lines || [];
                 text("log-file", msg.file);
@@ -430,6 +590,7 @@
     function boot() {
         initNav();
         initSettings();
+        initDiag();
         initButtons();
 
         if (host) {

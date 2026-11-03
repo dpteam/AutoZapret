@@ -26,6 +26,7 @@
 
     <div class="nav">
       <button class="nav-item active" data-screen="home"><span class="nav-icon">◉</span> Главная</button>
+      <button class="nav-item" data-screen="diag"><span class="nav-icon">⚕</span> Диагностика</button>
       <button class="nav-item" data-screen="lists"><span class="nav-icon">▤</span> Списки</button>
       <button class="nav-item" data-screen="logs"><span class="nav-icon">≡</span> Логи</button>
       <button class="nav-item" data-screen="settings"><span class="nav-icon">⚙</span> Настройки</button>
@@ -114,6 +115,75 @@
             <div class="row-hint">Что происходило и почему</div>
           </div>
           <button class="btn" data-goto="logs">Открыть</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ ДИАГНОСТИКА -->
+    <section class="screen" id="screen-diag">
+      <h1>Диагностика</h1>
+      <p class="subtitle">Что заблокировано, почему и чем это лечится</p>
+
+      <div class="card">
+        <div class="card-title">Шаг 1 — что заблокировано</div>
+        <div class="row">
+          <div>
+            <div class="row-label">Проверить сеть без обхода</div>
+            <div class="row-hint">Обход должен быть выключен — иначе замер врёт</div>
+          </div>
+          <button class="btn primary" id="btn-diag-probe">Проверить</button>
+        </div>
+        <div id="diag-probe-result" style="display:none;margin-top:12px">
+          <div class="diag-list" id="diag-probe-list"></div>
+          <div class="row" style="margin-top:10px">
+            <div class="row-hint" id="diag-probe-summary"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Шаг 2 — почему не открывается</div>
+        <div class="row">
+          <div>
+            <div class="row-label">Определить тип блокировки</div>
+            <div class="row-hint">RST, подмена TLS, тишина, DNS — от этого зависит выбор стратегии</div>
+          </div>
+          <button class="btn" id="btn-diag-deep">Определить</button>
+        </div>
+        <div id="diag-deep-result" style="display:none;margin-top:12px">
+          <div class="diag-list" id="diag-deep-list"></div>
+          <div id="diag-deep-advice" style="margin-top:12px"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Шаг 3 — подобрать стратегию</div>
+        <div class="row">
+          <div>
+            <div class="row-label">Перебрать стратегии</div>
+            <div class="row-hint">Проверяются только заблокированные цели. Займёт несколько минут</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select id="diag-test-count">
+              <option value="5">5 стратегий</option>
+              <option value="10">10 стратегий</option>
+              <option value="22" selected>все 22</option>
+            </select>
+            <button class="btn primary" id="btn-diag-test">Подобрать</button>
+          </div>
+        </div>
+        <div id="diag-test-progress" style="display:none;margin-top:12px">
+          <div class="progress-line" id="diag-test-status">…</div>
+        </div>
+        <div id="diag-test-result" style="display:none;margin-top:12px">
+          <table class="rank">
+            <thead><tr><th></th><th>Стратегия</th><th>Цели</th><th>Задержка</th></tr></thead>
+            <tbody id="diag-test-body"></tbody>
+          </table>
+          <div class="row" style="margin-top:10px">
+            <div class="row-hint" id="diag-test-summary"></div>
+            <button class="btn" id="btn-diag-apply" style="display:none">Применить лучшую</button>
+          </div>
         </div>
       </div>
     </section>

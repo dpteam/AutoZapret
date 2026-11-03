@@ -418,3 +418,82 @@ input:focus, select:focus { border-color: var(--accent-blue); }
     color: var(--text-muted);
     border: 1px solid var(--border-light);
 }
+
+/* ---------------------------------------------------------------- диагностика */
+
+.diag-list { display: flex; flex-direction: column; gap: 6px; }
+
+.diag-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 10px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    font-size: 12.5px;
+}
+
+.diag-row .name { flex: 0 0 130px; }
+.diag-row .verdict { flex: 1; }
+.diag-row .detail { color: var(--text-dim); font-size: 11.5px; }
+
+.diag-ok   { color: var(--accent-green); }
+.diag-bad  { color: var(--accent-red); }
+.diag-warn { color: var(--accent-yellow); }
+
+.badge {
+    display: inline-block;
+    min-width: 16px;
+    text-align: center;
+    font-size: 10.5px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-weight: 600;
+}
+
+.badge.ok   { background: rgba(0,214,143,.15); color: var(--accent-green); }
+.badge.bad  { background: rgba(231,76,60,.15); color: #F1908A; }
+.badge.warn { background: rgba(240,180,41,.15); color: var(--accent-yellow); }
+
+.advice {
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    background: rgba(85,170,255,.06);
+    border-left: 2px solid var(--accent-blue);
+    font-size: 12.5px;
+    margin-bottom: 8px;
+}
+
+.advice b { color: var(--accent-blue); }
+.advice .hint { color: var(--text-muted); font-size: 11.5px; margin-top: 4px; }
+
+.progress-line {
+    font-size: 12.5px;
+    color: var(--text-muted);
+    font-family: "Cascadia Mono", "Consolas", monospace;
+}
+
+table.rank {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+}
+
+table.rank th {
+    text-align: left;
+    font-weight: 500;
+    color: var(--text-muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+}
+
+table.rank td {
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border);
+}
+
+table.rank tr:last-child td { border-bottom: none; }
+table.rank tr.best td { background: rgba(0,214,143,.05); }

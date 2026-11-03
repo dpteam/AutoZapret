@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Threading;
 using System.Windows.Forms;
 using AutoZapret.Core;
+using AutoZapret.Diag;
 using AutoZapret.Zapret;
 
 namespace AutoZapret.App
@@ -187,6 +188,182 @@ namespace AutoZapret.App
                 _settings.Save();
                 PushState();
             });
+
+            // ---- диагностика
+            bridge.Register("diag.probe", msg => RunInBackground("probe", RunProbeUi));
+            bridge.Register("diag.deep", msg => RunInBackground("deep", RunDeepUi));
+            bridge.Register("diag.test", msg =>
+            {
+                int count = Json.GetInt(msg, "count", 5);
+                RunInBackground("test", () => RunTestUi(count));
+            });
+        }
+
+        // ------------------------------------------------------------ diagnostics
+
+        /// <summary>
+        /// Запуск долгой операции в фоне. UI не блокируется, результат приходит
+        /// отдельным сообщением. Ошибки уходят в лог и в страницу, а не в никуда.
+        /// </summary>
+        private void RunInBackground(string name, Action work)
+        {
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
+                {
+                    work();
+                }
+                catch (Exception ex)
+                {
+                    Log.Exception("DIAG", name, ex);
+                    _form.Bridge.Send(WebBridge.Msg("error", "message", ex.Message, "action", name));
+                }
+            });
+        }
+
+        private void RunProbeUi()
+        {
+            ConnectivityProbe probe = new ConnectivityProbe();
+            Baseline.Snapshot snapshot = Baseline.Measure(probe, 10, false);
+
+            List<object> items = new List<object>();
+            foreach (ProbeTarget target in ConnectivityProbe.DefaultTargets())
+            {
+                bool blocked = snapshot.Blocked.Contains(target.Name);
+                bool working = snapshot.Working.Contains(target.Name);
+                if (!blocked && !working) continue;
+
+                items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    { "name", target.Name },
+                    { "url", target.Url },
+                    { "ok", working },
+                    { "engine", target.Engine },
+                    { "detail", target.Engine == "proxy" && blocked ? "нужен прокси" : "" }
+                });
+            }
+
+            List<string> proxyOnly = snapshot.ProxyOnly();
+            string summary = "работает " + snapshot.Working.Count + " из " + snapshot.Total +
+                             ", заблокировано " + snapshot.Blocked.Count + " · сеть " + snapshot.Network;
+            if (proxyOnly.Count > 0)
+                summary += " · zapret'ом не лечится: " + string.Join(", ", proxyOnly.ToArray());
+
+            _form.Bridge.Send(WebBridge.Msg("diag.probe", "items", items, "summary", summary));
+        }
+
+        private void RunDeepUi()
+        {
+            Baseline.Snapshot baseline = Baseline.Load();
+            if (baseline == null)
+            {
+                _form.Bridge.Send(WebBridge.Msg("error",
+                    "message", "Сначала выполните «Проверить сеть»", "action", "deep"));
+                return;
+            }
+
+            DeepProbe probe = new DeepProbe();
+
+            List<string> hosts = new List<string>();
+            foreach (ProbeTarget t in ConnectivityProbe.DefaultTargets())
+                if (baseline.Blocked.Contains(t.Name)) hosts.Add(new Uri(t.Url).Host);
+            probe.LearnStubIps(hosts);
+
+            List<object> items = new List<object>();
+            Dictionary<BlockKind, List<string>> byKind = new Dictionary<BlockKind, List<string>>();
+
+            foreach (ProbeTarget target in ConnectivityProbe.DefaultTargets())
+            {
+                bool blocked = baseline.Blocked.Contains(target.Name);
+                if (!blocked) continue;
+
+                string host = new Uri(target.Url).Host;
+                string detail;
+                BlockKind kind = probe.Classify(host, 8, out detail);
+
+                items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    { "name", target.Name },
+                    { "kind", BlockKindText.Short(kind) },
+                    { "russian", BlockKindText.Russian(kind) },
+                    { "ok", BlockKindText.IsOk(kind) },
+                    { "detail", detail ?? "" }
+                });
+
+                List<string> list;
+                if (!byKind.TryGetValue(kind, out list)) { list = new List<string>(); byKind[kind] = list; }
+                list.Add(target.Name);
+            }
+
+            List<object> advice = new List<object>();
+            foreach (KeyValuePair<BlockKind, List<string>> kv in byKind)
+            {
+                if (BlockKindText.IsOk(kv.Key)) continue;
+
+                List<object> suggest = new List<object>();
+                foreach (string s in BlockKindText.Suggest(kv.Key)) suggest.Add(s);
+
+                List<object> targets = new List<object>();
+                foreach (string t in kv.Value) targets.Add(t);
+
+                advice.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    { "kind", BlockKindText.Short(kv.Key) },
+                    { "russian", BlockKindText.Russian(kv.Key) + ": " + string.Join(", ", kv.Value.ToArray()) },
+                    { "suggest", suggest }
+                });
+            }
+
+            _form.Bridge.Send(WebBridge.Msg("diag.deep", "items", items, "advice", advice));
+        }
+
+        private void RunTestUi(int count)
+        {
+            Baseline.Snapshot baseline = Baseline.Load();
+            if (baseline == null || baseline.Blocked.Count == 0)
+            {
+                _form.Bridge.Send(WebBridge.Msg("error",
+                    "message", "Сначала выполните «Проверить сеть»", "action", "test"));
+                return;
+            }
+
+            _zapret.EnsureStrategies();
+
+            List<string> ids = new List<string>();
+            foreach (Strategy s in _zapret.Strategies.All)
+            {
+                ids.Add(s.Id);
+                if (ids.Count >= count) break;
+            }
+
+            StrategyTester tester = new StrategyTester(_zapret, new ConnectivityProbe());
+            tester.Progress += line => _form.Bridge.Send(WebBridge.Msg("diag.progress", "line", line));
+
+            List<StrategyScore> scores = tester.Run(ids, baseline, 5, 8);
+
+            List<object> items = new List<object>();
+            foreach (StrategyScore s in scores)
+            {
+                List<object> failed = new List<object>();
+                foreach (string f in s.Failed) failed.Add(f);
+
+                items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    { "id", s.Id },
+                    { "name", s.Name },
+                    { "okCount", (long)s.OkCount },
+                    { "total", (long)s.Total },
+                    { "avgMs", (long)s.AvgMs },
+                    { "failed", failed },
+                    { "error", s.Error ?? "" }
+                });
+            }
+
+            string summary = scores.Count == 0
+                ? "ничего не проверено"
+                : "проверено " + scores.Count + " стратегий против " + baseline.Blocked.Count + " целей";
+
+            _form.Bridge.Send(WebBridge.Msg("diag.test", "items", items, "summary", summary));
         }
 
         // --------------------------------------------------------------- control
