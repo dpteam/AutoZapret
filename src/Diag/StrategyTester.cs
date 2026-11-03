@@ -164,12 +164,15 @@ namespace AutoZapret.Diag
             Console.WriteLine();
             string error = updater.Install(delegate
             {
-                // останавливаем чужой winws, если он есть
-                System.Diagnostics.Process[] procs = System.Diagnostics.Process.GetProcessesByName("winws");
-                foreach (System.Diagnostics.Process p in procs)
+                // останавливаем чужой winws/winws2, если он есть
+                foreach (string name in new[] { "winws", "winws2" })
                 {
-                    try { p.Kill(); } catch { }
-                    try { p.Dispose(); } catch { }
+                    System.Diagnostics.Process[] procs = System.Diagnostics.Process.GetProcessesByName(name);
+                    foreach (System.Diagnostics.Process p in procs)
+                    {
+                        try { p.Kill(); } catch { }
+                        try { p.Dispose(); } catch { }
+                    }
                 }
                 System.Threading.Thread.Sleep(1500);
                 return true;

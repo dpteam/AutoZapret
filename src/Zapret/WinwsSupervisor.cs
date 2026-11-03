@@ -85,6 +85,17 @@ namespace AutoZapret.Zapret
             _engine.Refresh();
             if (!_engine.Ready) return _engine.Problem;
 
+            // какой движок нужен этой стратегии
+            EngineKind kind = string.Equals(strategy.Engine, "v2", StringComparison.OrdinalIgnoreCase)
+                ? EngineKind.V2
+                : EngineKind.V1;
+
+            if (!_engine.IsAvailable(kind))
+                return _engine.UnavailableReason(kind);
+
+            string exePath = _engine.ExePath(kind);
+            if (exePath == null) return _engine.UnavailableReason(kind);
+
             // чужой winws — частая причина «не работает»
             string foreign = DetectForeignWinws();
             if (foreign != null)
@@ -96,13 +107,13 @@ namespace AutoZapret.Zapret
             SetState(ProtectionState.Starting, null);
 
             List<string> args = strategy.BuildArguments(placeholders);
-            Log.Info("WINWS", "старт стратегии '" + strategy.Name + "', аргументов: " + args.Count);
+            Log.Info("WINWS", "старт " + kind + " стратегии '" + strategy.Name + "', аргументов: " + args.Count);
 
             try
             {
                 ProcessStartInfo psi = new ProcessStartInfo
                 {
-                    FileName = _engine.WinwsPath,
+                    FileName = exePath,
                     WorkingDirectory = _engine.BinDir,
                     UseShellExecute = false,
                     CreateNoWindow = true,
@@ -291,29 +302,38 @@ namespace AutoZapret.Zapret
         }
 
         /// <summary>
-        /// Ищет чужой запущенный winws. Возвращает описание или null.
+        /// Ищет чужой запущенный winws/winws2. Возвращает описание или null.
         /// Нужно, чтобы не гадать, почему «не работает»: чаще всего виновата служба zapret.
         /// </summary>
         public static string DetectForeignWinws()
         {
             try
             {
-                Process[] all = Process.GetProcessesByName("winws");
-                if (all.Length == 0) return null;
-
                 List<string> descr = new List<string>();
-                foreach (Process p in all)
+
+                foreach (string name in new[] { "winws", "winws2" })
                 {
-                    try { descr.Add("pid " + p.Id); }
-                    catch { descr.Add("pid ?"); }
-                    finally { try { p.Dispose(); } catch { } }
+                    Process[] all = Process.GetProcessesByName(name);
+                    foreach (Process p in all)
+                    {
+                        try { descr.Add(name + " pid " + p.Id); }
+                        catch { descr.Add(name + " pid ?"); }
+                        finally { try { p.Dispose(); } catch { } }
+                    }
                 }
-                return string.Join(", ", descr.ToArray());
+
+                return descr.Count == 0 ? null : string.Join(", ", descr.ToArray());
             }
             catch
             {
                 return null;
             }
+        }
+
+        /// <summary>Есть ли хоть один живой winws/winws2.</summary>
+        public static bool AnyWinwsRunning()
+        {
+            return DetectForeignWinws() != null;
         }
 
         private void SetState(ProtectionState state, string error)

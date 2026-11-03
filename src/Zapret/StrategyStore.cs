@@ -55,6 +55,11 @@ namespace AutoZapret.Zapret
         /// </summary>
         public int ImportFromDirectory(string dir, string binDir, string listsDir)
         {
+            return ImportFromDirectory(dir, binDir, listsDir, null);
+        }
+
+        public int ImportFromDirectory(string dir, string binDir, string listsDir, string luaDir)
+        {
             List<Strategy> imported = new List<Strategy>();
 
             if (!Directory.Exists(dir))
@@ -71,7 +76,7 @@ namespace AutoZapret.Zapret
                 string name = Path.GetFileName(file);
                 if (name.StartsWith("service", StringComparison.OrdinalIgnoreCase)) continue;
 
-                Strategy s = StrategyParser.ParseBat(file, binDir, listsDir);
+                Strategy s = StrategyParser.ParseBat(file, binDir, listsDir, luaDir);
                 if (s == null)
                 {
                     Log.Debug("WINWS", "пропущен (нет winws): " + name);
@@ -85,25 +90,55 @@ namespace AutoZapret.Zapret
                 imported.Add(s);
             }
 
-            lock (_gate)
+            if (imported.Count == 0)
             {
-                _strategies.Clear();
-                _strategies.AddRange(imported);
+                // ВАЖНО: выходим ДО RemoveAll. Иначе при пустом импорте
+                // engine = "v1" (значение по умолчанию), и мы сотрём стратегии
+                // другого движка. Именно так v2 однажды удалил все v1.
+                Log.Warn("WINWS", "в " + dir + " не найдено ни одной стратегии");
+                return 0;
             }
 
-            Log.Info("WINWS", "импортировано стратегий: " + imported.Count);
+            string engine = imported[0].Engine;
+
+            lock (_gate)
+            {
+                // заменяем только стратегии того же движка: v1 и v2 живут вместе
+                _strategies.RemoveAll(s => string.Equals(s.Engine, engine, StringComparison.OrdinalIgnoreCase));
+                _strategies.AddRange(imported);
+                _strategies.Sort((a, b) => string.Compare(a.Id, b.Id, StringComparison.OrdinalIgnoreCase));
+            }
+
+            Log.Info("WINWS", "импортировано стратегий (" + engine + "): " + imported.Count);
             return imported.Count;
+        }
+
+        /// <summary>Стратегии конкретного движка.</summary>
+        public List<Strategy> ByEngine(string engine)
+        {
+            List<Strategy> result = new List<Strategy>();
+            lock (_gate)
+            {
+                foreach (Strategy s in _strategies)
+                    if (string.Equals(s.Engine, engine, StringComparison.OrdinalIgnoreCase)) result.Add(s);
+            }
+            return result;
         }
 
         // ------------------------------------------------------------- serialize
 
         public string ToJson(string sourceVersion)
         {
+            return ToJson(sourceVersion, "v1");
+        }
+
+        public string ToJson(string sourceVersion, string engine)
+        {
             Dictionary<string, object> root = new Dictionary<string, object>(StringComparer.Ordinal)
             {
                 { "schema", CurrentSchema },
                 { "idFormat", IdFormat },
-                { "engine", "v1" },
+                { "engine", engine ?? "v1" },
                 { "sourceVersion", sourceVersion ?? "" },
                 { "importedAt", DateTime.Now.ToString("o") }
             };
@@ -111,7 +146,9 @@ namespace AutoZapret.Zapret
             List<object> list = new List<object>();
             lock (_gate)
             {
-                foreach (Strategy s in _strategies) list.Add(StrategyToMap(s));
+                foreach (Strategy s in _strategies)
+                    if (string.Equals(s.Engine, engine ?? "v1", StringComparison.OrdinalIgnoreCase))
+                        list.Add(StrategyToMap(s));
             }
             root["strategies"] = list;
 
@@ -120,8 +157,13 @@ namespace AutoZapret.Zapret
 
         public void Save(string path, string sourceVersion)
         {
-            AtomicFile.WriteAllText(path, ToJson(sourceVersion));
-            Log.Info("WINWS", "стратегии сохранены: " + path);
+            Save(path, sourceVersion, "v1");
+        }
+
+        public void Save(string path, string sourceVersion, string engine)
+        {
+            AtomicFile.WriteAllText(path, ToJson(sourceVersion, engine));
+            Log.Info("WINWS", "стратегии сохранены (" + engine + "): " + path);
         }
 
         public bool Load(string path)
@@ -156,12 +198,17 @@ namespace AutoZapret.Zapret
                 if (s != null && s.Profiles.Count > 0) loaded.Add(s);
             }
 
+            // кэш одного движка не должен стирать стратегии другого
+            string engine = Json.GetString(root, "engine", "v1");
+
             lock (_gate)
             {
-                _strategies.Clear();
+                _strategies.RemoveAll(s => string.Equals(s.Engine, engine, StringComparison.OrdinalIgnoreCase));
                 _strategies.AddRange(loaded);
+                _strategies.Sort((a, b) => string.Compare(a.Id, b.Id, StringComparison.OrdinalIgnoreCase));
             }
-            Log.Info("WINWS", "загружено стратегий: " + loaded.Count);
+
+            Log.Info("WINWS", "загружено стратегий (" + engine + "): " + loaded.Count);
             return loaded.Count > 0;
         }
 

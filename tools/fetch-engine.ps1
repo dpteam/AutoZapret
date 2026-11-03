@@ -8,17 +8,26 @@
     WinDivert64.sys, который флагуется как RiskTool), хотя отдельные файлы
     проходят спокойно. git clone такой проблемы не создаёт.
 
-    Берём только нужное:
-      zapret-win-bundle\zapret-winws\  -> winws.exe, dll, sys, files\, windivert.filter\
-      Flowseal\lists\                  -> списки доменов и ipset
-      Flowseal\bin\                    -> фейки (.bin), свежее бандловых
-      Flowseal\utils\                  -> game_filter.enabled, targets.txt
+    Ставим ОБА движка, каждый — из проекта, который его поддерживает:
+
+      v1 (winws.exe)  <- Flowseal/zapret-discord-youtube
+                         шипит свой winws.exe (203776 байт), отличный от
+                         бандлового, и тестирует 22 стратегии именно с ним.
+      v2 (winws2.exe) <- SnAnVl/zapret-discord-youtube (ветка zapret2)
+                         шипит свой winws2.exe и СВОЙ lua/ с blobs.lua.
+                         Смешивать lua из разных источников нельзя:
+                         NFQWS2_COMPAT_VER жёстко связывает exe и скрипты.
+
+      Общее (cygwin1.dll, WinDivert.dll/.sys, фейки .bin) — идентично
+      у обоих, берём из Flowseal.
+      Дополнения (elevator.exe, killall.exe, windivert.filter/) — из бандла.
 
     Раскладка на выходе:
-      engine\bin\        winws.exe + dll + sys + *.bin фейки
+      engine\bin\        winws.exe, winws2.exe, dll, sys, *.bin фейки
+      engine\lua\        скрипты для winws2 (blobs.lua, zapret-*.lua)
       engine\lists\      list-*.txt, ipset-*.txt
       engine\utils\      game_filter.enabled
-      engine\version.txt
+      engine\version.txt, engine\version2.txt
       engine\manifest.json  (SHA-256 каждого файла)
 
 .PARAMETER Force
@@ -28,13 +37,17 @@
     Ветка/тег zapret-win-bundle. По умолчанию master.
 
 .PARAMETER FlowsealRef
-    Ветка/тег zapret-discord-youtube. По умолчанию main.
+    Ветка/тег zapret-discord-youtube (v1). По умолчанию main.
+
+.PARAMETER Zapret2Ref
+    Ветка snanvl (v2). По умолчанию zapret2.
 #>
 [CmdletBinding()]
 param(
     [switch]$Force,
     [string]$BundleRef   = 'master',
-    [string]$FlowsealRef = 'main'
+    [string]$FlowsealRef = 'main',
+    [string]$Zapret2Ref  = 'zapret2'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -144,9 +157,52 @@ try {
         }
     }
 
+    # ---------------------------------------------------------------- zapret2
+    #
+    # v2 ставим из snanvl: у него свой winws2.exe и СВОЙ lua/ с blobs.lua.
+    # lua из бандла НЕ подходит — там нет blobs.lua, и версии zapret-lib.lua
+    # отличаются (96453 против 93714 байт). NFQWS2_COMPAT_VER связывает
+    # exe и скрипты жёстко, смешивать нельзя.
+    Write-Host "[2/5] zapret2 ($Zapret2Ref) ..."
+    $z2Dir = Join-Path $temp 'zapret2'
+    $z2Ok = $true
+    try {
+        CloneRepo 'https://github.com/SnAnVl/zapret-discord-youtube.git' $z2Dir $Zapret2Ref
+    } catch {
+        $z2Ok = $false
+        Write-Host "      [warn] zapret2 недоступен — останется только v1" -ForegroundColor Yellow
+    }
+
+    $z2Version = ''
+    if ($z2Ok) {
+        $z2Bin = Join-Path $z2Dir 'bin'
+        if (Test-Path (Join-Path $z2Bin 'winws2.exe')) {
+            Copy-Item (Join-Path $z2Bin 'winws2.exe') (Join-Path $binDir 'winws2.exe') -Force
+            Write-Host "      bin\winws2.exe"
+        } else {
+            Write-Host "      [warn] у zapret2 нет bin\winws2.exe" -ForegroundColor Yellow
+        }
+
+        # lua — целиком из zapret2
+        $z2Lua = Join-Path $z2Dir 'lua'
+        if (Test-Path $z2Lua) {
+            $luaDir = Join-Path $engine 'lua'
+            if (Test-Path $luaDir) { Remove-Item $luaDir -Recurse -Force }
+            Copy-Item $z2Lua $luaDir -Recurse -Force
+            $luaCount = (Get-ChildItem $luaDir -File).Count
+            Write-Host "      lua\ ($luaCount файлов)"
+        }
+
+        # версия zapret2
+        $z2VersionFile = Join-Path $z2Dir '.service\version.txt'
+        if (Test-Path $z2VersionFile) {
+            $z2Version = (Get-Content $z2VersionFile -Raw).Trim()
+        }
+    }
+
     # ---------------------------------------------------------------- bundle
-    # Только дополнения, которых нет у Flowseal.
-    Write-Host "[2/5] дополнения из zapret-win-bundle ($BundleRef) ..."
+    # Только дополнения, которых нет ни у Flowseal, ни у snanvl.
+    Write-Host "[3/5] дополнения из zapret-win-bundle ($BundleRef) ..."
     $bundleDir = Join-Path $temp 'bundle'
     $bundleOk = $true
     try {
@@ -170,14 +226,7 @@ try {
             Write-Host "      bin\windivert.filter\"
         }
 
-        # lua нужен только для zapret2, но пусть лежит
-        $luaSrc = Join-Path $winwsSrc 'lua'
-        if (Test-Path $luaSrc) {
-            Copy-Item $luaSrc (Join-Path $engine 'lua') -Recurse -Force
-            Write-Host "      lua\ (для zapret2)"
-        }
-
-        # фейки бандла — только те, которых нет у Flowseal
+        # фейки бандла — только те, которых нет
         $filesSrc = Join-Path $winwsSrc 'files'
         if (Test-Path $filesSrc) {
             $added = 0
@@ -219,11 +268,14 @@ try {
 
     $bundleCommit = (& git -C $bundleDir rev-parse --short HEAD 2>$null)
     $flowCommit   = (& git -C $flowDir   rev-parse --short HEAD 2>$null)
+    $z2Commit     = ''
+    if ($z2Ok) { $z2Commit = (& git -C $z2Dir rev-parse --short HEAD 2>$null) }
 
     $manifest = [pscustomobject]@{
         generatedAt = (Get-Date).ToString('o')
         bundle      = @{ repo = 'bol-van/zapret-win-bundle'; ref = $BundleRef; commit = "$bundleCommit" }
-        flowseal    = @{ repo = 'Flowseal/zapret-discord-youtube'; ref = $FlowsealRef; commit = "$flowCommit"; version = $flowVersion }
+        v1          = @{ repo = 'Flowseal/zapret-discord-youtube'; ref = $FlowsealRef; commit = "$flowCommit"; version = $flowVersion }
+        v2          = @{ repo = 'SnAnVl/zapret-discord-youtube'; ref = $Zapret2Ref; commit = "$z2Commit"; version = $z2Version }
         fileCount   = $entries.Count
         files       = $entries
     }
@@ -231,12 +283,20 @@ try {
 
     # ---------------------------------------------------------------- version
     Set-Content -Path (Join-Path $engine 'version.txt') -Value $flowVersion -Encoding ASCII -NoNewline
+    if ($z2Version.Length -gt 0) {
+        Set-Content -Path (Join-Path $engine 'version2.txt') -Value $z2Version -Encoding ASCII -NoNewline
+    }
     Write-Host "[5/5] готово."
 
     $binSize  = [int](((Get-ChildItem $binDir  -Recurse -File | Measure-Object Length -Sum).Sum) / 1MB)
     $listSize = [int](((Get-ChildItem $listDir -Recurse -File | Measure-Object Length -Sum).Sum) / 1KB)
     Write-Host ""
-    Write-Host "  версия Flowseal : $flowVersion ($flowCommit)"
+    Write-Host "  v1 Flowseal     : $flowVersion ($flowCommit)"
+    if ($z2Version.Length -gt 0) {
+        Write-Host "  v2 zapret2      : $z2Version ($z2Commit)"
+    } else {
+        Write-Host "  v2 zapret2      : не установлен"
+    }
     Write-Host "  bundle commit   : $bundleCommit"
     Write-Host "  bin\            : $binSize МБ"
     Write-Host "  lists\          : $listSize КБ"

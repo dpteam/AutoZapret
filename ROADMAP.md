@@ -435,16 +435,36 @@ AutoZapret/
 
 ---
 
-### P7 — zapret2 (`winws2`) `[ ]`
+### P7 — zapret2 (`winws2`) `[x]`
 
-- [ ] `strategies.v2.json` — импорт из `snanvl-zapret2` тем же парсером, но с другим синтаксисом:
-      `--wf-tcp-out/--wf-udp-out`, `--lua-init=@lua/*.lua`, `--name=`, `--payload=`, `--lua-desync=func:k=v`.
-- [ ] Таблица перевода v1→v2 (готова в `docs/research/zapret-configs.md` §1.5) — для миграции
-      пользовательских стратегий.
-- [ ] `EngineLocator` учится выбирать движок; `winws2.exe` требует `lua/` рядом.
-- [ ] UI: переключатель движка v1/v2 с пояснением, чем отличаются.
+- [x] `tools/fetch-engine.ps1` ставит **оба** движка, каждый из своего источника:
+      v1 ← Flowseal, v2 ← SnAnVl (ветка zapret2). Общие файлы (cygwin, WinDivert,
+      фейки) — из Flowseal; дополнения — из бандла.
+- [x] `EngineLocator` знает про `EngineKind { V1, V2 }`: наличие exe, **полнота lua**
+      (`blobs.lua`, `zapret-lib.lua`, `zapret-antidpi.lua`), отдельные версии
+      (`version.txt` / `version2.txt`).
+- [x] `StrategyParser` разбирает v2: `winws2.exe`, глобальные `--wf-tcp-out/--wf-udp-out`,
+      `--debug`, `--lua-init=@…`, `--blob`, имена профилей из `--name=`.
+- [x] `StrategyStore` держит v1 и v2 **вместе** (`ByEngine`), кэши раздельные
+      (`strategies.v1.json`, `strategies.v2.json`).
+- [x] `WinwsSupervisor` запускает нужный exe по `strategy.Engine`;
+      детект чужого процесса учитывает `winws2`.
+- [x] UI: переключатель движка в настройках, список стратегий фильтруется по движку,
+      при смене движка стратегия сбрасывается на первую из нового.
+- [x] selftest: 13 проверок v2 (lua на месте, `--lua-init` в глобальных, `--wf-tcp-out`,
+      имена профилей, подстановка плейсхолдеров, существование lua-файлов).
 
-**DoD:** обе линейки запускаются из одного GUI; пользователь может держать обе установленными.
+**Проверено вживую:** `winws2` стартует и держится, `Stop()` его убивает;
+`zapret2.general-alt12` пробивает youtube и discord (оба 200).
+
+**Три бага, найденных по пути (все записаны в AGENTS.md):**
+1. `JoinContinuations` не глотал пустые строки после `^` — а cmd их глотает.
+   Из-за этого v2 давал **0 стратегий**: команда обрывалась на первом `^`.
+2. `ImportFromDirectory` при пустом импорте брал `engine = "v1"` по умолчанию
+   и **стирал все стратегии v1**. Теперь при 0 импортированных выходим до удаления.
+3. Жадный regex в `NormalizePaths` съедал префиксы опций:
+   `--hostlist=C:\...\lists\x.txt` → `${LISTS}/x.txt`. Правильное решение —
+   подставлять плейсхолдеры прямо в `ExpandVariables`, а не угадывать пути обратно.
 
 ---
 

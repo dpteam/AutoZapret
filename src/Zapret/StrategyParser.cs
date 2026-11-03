@@ -87,6 +87,12 @@ namespace AutoZapret.Zapret
         /// <summary>Разбирает один .bat. Возвращает null, если это не стратегия (нет winws).</summary>
         public static Strategy ParseBat(string path, string binDir, string listsDir)
         {
+            return ParseBat(path, binDir, listsDir, null);
+        }
+
+        /// <summary>Разбирает один .bat. luaDir нужен только для v2 (winws2).</summary>
+        public static Strategy ParseBat(string path, string binDir, string listsDir, string luaDir)
+        {
             string text;
             try { text = File.ReadAllText(path, DetectEncoding(path)); }
             catch (Exception ex)
@@ -101,6 +107,8 @@ namespace AutoZapret.Zapret
             vars["~dp0"] = Path.GetDirectoryName(path) + "\\";
 
             string commandLine = null;
+            string exeName = null;
+
             foreach (string line in logicalLines)
             {
                 string trimmed = line.Trim();
@@ -119,15 +127,28 @@ namespace AutoZapret.Zapret
                     continue;
                 }
 
-                if (trimmed.IndexOf("winws.exe", StringComparison.OrdinalIgnoreCase) >= 0)
+                // winws2.exe проверяем ПЕРВЫМ: «winws.exe» не является его подстрокой,
+                // но порядок всё равно фиксируем явно, чтобы не зависеть от случая.
+                if (trimmed.IndexOf("winws2.exe", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
                     commandLine = trimmed;
+                    exeName = "winws2.exe";
+                    continue;
+                }
+                if (trimmed.IndexOf("winws.exe", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    commandLine = trimmed;
+                    exeName = "winws.exe";
+                }
             }
 
             if (commandLine == null) return null;
 
+            bool isV2 = exeName == "winws2.exe";
+
             // отрезаем всё до имени exe включительно
-            int exeIdx = commandLine.IndexOf("winws.exe", StringComparison.OrdinalIgnoreCase);
-            string argPart = commandLine.Substring(exeIdx + "winws.exe".Length).Trim();
+            int exeIdx = commandLine.IndexOf(exeName, StringComparison.OrdinalIgnoreCase);
+            string argPart = commandLine.Substring(exeIdx + exeName.Length).Trim();
             argPart = argPart.TrimStart('"').Trim();
 
             string expanded = ExpandVariables(argPart, vars);
@@ -136,14 +157,14 @@ namespace AutoZapret.Zapret
 
             Strategy strategy = new Strategy
             {
-                Id = "flowseal." + NormalizeId(Path.GetFileNameWithoutExtension(path)),
+                Id = (isV2 ? "zapret2." : "flowseal.") + NormalizeId(Path.GetFileNameWithoutExtension(path)),
                 Name = Path.GetFileNameWithoutExtension(path),
-                Engine = "v1",
+                Engine = isV2 ? "v2" : "v1",
                 Source = Path.GetFileName(path)
             };
 
             // нормализуем пути к плейсхолдерам
-            tokens = NormalizePaths(tokens, binDir, listsDir);
+            tokens = NormalizePaths(tokens, binDir, listsDir, luaDir);
 
             // режем по --new
             List<string> current = new List<string>();
@@ -160,7 +181,7 @@ namespace AutoZapret.Zapret
             }
             sections.Add(current);
 
-            // первый блок до --new содержит глобальные --wf-* и первый профиль
+            // первый блок до --new содержит глобальные флаги и первый профиль
             if (sections.Count > 0)
             {
                 List<string> first = sections[0];
@@ -168,12 +189,17 @@ namespace AutoZapret.Zapret
                 List<string> profileArgs = new List<string>();
                 foreach (string a in first)
                 {
-                    if (a.StartsWith("--wf-", StringComparison.OrdinalIgnoreCase)) globals.Add(a);
+                    if (IsGlobalArg(a, isV2)) globals.Add(a);
                     else profileArgs.Add(a);
                 }
                 strategy.GlobalArgs = globals;
                 if (profileArgs.Count > 0)
-                    strategy.Profiles.Add(new StrategyProfile { Name = GuessProfileName(profileArgs), Args = profileArgs });
+                    strategy.Profiles.Add(new StrategyProfile
+                    {
+                        Name = GuessProfileName(profileArgs),
+                        Label = GuessProfileLabel(profileArgs),
+                        Args = profileArgs
+                    });
             }
 
             for (int i = 1; i < sections.Count; i++)
@@ -182,6 +208,7 @@ namespace AutoZapret.Zapret
                 strategy.Profiles.Add(new StrategyProfile
                 {
                     Name = GuessProfileName(sections[i]),
+                    Label = GuessProfileLabel(sections[i]),
                     Args = sections[i]
                 });
             }
@@ -191,33 +218,91 @@ namespace AutoZapret.Zapret
             return strategy;
         }
 
+        /// <summary>
+        /// Глобальные флаги (действуют на весь процесс, а не на профиль).
+        ///
+        /// v1: --wf-tcp, --wf-udp
+        /// v2: --wf-tcp-out, --wf-udp-out, --debug, --lua-init, --blob
+        /// </summary>
+        private static bool IsGlobalArg(string arg, bool isV2)
+        {
+            if (string.IsNullOrEmpty(arg)) return false;
+
+            if (arg.StartsWith("--wf-", StringComparison.OrdinalIgnoreCase)) return true;
+
+            if (isV2)
+            {
+                if (arg.StartsWith("--debug=", StringComparison.OrdinalIgnoreCase)) return true;
+                if (arg.StartsWith("--lua-init=", StringComparison.OrdinalIgnoreCase)) return true;
+                if (arg.StartsWith("--blob=", StringComparison.OrdinalIgnoreCase)) return true;
+                if (arg.StartsWith("--lua-gc=", StringComparison.OrdinalIgnoreCase)) return true;
+                if (arg.StartsWith("--intercept=", StringComparison.OrdinalIgnoreCase)) return true;
+            }
+
+            return false;
+        }
+
         // ------------------------------------------------------------- helpers
 
-        /// <summary>Склеивает строки, заканчивающиеся на ^ (продолжение команды).</summary>
+        /// <summary>
+        /// Склеивает строки, заканчивающиеся на ^ (продолжение команды).
+        ///
+        /// Тонкость: в конфигах zapret2 после ^ идёт ПУСТАЯ строка (для читаемости),
+        /// и cmd её проглатывает, продолжая команду. Если пустые строки не глотать,
+        /// команда обрывается на первом же ^, и все профили теряются —
+        /// именно так v2 сначала давал 0 стратегий.
+        /// </summary>
         private static List<string> JoinContinuations(string text)
         {
             List<string> result = new List<string>();
             StringBuilder current = new StringBuilder();
+            bool continuing = false;
 
             foreach (string raw in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
             {
                 string line = raw.TrimEnd();
+
+                // пустая строка после ^ — часть продолжения, пропускаем
+                if (line.Length == 0)
+                {
+                    if (continuing) continue;
+                    if (current.Length == 0) continue;
+                    result.Add(current.ToString());
+                    current.Length = 0;
+                    continue;
+                }
+
                 if (line.EndsWith("^", StringComparison.Ordinal))
                 {
                     current.Append(line.Substring(0, line.Length - 1)).Append(' ');
+                    continuing = true;
                     continue;
                 }
+
                 current.Append(line);
                 result.Add(current.ToString());
                 current.Length = 0;
+                continuing = false;
             }
+
             if (current.Length > 0) result.Add(current.ToString());
             return result;
         }
 
         /// <summary>
-        /// Раскрывает %VAR% из словаря. Спец-случаи: %GameFilterTCP%/%GameFilterUDP%
-        /// подставляются плейсхолдерами, а не значением из .bat.
+        /// Раскрывает переменные .bat.
+        ///
+        /// КЛЮЧЕВОЕ РЕШЕНИЕ: %BIN%, %LISTS%, %LUA% заменяются сразу на плейсхолдеры
+        /// (${BIN}/, ${LISTS}/, ${LUA}/), а не на реальные пути. Причина: эти
+        /// переменные указывают на подкаталоги того каталога, где лежит .bat
+        /// (например refs\snanvl-zapret2\lists\), а движок живёт совсем в другом
+        /// месте (bin\engine\lists). Если подставлять реальные пути, потом
+        /// приходится угадывать их обратной заменой — и жадный regex съедает
+        /// имя опции вместе с путём: "--hostlist=C:\...\lists\x.txt" превращается
+        /// в "${LISTS}/x.txt", теряя --hostlist=.
+        ///
+        /// Спец-случаи: %GameFilterTCP%/%GameFilterUDP% — тоже плейсхолдеры,
+        /// их значение считаем мы, а не .bat.
         /// </summary>
         private static string ExpandVariables(string input, Dictionary<string, string> vars)
         {
@@ -227,10 +312,18 @@ namespace AutoZapret.Zapret
             result = result.Replace("%GameFilterTCP%", "${GAME_TCP}");
             result = result.Replace("%GameFilterUDP%", "${GAME_UDP}");
 
+            // каталоги движка -> плейсхолдеры (см. комментарий выше)
+            result = result.Replace("%BIN%", "${BIN}/");
+            result = result.Replace("%LISTS%", "${LISTS}/");
+            result = result.Replace("%LUA%", "${LUA}/");
+
             // прочие %VAR% из set (кроме служебных ~-переменных)
             foreach (KeyValuePair<string, string> kv in vars)
             {
                 if (kv.Key.StartsWith("~", StringComparison.Ordinal)) continue;
+                if (string.Equals(kv.Key, "BIN", StringComparison.OrdinalIgnoreCase)) continue;
+                if (string.Equals(kv.Key, "LISTS", StringComparison.OrdinalIgnoreCase)) continue;
+                if (string.Equals(kv.Key, "LUA", StringComparison.OrdinalIgnoreCase)) continue;
                 result = result.Replace("%" + kv.Key + "%", kv.Value);
             }
 
@@ -298,40 +391,97 @@ namespace AutoZapret.Zapret
             return tokens;
         }
 
-        /// <summary>Заменяет абсолютные пути bin/lists на плейсхолдеры ${BIN}/${LISTS}.</summary>
-        private static List<string> NormalizePaths(List<string> tokens, string binDir, string listsDir)
+        /// <summary>
+        /// Заменяет абсолютные пути bin/lists/lua на плейсхолдеры.
+        ///
+        /// Основная работа уже сделана в ExpandVariables (переменные сразу дают
+        /// плейсхолдеры). Здесь — только подстраховка для случаев, когда в .bat
+        /// путь прописан буквально.
+        ///
+        /// ВАЖНО: заменяем ТОЛЬКО когда токен начинается с пути (буква диска или
+        /// два слеша), иначе жадный regex съест имя опции:
+        /// "--hostlist=C:\...\lists\x.txt" не должен стать "${LISTS}/x.txt".
+        /// </summary>
+        private static List<string> NormalizePaths(List<string> tokens, string binDir, string listsDir, string luaDir)
         {
-            string bin = binDir.TrimEnd('\\') + "\\";
-            string lists = listsDir.TrimEnd('\\') + "\\";
             List<string> result = new List<string>(tokens.Count);
 
             foreach (string token in tokens)
             {
                 string t = token;
-                if (!string.IsNullOrEmpty(bin))
-                    t = ReplaceIgnoreCase(t, bin, "${BIN}/");
-                if (!string.IsNullOrEmpty(lists))
-                    t = ReplaceIgnoreCase(t, lists, "${LISTS}/");
-                // остатки: любые пути, оканчивающиеся на \bin\ или \lists\
-                t = Regex.Replace(t, @"^.*[\\/]bin[\\/]", "${BIN}/", RegexOptions.IgnoreCase);
-                t = Regex.Replace(t, @"^.*[\\/]lists[\\/]", "${LISTS}/", RegexOptions.IgnoreCase);
-                t = t.Replace('\\', '/');
+
+                if (IsAbsolutePath(t))
+                {
+                    t = Regex.Replace(t, @"^([A-Za-z]:[\\/]|\\\\)(.+[\\/])?lua[\\/]", "${LUA}/", RegexOptions.IgnoreCase);
+                    t = Regex.Replace(t, @"^([A-Za-z]:[\\/]|\\\\)(.+[\\/])?lists[\\/]", "${LISTS}/", RegexOptions.IgnoreCase);
+                    t = Regex.Replace(t, @"^([A-Za-z]:[\\/]|\\\\)(.+[\\/])?bin[\\/]", "${BIN}/", RegexOptions.IgnoreCase);
+                    t = t.Replace('\\', '/');
+                }
+                else
+                {
+                    // опция с путём внутри: заменяем только сам путь, не трогая префикс
+                    t = ReplacePathInside(t, binDir, "${BIN}/");
+                    t = ReplacePathInside(t, listsDir, "${LISTS}/");
+                    t = ReplacePathInside(t, luaDir, "${LUA}/");
+                }
+
                 result.Add(t);
             }
             return result;
         }
 
-        private static string ReplaceIgnoreCase(string input, string find, string replace)
+        private static bool IsAbsolutePath(string value)
         {
-            if (string.IsNullOrEmpty(find)) return input;
-            int idx = input.IndexOf(find, StringComparison.OrdinalIgnoreCase);
-            if (idx < 0) return input;
-            return input.Substring(0, idx) + replace + input.Substring(idx + find.Length);
+            if (string.IsNullOrEmpty(value) || value.Length < 3) return false;
+
+            // "C:\..." или "\\server\..."
+            if (char.IsLetter(value[0]) && value[1] == ':' && (value[2] == '\\' || value[2] == '/')) return true;
+            if (value.Length >= 2 && value[0] == '\\' && value[1] == '\\') return true;
+
+            return false;
+        }
+
+        /// <summary>Меняет известный путь на плейсхолдер, сохраняя префикс опции.</summary>
+        private static string ReplacePathInside(string token, string dir, string placeholder)
+        {
+            if (string.IsNullOrEmpty(dir)) return token;
+
+            string withSlash = dir.TrimEnd('\\', '/') + "\\";
+            int idx = token.IndexOf(withSlash, StringComparison.OrdinalIgnoreCase);
+            if (idx < 0) return token;
+
+            return token.Substring(0, idx) + placeholder + token.Substring(idx + withSlash.Length);
         }
 
         private static string GuessProfileName(List<string> args)
         {
+            string filterTcp = null, filterUdp = null, l7 = null, name = null, payload = null;
+
+            foreach (string a in args)
+            {
+                if (a.StartsWith("--filter-tcp=", StringComparison.OrdinalIgnoreCase)) filterTcp = a.Substring(13);
+                else if (a.StartsWith("--filter-udp=", StringComparison.OrdinalIgnoreCase)) filterUdp = a.Substring(13);
+                else if (a.StartsWith("--filter-l7=", StringComparison.OrdinalIgnoreCase)) l7 = a.Substring(12);
+                else if (a.StartsWith("--name=", StringComparison.OrdinalIgnoreCase)) name = a.Substring(7).Trim('"');
+                else if (a.StartsWith("--payload=", StringComparison.OrdinalIgnoreCase)) payload = a.Substring(10);
+            }
+
+            // v2: имя профиля задано явно в конфиге — используем его
+            if (!string.IsNullOrEmpty(name)) return name;
+
+            if (l7 != null) return "L7 " + l7;
+            if (filterUdp != null && filterUdp.Contains("443")) return "QUIC (UDP 443)";
+            if (filterUdp != null) return "UDP " + Shorten(filterUdp);
+            if (filterTcp != null) return "TCP " + Shorten(filterTcp);
+            if (payload != null) return "payload " + payload;
+            return "профиль";
+        }
+
+        /// <summary>Короткая подпись профиля для списка в UI.</summary>
+        private static string GuessProfileLabel(List<string> args)
+        {
             string filterTcp = null, filterUdp = null, l7 = null;
+
             foreach (string a in args)
             {
                 if (a.StartsWith("--filter-tcp=", StringComparison.OrdinalIgnoreCase)) filterTcp = a.Substring(13);
@@ -339,11 +489,10 @@ namespace AutoZapret.Zapret
                 else if (a.StartsWith("--filter-l7=", StringComparison.OrdinalIgnoreCase)) l7 = a.Substring(12);
             }
 
-            if (l7 != null) return "L7 " + l7;
-            if (filterUdp != null && filterUdp.Contains("443")) return "QUIC (UDP 443)";
-            if (filterUdp != null) return "UDP " + Shorten(filterUdp);
-            if (filterTcp != null) return "TCP " + Shorten(filterTcp);
-            return "профиль";
+            if (l7 != null) return "l7:" + l7;
+            if (filterUdp != null) return "udp:" + Shorten(filterUdp);
+            if (filterTcp != null) return "tcp:" + Shorten(filterTcp);
+            return "";
         }
 
         private static string Shorten(string ports)
@@ -371,6 +520,23 @@ namespace AutoZapret.Zapret
             sb.Append(s.Profiles.Count).Append(" профилей");
 
             string all = string.Join(" ", s.Profiles.ConvertAll(p => string.Join(" ", p.Args)).ToArray());
+
+            if (s.Engine == "v2")
+            {
+                // v2: техника спрятана в --lua-desync=func:arg
+                List<string> techniques = new List<string>();
+                foreach (string func in new[] { "multisplit", "multidisorder", "fakedsplit", "hostfakesplit", "syndata", "fake" })
+                {
+                    if (all.IndexOf("lua-desync=" + func, StringComparison.OrdinalIgnoreCase) >= 0)
+                        techniques.Add(func);
+                }
+                if (techniques.Count > 0) sb.Append(" · ").Append(string.Join("+", techniques.ToArray()));
+
+                if (all.IndexOf("tcp_ts=", StringComparison.OrdinalIgnoreCase) >= 0) sb.Append(" · ts");
+                if (all.IndexOf("tcp_seq=", StringComparison.OrdinalIgnoreCase) >= 0) sb.Append(" · badseq");
+                if (all.IndexOf("tls_mod=", StringComparison.OrdinalIgnoreCase) >= 0) sb.Append(" · tls_mod");
+                return sb.ToString();
+            }
 
             if (all.IndexOf("multisplit", StringComparison.OrdinalIgnoreCase) >= 0) sb.Append(" · multisplit");
             else if (all.IndexOf("fakedsplit", StringComparison.OrdinalIgnoreCase) >= 0) sb.Append(" · fakedsplit");

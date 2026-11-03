@@ -5,16 +5,24 @@ using AutoZapret.Core;
 
 namespace AutoZapret.Zapret
 {
+    /// <summary>Какой движок используем.</summary>
+    public enum EngineKind
+    {
+        V1,   // winws.exe  — zapret 1 (Flowseal)
+        V2    // winws2.exe — zapret 2 (snanvl), требует lua/
+    }
+
     /// <summary>
     /// Где лежит движок и всё ли на месте.
     ///
-    /// Проверяем то, без чего winws не запустится или запустится молча сломанным:
-    ///   winws.exe, cygwin1.dll, WinDivert.dll, WinDivert64.sys.
-    /// Отдельно проверяем разрядность: 32-битной сборки winws не существует.
+    /// Два движка живут в одном каталоге engine\ и используют общие
+    /// WinDivert и фейки. Отличаются только исполняемым файлом
+    /// и наличием lua\ (нужен для v2).
     /// </summary>
     public sealed class EngineLocator
     {
-        public const string WinwsExe = "winws.exe";
+        public const string WinwsV1 = "winws.exe";
+        public const string WinwsV2 = "winws2.exe";
         public const string CygwinDll = "cygwin1.dll";
         public const string DivertDll = "WinDivert.dll";
         public const string DivertSys = "WinDivert64.sys";
@@ -23,10 +31,24 @@ namespace AutoZapret.Zapret
         public string BinDir { get; private set; }
         public string ListsDir { get; private set; }
         public string UtilsDir { get; private set; }
+        public string LuaDir { get; private set; }
+
+        /// <summary>Версия установленного v1 (из version.txt).</summary>
         public string Version { get; private set; }
 
+        /// <summary>Версия установленного v2 (из version2.txt).</summary>
+        public string VersionV2 { get; private set; }
+
+        /// <summary>Общие файлы (WinDivert, cygwin, фейки) на месте.</summary>
         public bool Ready { get; private set; }
+
         public string Problem { get; private set; }
+
+        /// <summary>Доступен ли v1.</summary>
+        public bool HasV1 { get; private set; }
+
+        /// <summary>Доступен ли v2 (есть exe и все lua).</summary>
+        public bool HasV2 { get; private set; }
 
         public EngineLocator()
         {
@@ -34,7 +56,9 @@ namespace AutoZapret.Zapret
             BinDir = Paths.EngineBinDir;
             ListsDir = Paths.EngineListsDir;
             UtilsDir = Path.Combine(EngineDir, "utils");
+            LuaDir = Path.Combine(EngineDir, "lua");
             Version = "";
+            VersionV2 = "";
             Refresh();
         }
 
@@ -42,6 +66,8 @@ namespace AutoZapret.Zapret
         public void Refresh()
         {
             Ready = false;
+            HasV1 = false;
+            HasV2 = false;
             Problem = null;
 
             if (!Directory.Exists(EngineDir))
@@ -50,19 +76,13 @@ namespace AutoZapret.Zapret
                 return;
             }
 
-            string winws = Path.Combine(BinDir, WinwsExe);
-            if (!File.Exists(winws))
-            {
-                Problem = "Нет engine\\bin\\winws.exe. Запустите tools\\fetch-engine.ps1.";
-                return;
-            }
-
+            // общие файлы
             string[] required = { CygwinDll, DivertDll, DivertSys };
             foreach (string name in required)
             {
                 if (!File.Exists(Path.Combine(BinDir, name)))
                 {
-                    Problem = "Нет engine\\bin\\" + name + " — winws не запустится.";
+                    Problem = "Нет engine\\bin\\" + name + " — движок не запустится.";
                     return;
                 }
             }
@@ -73,18 +93,67 @@ namespace AutoZapret.Zapret
                 return;
             }
 
-            Version = ReadVersion();
+            HasV1 = File.Exists(Path.Combine(BinDir, WinwsV1));
+            Version = ReadVersionFile("version.txt");
+
+            // v2 требует не только exe, но и lua
+            bool hasV2Exe = File.Exists(Path.Combine(BinDir, WinwsV2));
+            bool hasLua = Directory.Exists(LuaDir) && File.Exists(Path.Combine(LuaDir, "blobs.lua")) &&
+                          File.Exists(Path.Combine(LuaDir, "zapret-lib.lua")) &&
+                          File.Exists(Path.Combine(LuaDir, "zapret-antidpi.lua"));
+
+            HasV2 = hasV2Exe && hasLua;
+            VersionV2 = ReadVersionFile("version2.txt");
+
+            if (!HasV1 && !HasV2)
+            {
+                Problem = "Нет ни winws.exe, ни winws2.exe. Запустите tools\\fetch-engine.ps1.";
+                return;
+            }
+
             Ready = true;
         }
 
-        /// <summary>Путь к winws.exe или null.</summary>
-        public string WinwsPath
+        /// <summary>Путь к исполняемому файлу нужного движка или null.</summary>
+        public string ExePath(EngineKind kind)
         {
-            get
+            string name = kind == EngineKind.V2 ? WinwsV2 : WinwsV1;
+            string path = Path.Combine(BinDir, name);
+            return File.Exists(path) ? path : null;
+        }
+
+        /// <summary>Совместимость: путь к v1.</summary>
+        public string WinwsPath { get { return ExePath(EngineKind.V1); } }
+
+        /// <summary>Доступен ли движок.</summary>
+        public bool IsAvailable(EngineKind kind)
+        {
+            return kind == EngineKind.V2 ? HasV2 : HasV1;
+        }
+
+        /// <summary>Понятная причина, почему движок недоступен.</summary>
+        public string UnavailableReason(EngineKind kind)
+        {
+            if (kind == EngineKind.V2)
             {
-                string p = Path.Combine(BinDir, WinwsExe);
-                return File.Exists(p) ? p : null;
+                if (!File.Exists(Path.Combine(BinDir, WinwsV2)))
+                    return "zapret2 не установлен (нет winws2.exe). Запустите tools\\fetch-engine.ps1.";
+                if (!Directory.Exists(LuaDir))
+                    return "zapret2 не установлен (нет каталога lua). Запустите tools\\fetch-engine.ps1.";
+                return "zapret2 не установлен (не хватает lua-скриптов). Запустите tools\\fetch-engine.ps1.";
             }
+
+            if (!File.Exists(Path.Combine(BinDir, WinwsV1)))
+                return "zapret 1 не установлен (нет winws.exe). Запустите tools\\fetch-engine.ps1.";
+
+            return Problem ?? "движок недоступен";
+        }
+
+        /// <summary>Версия конкретного движка.</summary>
+        public string VersionOf(EngineKind kind)
+        {
+            string v = kind == EngineKind.V2 ? VersionV2 : Version;
+            return v.Length > 0 ? v : "?";
         }
 
         /// <summary>
@@ -100,6 +169,7 @@ namespace AutoZapret.Zapret
             {
                 { "BIN", BinDir.TrimEnd('\\') },
                 { "LISTS", ListsDir.TrimEnd('\\') },
+                { "LUA", LuaDir.TrimEnd('\\') },
                 { "FAKES", Paths.FakesDir.TrimEnd('\\') },
                 { "GAME_TCP", tcp },
                 { "GAME_UDP", udp },
@@ -134,11 +204,11 @@ namespace AutoZapret.Zapret
             }
         }
 
-        public string ReadVersion()
+        private string ReadVersionFile(string name)
         {
             try
             {
-                string p = Path.Combine(EngineDir, "version.txt");
+                string p = Path.Combine(EngineDir, name);
                 if (File.Exists(p)) return File.ReadAllText(p).Trim();
             }
             catch { }
@@ -149,7 +219,12 @@ namespace AutoZapret.Zapret
         public string StatusLine()
         {
             if (!Ready) return Problem ?? "движок не готов";
-            return "winws " + (Version.Length > 0 ? Version : "?") + " @ " + BinDir;
+
+            List<string> parts = new List<string>(2);
+            if (HasV1) parts.Add("v1 " + VersionOf(EngineKind.V1));
+            if (HasV2) parts.Add("v2 " + VersionOf(EngineKind.V2));
+
+            return string.Join(", ", parts.ToArray()) + " @ " + BinDir;
         }
     }
 }

@@ -7,6 +7,7 @@ using System.Net;
 using System.Text;
 using System.Threading;
 using AutoZapret.Core;
+using AutoZapret.Zapret;
 
 namespace AutoZapret.Update
 {
@@ -449,11 +450,7 @@ namespace AutoZapret.Update
 
             while (DateTime.UtcNow < until)
             {
-                Process[] procs = Process.GetProcessesByName("winws");
-                bool any = procs.Length > 0;
-                foreach (Process p in procs) { try { p.Dispose(); } catch { } }
-
-                if (!any) return true;
+                if (!WinwsSupervisor.AnyWinwsRunning()) return true;
                 Thread.Sleep(300);
             }
 

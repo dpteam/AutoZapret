@@ -49,7 +49,7 @@ namespace AutoZapret.Zapret
 
         /// <summary>
         /// Гарантирует, что стратегии загружены.
-        /// Порядок: кэш JSON -> импорт из .bat в refs/ (dev) -> встроенный минимум.
+        /// Порядок для каждого движка: кэш JSON -> импорт из .bat -> ничего.
         /// </summary>
         public void EnsureStrategies()
         {
@@ -60,63 +60,87 @@ namespace AutoZapret.Zapret
 
                 _engine.Refresh();
 
-                // 1) кэш рядом с exe
-                string cachePath = Path.Combine(Paths.StrategiesDir, "strategies.v1.json");
-                if (_store.Load(cachePath) && _store.Count > 0)
-                {
-                    Log.Info("WINWS", "стратегии из кэша: " + _store.Count);
-                    return;
-                }
-
-                // 2) импорт из исходных .bat
-                string batDir = FindBatDirectory();
-                if (batDir != null)
-                {
-                    int count = _store.ImportFromDirectory(batDir, _engine.BinDir, _engine.ListsDir);
-                    if (count > 0)
-                    {
-                        try
-                        {
-                            Directory.CreateDirectory(Paths.StrategiesDir);
-                            _store.Save(cachePath, _engine.Version);
-                        }
-                        catch (Exception ex)
-                        {
-                            Log.Warn("WINWS", "не удалось сохранить кэш стратегий: " + ex.Message);
-                        }
-                        return;
-                    }
-                }
-
-                Log.Warn("WINWS", "стратегии не найдены — работает только встроенный минимум");
-                _store.ImportFromDirectory(null, _engine.BinDir, _engine.ListsDir);
+                EnsureEngine(EngineKind.V1, "strategies.v1.json");
+                EnsureEngine(EngineKind.V2, "strategies.v2.json");
             }
         }
 
-        /// <summary>
-        /// Где искать исходные .bat. В dev-раскладке они в refs/ рядом с репозиторием,
-        /// в релизе — рядом с exe (если пользователь положил) или в engine/.
-        /// </summary>
-        private static string FindBatDirectory()
+        private void EnsureEngine(EngineKind kind, string cacheName)
         {
-            string[] candidates =
+            string engineTag = kind == EngineKind.V2 ? "v2" : "v1";
+
+            if (!_engine.IsAvailable(kind))
+            {
+                Log.Info("WINWS", engineTag + " недоступен: " + _engine.UnavailableReason(kind));
+                return;
+            }
+
+            // 1) кэш рядом с exe
+            string cachePath = Path.Combine(Paths.StrategiesDir, cacheName);
+            if (_store.Load(cachePath) && _store.ByEngine(engineTag).Count > 0)
+            {
+                Log.Info("WINWS", engineTag + " из кэша: " + _store.ByEngine(engineTag).Count);
+                return;
+            }
+
+            // 2) импорт из исходных .bat
+            string batDir = FindBatDirectory(kind);
+            if (batDir != null)
+            {
+                int count = _store.ImportFromDirectory(batDir, _engine.BinDir, _engine.ListsDir,
+                                                       kind == EngineKind.V2 ? _engine.LuaDir : null);
+                if (count > 0)
+                {
+                    try
+                    {
+                        Directory.CreateDirectory(Paths.StrategiesDir);
+                        _store.Save(cachePath, _engine.VersionOf(kind), engineTag);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warn("WINWS", "не удалось сохранить кэш " + engineTag + ": " + ex.Message);
+                    }
+                    return;
+                }
+            }
+
+            Log.Warn("WINWS", engineTag + ": стратегии не найдены");
+        }
+
+        /// <summary>
+        /// Где искать исходные .bat для движка.
+        /// В dev-раскладке они в refs/ рядом с репозиторием, в релизе — рядом с exe.
+        /// </summary>
+        private static string FindBatDirectory(EngineKind kind)
+        {
+            // v2 живёт в отдельном репозитории (ветка zapret2)
+            string[] names = kind == EngineKind.V2
+                ? new[] { "snanvl-zapret2", "zapret2" }
+                : new[] { "zapret-discord-youtube" };
+
+            string[] roots =
             {
                 Path.Combine(Paths.BaseDir, "bat"),
                 Path.Combine(Paths.EngineDir, "bat"),
-                Path.Combine(Paths.BaseDir, "..", "refs", "zapret-discord-youtube"),
-                Path.Combine(Paths.BaseDir, "..", "..", "refs", "zapret-discord-youtube"),
-                Path.Combine(Paths.BaseDir, "..", "..", "..", "refs", "zapret-discord-youtube")
+                Path.Combine(Paths.BaseDir, "..", "refs"),
+                Path.Combine(Paths.BaseDir, "..", "..", "refs"),
+                Path.Combine(Paths.BaseDir, "..", "..", "..", "refs")
             };
 
-            foreach (string c in candidates)
+            foreach (string root in roots)
             {
-                try
+                foreach (string name in names)
                 {
-                    if (Directory.Exists(c) && Directory.GetFiles(c, "general*.bat").Length > 0)
-                        return Path.GetFullPath(c);
+                    try
+                    {
+                        string candidate = Path.Combine(root, name);
+                        if (Directory.Exists(candidate) && Directory.GetFiles(candidate, "general*.bat").Length > 0)
+                            return Path.GetFullPath(candidate);
+                    }
+                    catch { }
                 }
-                catch { }
             }
+
             return null;
         }
 
@@ -129,10 +153,13 @@ namespace AutoZapret.Zapret
             Strategy strategy = _store.Find(strategyId);
             if (strategy == null)
             {
-                // если id пустой или не найден — берём первую
-                IReadOnlyList<Strategy> all = _store.All;
-                if (all.Count == 0) return "Нет доступных стратегий.";
-                strategy = all[0];
+                // если id пустой или не найден — берём первую подходящую под настройки
+                string wantEngine = Settings.Current.EngineKind;
+                List<Strategy> pool = _store.ByEngine(wantEngine);
+                if (pool.Count == 0) pool = new List<Strategy>(_store.All);
+
+                if (pool.Count == 0) return "Нет доступных стратегий.";
+                strategy = pool[0];
                 Log.Warn("WINWS", "стратегия '" + strategyId + "' не найдена, беру '" + strategy.Id + "'");
             }
 
@@ -195,6 +222,7 @@ namespace AutoZapret.Zapret
                 {
                     { "id", s.Id },
                     { "name", s.Name },
+                    { "engine", s.Engine },
                     { "note", s.Note },
                     { "recommended", s.Recommended },
                     { "targets", targets },
@@ -202,6 +230,25 @@ namespace AutoZapret.Zapret
                 });
             }
             return result;
+        }
+
+        /// <summary>Доступность движков для UI.</summary>
+        public Dictionary<string, object> DescribeEngines()
+        {
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                { "v1", _engine.HasV1 },
+                { "v2", _engine.HasV2 },
+                { "v1Version", _engine.VersionOf(EngineKind.V1) },
+                { "v2Version", _engine.VersionOf(EngineKind.V2) },
+                { "v2Reason", _engine.HasV2 ? "" : _engine.UnavailableReason(EngineKind.V2) },
+                { "counts", new Dictionary<string, object>(StringComparer.Ordinal)
+                    {
+                        { "v1", (long)_store.ByEngine("v1").Count },
+                        { "v2", (long)_store.ByEngine("v2").Count }
+                    }
+                }
+            };
         }
 
         public void Dispose()

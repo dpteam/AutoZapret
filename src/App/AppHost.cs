@@ -162,7 +162,6 @@ namespace AutoZapret.App
             bridge.Register("toggle", msg => ToggleProtection());
 
             bridge.Register("strategy.list", msg => PushStrategies());
-
             bridge.Register("strategy.select", msg =>
             {
                 string id = Json.GetString(msg, "id", "");
@@ -171,6 +170,34 @@ namespace AutoZapret.App
                 _settings.Save();
                 Log.Info("WINWS", "выбрана стратегия: " + id);
                 PushState();
+            });
+
+            bridge.Register("engine.select", msg =>
+            {
+                string kind = Json.GetString(msg, "kind", _settings.EngineKind);
+                if (kind != "v1" && kind != "v2") return;
+
+                if (_zapret.State == ProtectionState.Running)
+                {
+                    Log.Warn("WINWS", "нельзя сменить движок при работающем обходе");
+                    PushState();
+                    return;
+                }
+
+                _settings.EngineKind = kind;
+
+                // стратегия другого движка не подойдёт — сбрасываем на первую из нового
+                Strategy current = _zapret.Strategies.Find(_settings.StrategyId);
+                if (current == null || !string.Equals(current.Engine, kind, StringComparison.OrdinalIgnoreCase))
+                {
+                    List<Strategy> pool = _zapret.Strategies.ByEngine(kind);
+                    if (pool.Count > 0) _settings.StrategyId = pool[0].Id;
+                }
+
+                _settings.Save();
+                Log.Info("WINWS", "движок: " + kind);
+                PushState();
+                PushStrategies();
             });
 
             bridge.Register("logs.get", msg =>
@@ -803,7 +830,11 @@ namespace AutoZapret.App
                 "webview2", AppInfo.WebView2RuntimeVersion() ?? "",
                 "engineReady", engine.Ready,
                 "engineProblem", engine.Problem ?? "",
-                "engineVersion", engine.Version,
+                "engineVersion", engine.VersionOf(_settings.EngineKind == "v2" ? EngineKind.V2 : EngineKind.V1),
+                "engineKind", _settings.EngineKind,
+                "engineV1", engine.HasV1,
+                "engineV2", engine.HasV2,
+                "engineV2Reason", engine.HasV2 ? "" : engine.UnavailableReason(EngineKind.V2),
                 "protection", protectionText,
                 "protectionError", _zapret.LastError ?? "",
                 "activeStrategy", _zapret.ActiveStrategyName ?? "",
@@ -841,10 +872,20 @@ namespace AutoZapret.App
                 return;
             }
 
+            // UI показывает только стратегии выбранного движка
+            string engine = _settings.EngineKind;
             List<object> items = new List<object>();
-            foreach (Dictionary<string, object> s in list) items.Add(s);
+            foreach (Dictionary<string, object> s in list)
+            {
+                string itemEngine = s.ContainsKey("engine") ? Convert.ToString(s["engine"]) : "v1";
+                if (!string.Equals(itemEngine, engine, StringComparison.OrdinalIgnoreCase)) continue;
+                items.Add(s);
+            }
 
-            _form.Bridge.Send(WebBridge.Msg("strategies", "items", items));
+            _form.Bridge.Send(WebBridge.Msg("strategies",
+                "items", items,
+                "engine", engine,
+                "engines", _zapret.DescribeEngines()));
         }
 
         private void ApplySettings(Dictionary<string, object> msg)

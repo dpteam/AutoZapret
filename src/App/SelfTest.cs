@@ -314,18 +314,15 @@ namespace AutoZapret.App
                 for (int i = 0; i < seconds; i++)
                 {
                     System.Threading.Thread.Sleep(1000);
-                    System.Diagnostics.Process[] procs = System.Diagnostics.Process.GetProcessesByName("winws");
-                    alive = procs.Length > 0;
-                    Console.WriteLine("  t+" + (i + 1) + "с: winws процессов " + procs.Length);
-                    foreach (System.Diagnostics.Process p in procs) { try { p.Dispose(); } catch { } }
+                    int count = CountWinwsProcesses();
+                    alive = count > 0;
+                    Console.WriteLine("  t+" + (i + 1) + "с: winws процессов " + count);
                 }
 
                 bool stopped = svc.Stop();
                 System.Threading.Thread.Sleep(800);
 
-                System.Diagnostics.Process[] after = System.Diagnostics.Process.GetProcessesByName("winws");
-                int left = after.Length;
-                foreach (System.Diagnostics.Process p in after) { try { p.Dispose(); } catch { } }
+                int left = CountWinwsProcesses();
 
                 Console.WriteLine("после остановки winws процессов: " + left);
                 Console.WriteLine("состояние: " + svc.State);
@@ -334,6 +331,25 @@ namespace AutoZapret.App
                 Console.WriteLine(ok ? "RESULT: ok" : "RESULT: failed");
                 return ok ? 0 : 1;
             }
+        }
+
+        /// <summary>
+        /// Считает живые winws и winws2.
+        /// Важно: у zapret2 процесс называется winws2, и проверка только "winws"
+        /// даёт ложное «движок не запустился».
+        /// </summary>
+        private static int CountWinwsProcesses()
+        {
+            int total = 0;
+
+            foreach (string name in new[] { "winws", "winws2" })
+            {
+                System.Diagnostics.Process[] procs = System.Diagnostics.Process.GetProcessesByName(name);
+                total += procs.Length;
+                foreach (System.Diagnostics.Process p in procs) { try { p.Dispose(); } catch { } }
+            }
+
+            return total;
         }
 
         private static void TestEngine()
@@ -353,7 +369,22 @@ namespace AutoZapret.App
 
             Check("движок установлен", true, engine.StatusLine());
             Check("winws.exe найден", engine.WinwsPath != null, engine.WinwsPath ?? "null");
-            Check("версия прочитана", !string.IsNullOrEmpty(engine.Version), engine.Version);
+
+            // v2: наличие и полнота lua — самая частая причина «winws2 не стартует»
+            if (engine.HasV2)
+            {
+                Check("v2: winws2.exe найден", engine.ExePath(AutoZapret.Zapret.EngineKind.V2) != null, "ok");
+                Check("v2: lua/blobs.lua на месте",
+                    System.IO.File.Exists(System.IO.Path.Combine(engine.LuaDir, "blobs.lua")), "ok");
+                Check("v2: lua/zapret-lib.lua на месте",
+                    System.IO.File.Exists(System.IO.Path.Combine(engine.LuaDir, "zapret-lib.lua")), "ok");
+                Check("v2: lua/zapret-antidpi.lua на месте",
+                    System.IO.File.Exists(System.IO.Path.Combine(engine.LuaDir, "zapret-antidpi.lua")), "ok");
+            }
+            else
+            {
+                Skip("v2: движок", engine.UnavailableReason(AutoZapret.Zapret.EngineKind.V2));
+            }            Check("версия прочитана", !string.IsNullOrEmpty(engine.Version), engine.Version);
             Check("WinDivert64.sys на месте",
                 System.IO.File.Exists(System.IO.Path.Combine(engine.BinDir, "WinDivert64.sys")), "ok");
 
@@ -446,9 +477,61 @@ namespace AutoZapret.App
                     missing == 0 ? "ok" : missing + " нет, первый: " + firstMissing);
             }
 
+            // ---- v2: другой синтаксис, свои глобальные флаги
+            if (engine.HasV2)
+            {
+                string v2Dir = System.IO.Path.Combine(Paths.BaseDir, "..", "refs", "snanvl-zapret2");
+                if (!System.IO.Directory.Exists(v2Dir))
+                    v2Dir = System.IO.Path.Combine(Paths.BaseDir, "..", "..", "refs", "snanvl-zapret2");
+
+                if (System.IO.Directory.Exists(v2Dir))
+                {
+                    AutoZapret.Zapret.StrategyStore v2Store = new AutoZapret.Zapret.StrategyStore();
+                    int v2Count = v2Store.ImportFromDirectory(v2Dir, engine.BinDir, engine.ListsDir, engine.LuaDir);
+
+                    Check("v2: стратегии импортированы", v2Count >= 20, v2Count + " шт.");
+
+                    AutoZapret.Zapret.Strategy v2 = v2Store.Find("zapret2.general");
+                    Check("v2: стратегия найдена", v2 != null, v2 == null ? "null" : v2.Name);
+
+                    if (v2 != null)
+                    {
+                        Check("v2: engine = v2", v2.Engine == "v2", v2.Engine);
+                        Check("v2: --lua-init в глобальных флагах",
+                            v2.GlobalArgs.Exists(a => a.StartsWith("--lua-init=", StringComparison.OrdinalIgnoreCase)),
+                            string.Join(" ", v2.GlobalArgs.ToArray()));
+                        Check("v2: --wf-tcp-out (а не --wf-tcp)",
+                            v2.GlobalArgs.Exists(a => a.StartsWith("--wf-tcp-out=", StringComparison.OrdinalIgnoreCase)), "ok");
+
+                        // имена профилей берутся из --name
+                        Check("v2: имя профиля из --name",
+                            v2.Profiles.Count > 0 && v2.Profiles[0].Name.Length > 0 &&
+                            v2.Profiles[0].Name.IndexOf("--name", StringComparison.Ordinal) < 0,
+                            v2.Profiles.Count > 0 ? v2.Profiles[0].Name : "нет профилей");
+
+                        Dictionary<string, string> ph = engine.BuildPlaceholders("off");
+                        List<string> args = v2.BuildArguments(ph);
+                        Check("v2: аргументы собираются", args.Count > 20, args.Count + " арг.");
+                        Check("v2: плейсхолдеры подставлены",
+                            !args.Exists(a => a.Contains("${")), "ok");
+                        Check("v2: lua-пути существуют",
+                            args.FindAll(a => a.StartsWith("--lua-init=@", StringComparison.OrdinalIgnoreCase))
+                                .TrueForAll(a => System.IO.File.Exists(a.Substring("--lua-init=@".Length))),
+                            "ok");
+                    }
+                }
+                else
+                {
+                    Skip("v2: каталог стратегий", v2Dir);
+                }
+            }
+            else
+            {
+                Skip("v2: разбор стратегий", "движок v2 не установлен");
+            }
+
             // сохранение/загрузка
-            string tmp = System.IO.Path.Combine(Paths.StateDir, "selftest-strategies.json");
-            try
+            string tmp = System.IO.Path.Combine(Paths.StateDir, "selftest-strategies.json");            try
             {
                 store.Save(tmp, "selftest");
                 Check("стратегии сохранены", System.IO.File.Exists(tmp), tmp);

@@ -171,6 +171,19 @@
         text("proxy-state", s.proxyEnabled ? "включён" : "выключен");
 
         // настройки
+        setSelect("set-engine", s.engineKind);
+        var engHint = document.getElementById("engine-hint");
+        if (engHint) {
+            if (s.engineKind === "v2") {
+                engHint.textContent = s.engineV2
+                    ? "zapret 2 — новее, но lua-скрипты чувствительны к версии"
+                    : (s.engineV2Reason || "zapret 2 не установлен");
+                engHint.className = "row-hint " + (s.engineV2 ? "" : "diag-bad");
+            } else {
+                engHint.textContent = "zapret 1 — проверенный, совместимый";
+                engHint.className = "row-hint";
+            }
+        }
         setSelect("set-game-filter", s.gameFilter);
         setSelect("set-ipset-mode", s.ipsetMode);
         var portEl = document.getElementById("set-proxy-port");
@@ -321,6 +334,11 @@
     function initSettings() {
         var gf = document.getElementById("set-game-filter");
         if (gf) gf.addEventListener("change", function () { queueSave({ gameFilter: gf.value }); });
+
+        var eng = document.getElementById("set-engine");
+        if (eng) eng.addEventListener("change", function () {
+            send("engine.select", { kind: eng.value });
+        });
 
         var im = document.getElementById("set-ipset-mode");
         if (im) im.addEventListener("change", function () { queueSave({ ipsetMode: im.value }); });
