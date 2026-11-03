@@ -77,6 +77,9 @@ namespace AutoZapret.App
 
                 Section("списки");
                 TestLists();
+
+                Section("фейки");
+                TestPayloads();
             }
             catch (Exception ex)
             {
@@ -539,6 +542,62 @@ namespace AutoZapret.App
                 string content = System.IO.File.ReadAllText(ipsetPath);
                 Check("ipset без CR", content.IndexOf('\r') < 0, content.IndexOf('\r') < 0 ? "ok" : "есть CR");
                 Check("мусор выброшен", content.IndexOf("мусор") < 0, "ok");
+            }
+            finally
+            {
+                try { System.IO.Directory.Delete(dir, true); } catch { }
+            }
+        }
+
+        private static void TestPayloads()
+        {
+            AutoZapret.Payloads.PayloadLibrary library = new AutoZapret.Payloads.PayloadLibrary();
+            int total = library.Scan();
+
+            Check("фейки найдены", total > 0, total + " файлов");
+            Check("все фейки валидны", library.ValidCount == total,
+                library.ValidCount + "/" + total);
+
+            if (total == 0) return;
+
+            int tls = library.ByKind(AutoZapret.Payloads.PayloadKind.TlsClientHello).Count;
+            int quic = library.ByKind(AutoZapret.Payloads.PayloadKind.QuicInitial).Count;
+            int stun = library.ByKind(AutoZapret.Payloads.PayloadKind.Stun).Count;
+
+            Check("есть TLS-фейки", tls > 0, tls.ToString());
+            Check("есть QUIC-фейки", quic > 0, quic.ToString());
+            Check("есть STUN-фейки", stun > 0, stun.ToString());
+
+            // SNI должен извлекаться из ClientHello
+            AutoZapret.Payloads.Payload google =
+                library.Find("tls_clienthello_www_google_com.bin");
+            Check("SNI извлечён", google != null && google.Sni == "www.google.com",
+                google == null ? "файл не найден" : google.Sni);
+
+            // валидатор должен ОТБРАКОВЫВАТЬ битые файлы
+            string dir = System.IO.Path.Combine(Paths.StateDir, "selftest-fakes");
+            System.IO.Directory.CreateDirectory(dir);
+
+            try
+            {
+                string broken = System.IO.Path.Combine(dir, "broken.bin");
+                System.IO.File.WriteAllBytes(broken, new byte[] { 0x16, 0x03, 0x01, 0x00, 0x10 });
+
+                AutoZapret.Payloads.Payload payload = AutoZapret.Payloads.PayloadValidator.Inspect(broken);
+                Check("битый TLS отбракован", !payload.Valid, payload.InvalidReason);
+
+                string tiny = System.IO.Path.Combine(dir, "tiny.bin");
+                System.IO.File.WriteAllBytes(tiny, new byte[] { 0x01 });
+                Check("слишком малый отбракован",
+                    !AutoZapret.Payloads.PayloadValidator.Inspect(tiny).Valid, "ok");
+
+                string garbage = System.IO.Path.Combine(dir, "garbage.bin");
+                byte[] junk = new byte[1500];
+                new Random(42).NextBytes(junk);
+                junk[0] = 0x00;   // не TLS, не QUIC long header
+                System.IO.File.WriteAllBytes(garbage, junk);
+                Check("мусор отбракован",
+                    !AutoZapret.Payloads.PayloadValidator.Inspect(garbage).Valid, "ok");
             }
             finally
             {

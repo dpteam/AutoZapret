@@ -50,6 +50,7 @@
         if (name === "lists") {
             send("lists.get", { kind: "general" });
             send("lists.get", { kind: "exclude" });
+            send("fakes.scan");
         }
     }
 
@@ -514,6 +515,32 @@
         bindAction("btn-update-ipset", "lists.updateIpset", "Обновляю…");
         bindAction("btn-update-exclude", "lists.updateExclude", "Дополняю…");
         bindAction("btn-update-ipset-exclude", "lists.updateIpsetExclude", "Восстанавливаю…");
+        bindAction("btn-fakes-scan", "fakes.scan", "Сканирую…");
+    }
+
+    function renderFakes(msg) {
+        var summary = document.getElementById("fakes-summary");
+        var list = document.getElementById("fakes-list");
+        if (!summary || !list) return;
+
+        var items = msg.items || [];
+        var valid = msg.valid || 0;
+        summary.textContent = "файлов: " + items.length + ", валидных: " + valid;
+
+        list.innerHTML = "";
+        items.forEach(function (p) {
+            var div = document.createElement("div");
+            div.className = "diag-row";
+            var badge = p.valid ? "ok" : "bad";
+            div.innerHTML =
+                '<span class="badge ' + badge + '">' + (p.valid ? p.kind : "✕") + '</span>' +
+                '<span class="name">' + p.file + '</span>' +
+                '<span class="verdict">' + (p.valid ? (p.sni || "—") : p.reason) + '</span>' +
+                '<span class="detail">' + p.size + " б</span>";
+            list.appendChild(div);
+        });
+
+        list.style.display = "";
     }
 
     function bindList(kind) {
@@ -645,6 +672,10 @@
 
             case "lists.ipset":
                 renderIpstat(msg);
+                break;
+
+            case "fakes":
+                renderFakes(msg);
                 break;
 
             case "logs":

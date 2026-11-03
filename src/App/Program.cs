@@ -34,6 +34,7 @@ namespace AutoZapret.App
             if (HasFlag(args, "--probe")) return Diag.DiagCommand.RunProbe(args);
             if (HasFlag(args, "--strategies")) return Diag.DiagCommand.RunStrategies(args);
             if (HasFlag(args, "--update-lists")) return Diag.DiagCommand.RunUpdateLists(args);
+            if (HasFlag(args, "--fakes")) return Diag.DiagCommand.RunFakes(args);
             if (HasFlag(args, "--deep")) return Diag.DiagCommand.RunDeep(args);
             if (HasFlag(args, "--selftest")) return SelfTest.Run();
             if (HasFlag(args, "--test-all")) return Diag.DiagCommand.RunTestAll(args);

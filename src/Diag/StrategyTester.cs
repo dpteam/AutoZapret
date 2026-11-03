@@ -6,6 +6,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using AutoZapret.Core;
+using AutoZapret.Payloads;
 using AutoZapret.Zapret;
 
 namespace AutoZapret.Diag
@@ -141,6 +142,36 @@ namespace AutoZapret.Diag
     /// <summary>Консольные команды диагностики: --probe, --test-all.</summary>
     public static class DiagCommand
     {
+        /// <summary>--fakes: список .bin-фейков с проверкой формата.</summary>
+        public static int RunFakes(string[] args)
+        {
+            PayloadLibrary library = new PayloadLibrary();
+            int total = library.Scan();
+
+            Console.WriteLine("== фейки (" + total + ", валидных " + library.ValidCount + ") ==");
+            Console.WriteLine();
+
+            foreach (Payload p in library.All)
+            {
+                string mark = p.Valid ? "[ok]  " : "[БРАК]";
+                string kind = Payload.KindName(p.Kind).PadRight(5);
+
+                Console.WriteLine("  " + mark + " " + kind + " " +
+                                  p.File.PadRight(38) +
+                                  p.Size.ToString().PadLeft(6) + " б  " +
+                                  (p.Valid ? p.Sni : p.InvalidReason));
+            }
+
+            int broken = total - library.ValidCount;
+            if (broken > 0)
+            {
+                Console.WriteLine();
+                Console.WriteLine("битых файлов: " + broken + " — они не должны попадать в аргументы winws");
+            }
+
+            return broken == 0 ? 0 : 1;
+        }
+
         /// <summary>--update-lists: скачать ipset и исключения, показать результат.</summary>
         public static int RunUpdateLists(string[] args)
         {

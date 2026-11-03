@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using AutoZapret.Core;
+using AutoZapret.Payloads;
 
 namespace AutoZapret.Zapret
 {
@@ -137,7 +138,41 @@ namespace AutoZapret.Zapret
 
             Settings settings = Settings.Current;
             Dictionary<string, string> placeholders = _engine.BuildPlaceholders(settings.GameFilter);
+
+            // Проверяем фейки ДО запуска: winws не проверяет содержимое .bin,
+            // и битый файл превращается в «стратегия не работает» без объяснений.
+            ValidatePayloads(strategy, placeholders);
+
             return _supervisor.Start(strategy, placeholders);
+        }
+
+        /// <summary>Предупреждает в лог о битых фейках. Не блокирует запуск.</summary>
+        private static void ValidatePayloads(Strategy strategy, Dictionary<string, string> placeholders)
+        {
+            try
+            {
+                List<string> args = strategy.BuildArguments(placeholders);
+                foreach (string arg in args)
+                {
+                    int eq = arg.IndexOf('=');
+                    if (eq < 0) continue;
+
+                    string value = arg.Substring(eq + 1);
+                    if (!value.EndsWith(".bin", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!System.IO.File.Exists(value)) continue;
+
+                    Payload payload = PayloadValidator.Inspect(value);
+                    if (!payload.Valid)
+                    {
+                        Log.Warn("FAKE", "битый фейк в стратегии: " +
+                                         System.IO.Path.GetFileName(value) + " (" + payload.InvalidReason + ")");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Debug("FAKE", "проверка фейков: " + ex.Message);
+            }
         }
 
         public bool Stop()

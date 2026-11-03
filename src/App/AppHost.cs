@@ -8,6 +8,7 @@ using System.Windows.Forms;
 using AutoZapret.Core;
 using AutoZapret.Diag;
 using AutoZapret.Lists;
+using AutoZapret.Payloads;
 using AutoZapret.Zapret;
 
 namespace AutoZapret.App
@@ -233,6 +234,35 @@ namespace AutoZapret.App
                 UpdateResult r = ListsUpdater.UpdateIpsetExclude();
                 SendUpdateStatus(r);
             }));
+
+            // ---- фейки
+            bridge.Register("fakes.scan", msg => RunInBackground("fakes", SendFakes));
+        }
+
+        // ---------------------------------------------------------------- fakes
+
+        private void SendFakes()
+        {
+            PayloadLibrary library = new PayloadLibrary();
+            library.Scan();
+
+            List<object> items = new List<object>();
+            foreach (Payload p in library.All)
+            {
+                items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    { "file", p.File },
+                    { "kind", Payload.KindName(p.Kind) },
+                    { "sni", p.Sni ?? "" },
+                    { "size", (long)p.Size },
+                    { "valid", p.Valid },
+                    { "reason", p.InvalidReason ?? "" }
+                });
+            }
+
+            _form.Bridge.Send(WebBridge.Msg("fakes",
+                "items", items,
+                "valid", (long)library.ValidCount));
         }
 
         // ---------------------------------------------------------------- lists
