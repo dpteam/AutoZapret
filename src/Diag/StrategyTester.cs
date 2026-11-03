@@ -162,6 +162,89 @@ namespace AutoZapret.Diag
         }
 
         /// <summary>
+        /// --deep: ПОЧЕМУ не открывается (тип блокировки) и что с этим делать.
+        /// Отвечает на вопрос «какую стратегию вообще имеет смысл пробовать».
+        /// </summary>
+        public static int RunDeep(string[] args)
+        {
+            int timeout = 8;
+            for (int i = 0; i < args.Length; i++)
+                if (string.Equals(args[i], "--deep", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                    int.TryParse(args[i + 1], out timeout);
+
+            Baseline.Snapshot baseline = Baseline.Load();
+            if (baseline == null)
+            {
+                Console.WriteLine("Нет базовой линии — сначала выполните: --probe");
+                return 2;
+            }
+
+            Console.WriteLine("== тип блокировки ==");
+            Console.WriteLine("сеть: " + baseline.Network + ", заблокировано: " + baseline.Blocked.Count);
+            Console.WriteLine();
+
+            DeepProbe probe = new DeepProbe();
+
+            // сначала учим заглушки провайдера на заблокированных доменах
+            List<string> hosts = new List<string>();
+            foreach (ProbeTarget t in ConnectivityProbe.DefaultTargets())
+                if (baseline.Blocked.Contains(t.Name)) hosts.Add(HostOf(t.Url));
+
+            probe.LearnStubIps(hosts);
+            if (probe.StubIpCount > 0)
+                Console.WriteLine("найдено IP-заглушек провайдера: " + probe.StubIpCount);
+            Console.WriteLine();
+
+            Dictionary<BlockKind, List<string>> byKind = new Dictionary<BlockKind, List<string>>();
+
+            foreach (ProbeTarget target in ConnectivityProbe.DefaultTargets())
+            {
+                bool blocked = baseline.Blocked.Contains(target.Name);
+                if (!blocked && !baseline.Working.Contains(target.Name)) continue;
+
+                string host = HostOf(target.Url);
+                Console.WriteLine("  проверяю " + target.Name + " (" + host + ")...");
+
+                string detail;
+                BlockKind kind = probe.Classify(host, timeout, out detail);
+
+                string mark = BlockKindText.IsOk(kind) ? "[ok]  " : "[БЛОК]";
+                Console.WriteLine("  " + mark + " " + target.Name.PadRight(14) +
+                                  BlockKindText.Short(kind).PadRight(11) +
+                                  BlockKindText.Russian(kind) +
+                                  (detail.Length > 0 ? "  (" + detail + ")" : ""));
+
+                List<string> list;
+                if (!byKind.TryGetValue(kind, out list)) { list = new List<string>(); byKind[kind] = list; }
+                list.Add(target.Name);
+            }
+
+            Console.WriteLine();
+            Console.WriteLine("== что пробовать ==");
+            foreach (KeyValuePair<BlockKind, List<string>> kv in byKind)
+            {
+                if (BlockKindText.IsOk(kv.Key)) continue;
+
+                string[] suggest = BlockKindText.Suggest(kv.Key);
+                Console.WriteLine();
+                Console.WriteLine(BlockKindText.Short(kv.Key) + " (" + BlockKindText.Russian(kv.Key) + "): " +
+                                  string.Join(", ", kv.Value.ToArray()));
+                if (suggest.Length == 0)
+                    Console.WriteLine("   подходящих стратегий нет — нужна диагностика сети");
+                else
+                    foreach (string s in suggest) Console.WriteLine("   → " + s);
+            }
+
+            return 0;
+        }
+
+        private static string HostOf(string url)
+        {
+            try { return new Uri(url).Host; }
+            catch { return url; }
+        }
+
+        /// <summary>
         /// --test-all [лимит] [секунд_удержания]: перебор стратегий против заблокированных целей.
         /// </summary>
         public static int RunTestAll(string[] args)

@@ -244,7 +244,14 @@ namespace AutoZapret.Zapret
             return result;
         }
 
-        /// <summary>Токенизация по пробелам с учётом двойных кавычек. Кавычки убираются.</summary>
+        /// <summary>
+        /// Токенизация по пробелам с учётом двойных кавычек. Кавычки убираются.
+        ///
+        /// Отдельно обрабатывается cmd-экранирование: вне кавычек `^X` означает
+        /// литеральный `X`. В конфигах Flowseal это встречается как `--dpi-desync-fake-tls=^!`
+        /// (экранирование `!`, чтобы отключить delayed expansion). Если не разэкранировать,
+        /// winws получает `^!` и падает с кодом 1 — именно так и ломался FAKE TLS AUTO.
+        /// </summary>
         public static List<string> Tokenize(string line)
         {
             List<string> tokens = new List<string>();
@@ -256,11 +263,30 @@ namespace AutoZapret.Zapret
             for (int i = 0; i < line.Length; i++)
             {
                 char c = line[i];
+
                 if (c == '"')
                 {
                     inQuotes = !inQuotes;
                     continue;
                 }
+
+                // вне кавычек ^ экранирует следующий символ
+                if (!inQuotes && c == '^' && i + 1 < line.Length)
+                {
+                    char next = line[i + 1];
+                    // ^ в конце строки - продолжение команды, до сюда уже не доходит
+                    if (next == ' ' || next == '\t')
+                    {
+                        // "^ " - литеральный пробел внутри аргумента
+                        sb.Append(' ');
+                        i++;
+                        continue;
+                    }
+                    sb.Append(next);
+                    i++;
+                    continue;
+                }
+
                 if (!inQuotes && (c == ' ' || c == '\t'))
                 {
                     if (sb.Length > 0) { tokens.Add(sb.ToString()); sb.Length = 0; }
