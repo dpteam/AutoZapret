@@ -1,0 +1,102 @@
+name: build
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+jobs:
+  build:
+    # .NET Framework 4.8 + x64: windows-latest уже содержит нужный таргетинг-пак
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      # WebView2 SDK качается один раз и переиспользуется между прогонами
+      - name: Cache WebView2 SDK
+        id: cache-webview2
+        uses: actions/cache@v4
+        with:
+          path: lib/webview2
+          key: webview2-sdk-1.0.4314.35
+
+      - name: Fetch WebView2 SDK
+        if: steps.cache-webview2.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: ./tools/fetch-webview2.ps1
+
+      - name: Verify WebView2 SDK present
+        shell: pwsh
+        run: |
+          $required = @(
+            'lib/webview2/Microsoft.Web.WebView2.Core.dll',
+            'lib/webview2/Microsoft.Web.WebView2.WinForms.dll',
+            'lib/webview2/WebView2Loader.dll'
+          )
+          foreach ($f in $required) {
+            if (-not (Test-Path $f)) { throw "missing: $f" }
+            Write-Host "ok  $f  $((Get-Item $f).Length) bytes"
+          }
+
+      - name: Build
+        shell: pwsh
+        run: |
+          dotnet build AutoZapret.csproj -c Release -v minimal --nologo
+          if ($LASTEXITCODE -ne 0) { throw "build failed" }
+
+      - name: Verify build output
+        shell: pwsh
+        run: |
+          $exe = 'bin/AutoZapret.exe'
+          if (-not (Test-Path $exe)) { throw "no exe produced" }
+          $size = (Get-Item $exe).Length
+          Write-Host "AutoZapret.exe: $size bytes"
+          if ($size -lt 100000) { throw "exe suspiciously small: $size" }
+          if (-not (Test-Path 'bin/WebView2Loader.dll')) { throw "WebView2Loader.dll not copied" }
+
+      # --selftest проверяет настройки, json, атомарную запись, ресурсы UI.
+      # WebView2 Runtime на раннере есть (Edge предустановлен), поэтому
+      # проверка runtime тоже должна пройти.
+      - name: Selftest
+        shell: pwsh
+        run: |
+          Push-Location bin
+          try {
+            $p = Start-Process -FilePath ./AutoZapret.exe -ArgumentList '--selftest' -Wait -PassThru -NoNewWindow
+            Write-Host "exit code: $($p.ExitCode)"
+            if (Test-Path selftest.txt) { Get-Content selftest.txt -Encoding UTF8 | Write-Host }
+            if ($p.ExitCode -ne 0) { throw "selftest failed with $($p.ExitCode)" }
+          } finally { Pop-Location }
+
+      - name: Upload selftest report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest-report
+          path: bin/selftest.txt
+          if-no-files-found: warn
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: AutoZapret-${{ github.sha }}
+          path: |
+            bin/AutoZapret.exe
+            bin/WebView2Loader.dll
+            bin/Microsoft.Web.WebView2.Core.dll
+            bin/Microsoft.Web.WebView2.WinForms.dll
+          retention-days: 14

@@ -144,6 +144,12 @@ powershell -File tools\ci-test.ps1     :: всё сразу
 | 32-битная Windows | отказ на старте с внятным сообщением |
 | SmartScreen на каждом билде | EV-сертификат или Azure Trusted Signing |
 | **На машине разработчика уже стоит служба `zapret` от Flowseal** | Она держит `WinDivert` и уже перехватывает трафик. Перед любым тестом P1+ (запуск/остановка `winws`) — остановить её: `sc stop zapret` (и при необходимости `sc stop WinDivert`). Наш `Stop()` не должен убивать чужие процессы, но `winws`-процесс от службы он найдёт и убьёт — это осознанно и должно быть предупреждением в UI |
+| **Антивирус блокирует скачивание zip-архива zapret-win-bundle** | Внутри `WinDivert64.sys`, который флагуется как RiskTool — AV рвёт загрузку архива целиком, хотя отдельные файлы проходят. **Качать только `git clone`**, не zip. `tools\fetch-engine.ps1` так и делает |
+| `git clone` в PowerShell 5.1 падает при `ErrorActionPreference=Stop` | git пишет прогресс в stderr, а PS считает stderr ошибкой. Глушить `2>$null` и смотреть `$LASTEXITCODE`, временно ставя `Continue` |
+| `echo engine -> path` в .cmd даёт «Отказано в доступе» | `>` — это редирект. Внутри блока `( ... )` он пытается писать в каталог. Экранировать: `-^>` |
+| **`ProcessStartInfo.ArgumentList` не существует в net48** | Появился только в .NET Core 2.1+. В net48 — только строка `Arguments`, квотировать самому (`CommandLine.Build` по правилам MS C runtime) |
+| `Process.Kill(entireProcessTree)` нет в net48 | Только .NET Core 3+. Дерево убивать через `taskkill /PID n /T /F` |
+| `CodePagesEncodingProvider` нет в net48 | Только .NET Core. `Encoding.GetEncoding(866)` в net48 работает из коробки |
 
 ---
 

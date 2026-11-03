@@ -98,7 +98,7 @@
     var PROTECTION_LABEL = {
         "off": "Обход выключен",
         "starting": "Запуск…",
-        "on": "Обход включён",
+        "running": "Обход включён",
         "stopping": "Остановка…",
         "error": "Ошибка"
     };
@@ -112,30 +112,51 @@
         // главная
         var protection = s.protection || "off";
         text("status-text", PROTECTION_LABEL[protection] || protection);
-        text("status-detail", s.engineReady ? "Движок готов" : "Движок не установлен");
+
+        var detail;
+        if (!s.engineReady) detail = s.engineProblem || "Движок не установлен";
+        else if (protection === "running") detail = "Стратегия: " + (s.activeStrategy || "—") + " · " + fmtUptime(s.uptimeSec);
+        else if (protection === "error") detail = s.protectionError || "Ошибка";
+        else detail = "Движок " + (s.engineVersion || "?") + " готов";
+        text("status-detail", detail);
+
+        // предупреждение о проблеме с движком
+        var notice = document.getElementById("p0-notice");
+        if (notice) {
+            var show = !s.engineReady;
+            notice.style.display = show ? "" : "none";
+            if (show) {
+                document.getElementById("p0-notice-text").innerHTML =
+                    "Движок не установлен. Выполните в папке с программой:<br>" +
+                    "<span class='mono'>powershell -ExecutionPolicy Bypass -File tools\\fetch-engine.ps1</span>";
+            }
+        }
 
         var dot = document.getElementById("status-dot");
         if (dot) {
             dot.className = "status-dot" +
-                (protection === "on" ? " on" :
+                (protection === "running" ? " on" :
                  protection === "starting" || protection === "stopping" ? " busy" :
                  protection === "error" ? " err" : "");
         }
 
         var power = document.getElementById("power");
         if (power) {
-            power.classList.toggle("on", protection === "on");
+            power.classList.toggle("on", protection === "running");
             power.classList.toggle("busy", protection === "starting" || protection === "stopping");
-            // при включении рисуем «стоп» вместо «питания»
+            power.disabled = !s.engineReady;
             var svg = power.querySelector("svg");
             if (svg) {
-                svg.innerHTML = protection === "on"
+                svg.innerHTML = protection === "running"
                     ? '<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none"/>'
                     : '<path d="M12 3.5v8" /><path d="M6.2 6.9a8 8 0 1 0 11.6 0" />';
             }
         }
 
-        text("strategy-name", s.strategyId);
+        // стратегия
+        var sel = document.getElementById("strategy-select");
+        if (sel && s.strategyId && sel.value !== s.strategyId) sel.value = s.strategyId;
+
         text("game-filter", GAME_FILTER_LABEL[s.gameFilter] || s.gameFilter);
         text("proxy-state", s.proxyEnabled ? "включён" : "выключен");
 
@@ -159,6 +180,60 @@
         text("about-portable", s.portable ? "portable (рядом с exe)" : "installed (LocalAppData)");
         text("about-datadir", s.dataDir);
         text("about-webview2", s.webview2);
+    }
+
+    function fmtUptime(sec) {
+        sec = Math.max(0, sec | 0);
+        var h = Math.floor(sec / 3600);
+        var m = Math.floor((sec % 3600) / 60);
+        var s = sec % 60;
+        if (h > 0) return h + " ч " + m + " мин";
+        if (m > 0) return m + " мин " + s + " с";
+        return s + " с";
+    }
+
+    function renderStrategies(items) {
+        var sel = document.getElementById("strategy-select");
+        if (!sel) return;
+
+        var current = sel.value || state.strategyId;
+        sel.innerHTML = "";
+
+        if (!items || items.length === 0) {
+            var opt = document.createElement("option");
+            opt.textContent = "нет доступных стратегий";
+            opt.value = "";
+            sel.appendChild(opt);
+            return;
+        }
+
+        items.forEach(function (s) {
+            var opt = document.createElement("option");
+            opt.value = s.id;
+            var label = s.name;
+            if (s.recommended) label = "★ " + label;
+            if (s.note) label += "  —  " + s.note;
+            opt.textContent = label;
+            sel.appendChild(opt);
+        });
+
+        if (current) sel.value = current;
+        else if (state.strategyId) sel.value = state.strategyId;
+        updateStrategyNote(items);
+    }
+
+    function updateStrategyNote(items) {
+        var sel = document.getElementById("strategy-select");
+        var row = document.getElementById("row-strategy-note");
+        if (!sel || !row || !items) return;
+        var found = null;
+        for (var i = 0; i < items.length; i++) if (items[i].id === sel.value) { found = items[i]; break; }
+        if (found) {
+            text("strategy-note", (found.note || "") + " · профилей: " + found.profiles);
+            row.style.display = "";
+        } else {
+            row.style.display = "none";
+        }
     }
 
     // ------------------------------------------------------------ логи
@@ -231,12 +306,22 @@
         send("settings.set", payload);
     }
 
+    var strategyItems = [];
+
     function initSettings() {
         var gf = document.getElementById("set-game-filter");
         if (gf) gf.addEventListener("change", function () { queueSave({ gameFilter: gf.value }); });
 
         var im = document.getElementById("set-ipset-mode");
         if (im) im.addEventListener("change", function () { queueSave({ ipsetMode: im.value }); });
+
+        var strategy = document.getElementById("strategy-select");
+        if (strategy) {
+            strategy.addEventListener("change", function () {
+                send("strategy.select", { id: strategy.value });
+                updateStrategyNote(strategyItems);
+            });
+        }
 
         var port = document.getElementById("set-proxy-port");
         if (port) {
@@ -305,6 +390,11 @@
 
             case "navigate":
                 showScreen(msg.screen);
+                break;
+
+            case "strategies":
+                strategyItems = msg.items || [];
+                renderStrategies(strategyItems);
                 break;
 
             case "logs":

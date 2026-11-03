@@ -65,6 +65,15 @@ namespace AutoZapret.App
 
                 Section("лог");
                 TestLog();
+
+                Section("движок");
+                TestEngine();
+
+                Section("парсер стратегий");
+                TestStrategies();
+
+                Section("квотирование аргументов");
+                TestCommandLine();
             }
             catch (Exception ex)
             {
@@ -235,6 +244,236 @@ namespace AutoZapret.App
         }
 
         // ---------------------------------------------------------------- helpers
+
+        /// <summary>
+        /// Реальный запуск winws: --test-winws [strategyId] [seconds]
+        /// Проверяет, что процесс стартует, живёт и корректно останавливается.
+        /// Не трогает чужие процессы: если winws уже запущен — честно откажется.
+        /// </summary>
+        public static int RunWinws(string[] args)
+        {
+            string strategyId = "flowseal.general";
+            int seconds = 6;
+
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], "--test-winws", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (i + 1 < args.Length && !args[i + 1].StartsWith("--")) strategyId = args[i + 1];
+                    if (i + 2 < args.Length) int.TryParse(args[i + 2], out seconds);
+                }
+            }
+
+            Console.WriteLine("== тест запуска winws ==");
+            Console.WriteLine("стратегия: " + strategyId);
+            Console.WriteLine("удержание: " + seconds + " с");
+
+            using (AutoZapret.Zapret.ZapretService svc = new AutoZapret.Zapret.ZapretService())
+            {
+                string foreign = AutoZapret.Zapret.WinwsSupervisor.DetectForeignWinws();
+                if (foreign != null)
+                {
+                    Console.WriteLine("ОТКАЗ: уже работает winws (" + foreign + ")");
+                    Console.WriteLine("       остановите его: sc stop zapret");
+                    return 3;
+                }
+
+                svc.EnsureStrategies();
+                Console.WriteLine("стратегий доступно: " + svc.Strategies.Count);
+
+                string error = svc.Start(strategyId);
+                if (error != null)
+                {
+                    Console.WriteLine("ОШИБКА СТАРТА: " + error);
+                    return 1;
+                }
+
+                Console.WriteLine("состояние: " + svc.State);
+
+                bool alive = false;
+                for (int i = 0; i < seconds; i++)
+                {
+                    System.Threading.Thread.Sleep(1000);
+                    System.Diagnostics.Process[] procs = System.Diagnostics.Process.GetProcessesByName("winws");
+                    alive = procs.Length > 0;
+                    Console.WriteLine("  t+" + (i + 1) + "с: winws процессов " + procs.Length);
+                    foreach (System.Diagnostics.Process p in procs) { try { p.Dispose(); } catch { } }
+                }
+
+                bool stopped = svc.Stop();
+                System.Threading.Thread.Sleep(800);
+
+                System.Diagnostics.Process[] after = System.Diagnostics.Process.GetProcessesByName("winws");
+                int left = after.Length;
+                foreach (System.Diagnostics.Process p in after) { try { p.Dispose(); } catch { } }
+
+                Console.WriteLine("после остановки winws процессов: " + left);
+                Console.WriteLine("состояние: " + svc.State);
+
+                bool ok = alive && stopped && left == 0 && svc.State == AutoZapret.Zapret.ProtectionState.Stopped;
+                Console.WriteLine(ok ? "RESULT: ok" : "RESULT: failed");
+                return ok ? 0 : 1;
+            }
+        }
+
+        private static void TestEngine()
+        {
+            AutoZapret.Zapret.EngineLocator engine = new AutoZapret.Zapret.EngineLocator();
+            Check("движок установлен", engine.Ready, engine.Problem ?? engine.StatusLine());
+
+            if (!engine.Ready) return;
+
+            Check("winws.exe найден", engine.WinwsPath != null, engine.WinwsPath ?? "null");
+            Check("версия прочитана", !string.IsNullOrEmpty(engine.Version), engine.Version);
+            Check("WinDivert64.sys на месте",
+                System.IO.File.Exists(System.IO.Path.Combine(engine.BinDir, "WinDivert64.sys")), "ok");
+
+            string tcp, udp;
+            engine.MapGameFilter("tcp+udp", out tcp, out udp);
+            Check("game filter tcp+udp", tcp == "1024-65535" && udp == "1024-65535", tcp + "/" + udp);
+
+            engine.MapGameFilter("off", out tcp, out udp);
+            Check("game filter off", tcp == "12" && udp == "12", tcp + "/" + udp);
+
+            Dictionary<string, string> ph = engine.BuildPlaceholders("off");
+            Check("плейсхолдер BIN", ph.ContainsKey("BIN") && System.IO.Directory.Exists(ph["BIN"]), ph["BIN"]);
+            Check("плейсхолдер LISTS", ph.ContainsKey("LISTS") && System.IO.Directory.Exists(ph["LISTS"]), ph["LISTS"]);
+        }
+
+        private static void TestStrategies()
+        {
+            AutoZapret.Zapret.EngineLocator engine = new AutoZapret.Zapret.EngineLocator();
+            if (!engine.Ready)
+            {
+                Check("парсер стратегий", false, "движок не установлен — нечего разбирать");
+                return;
+            }
+
+            // исходные .bat лежат в engine\..\..\refs (dev) либо рядом; берём из refs, если есть
+            string batDir = System.IO.Path.Combine(Paths.BaseDir, "..", "..", "refs", "zapret-discord-youtube");
+            if (!System.IO.Directory.Exists(batDir))
+                batDir = System.IO.Path.Combine(Paths.BaseDir, "..", "refs", "zapret-discord-youtube");
+
+            if (!System.IO.Directory.Exists(batDir))
+            {
+                Check("каталог .bat найден", false, batDir);
+                return;
+            }
+
+            AutoZapret.Zapret.StrategyStore store = new AutoZapret.Zapret.StrategyStore();
+            int count = store.ImportFromDirectory(batDir, engine.BinDir, engine.ListsDir);
+
+            Check("стратегии импортированы", count >= 20, count + " шт.");
+            if (count == 0) return;
+
+            AutoZapret.Zapret.Strategy general = store.Find("flowseal.general");
+            Check("стратегия general найдена", general != null, general == null ? "null" : general.Name);
+
+            if (general != null)
+            {
+                Check("globalArgs содержит --wf-tcp",
+                    general.GlobalArgs.Exists(a => a.StartsWith("--wf-tcp=", StringComparison.OrdinalIgnoreCase)),
+                    string.Join(" ", general.GlobalArgs.ToArray()));
+                Check("globalArgs содержит --wf-udp",
+                    general.GlobalArgs.Exists(a => a.StartsWith("--wf-udp=", StringComparison.OrdinalIgnoreCase)), "ok");
+                Check("профилей больше 5", general.Profiles.Count > 5, general.Profiles.Count.ToString());
+
+                // ни один аргумент не должен остаться с абсолютным путём к bin/lists
+                bool hasAbsPath = false;
+                foreach (AutoZapret.Zapret.StrategyProfile p in general.Profiles)
+                    foreach (string a in p.Args)
+                        if (a.IndexOf(engine.BinDir, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            a.IndexOf(engine.ListsDir, StringComparison.OrdinalIgnoreCase) >= 0)
+                            hasAbsPath = true;
+                Check("абсолютные пути заменены плейсхолдерами", !hasAbsPath, hasAbsPath ? "остались" : "ok");
+
+                // сборка финальных аргументов
+                Dictionary<string, string> ph = engine.BuildPlaceholders("off");
+                List<string> args = general.BuildArguments(ph);
+                Check("аргументы собираются", args.Count > 20, args.Count + " арг.");
+                Check("--new разделяет профили",
+                    args.FindAll(a => a == "--new").Count == general.Profiles.Count - 1,
+                    args.FindAll(a => a == "--new").Count + " шт.");
+                Check("плейсхолдеры подставлены",
+                    args.Exists(a => a.Contains("${")) == false, "ok");
+
+                // все файлы, на которые ссылаются аргументы, должны существовать
+                int missing = 0;
+                string firstMissing = null;
+                foreach (string a in args)
+                {
+                    int eq = a.IndexOf('=');
+                    if (eq < 0) continue;
+                    string value = a.Substring(eq + 1);
+                    if (!value.EndsWith(".txt", StringComparison.OrdinalIgnoreCase) &&
+                        !value.EndsWith(".bin", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!System.IO.File.Exists(value))
+                    {
+                        missing++;
+                        if (firstMissing == null) firstMissing = value;
+                    }
+                }
+                Check("все файлы стратегии существуют", missing == 0,
+                    missing == 0 ? "ok" : missing + " нет, первый: " + firstMissing);
+            }
+
+            // сохранение/загрузка
+            string tmp = System.IO.Path.Combine(Paths.StateDir, "selftest-strategies.json");
+            try
+            {
+                store.Save(tmp, "selftest");
+                Check("стратегии сохранены", System.IO.File.Exists(tmp), tmp);
+
+                AutoZapret.Zapret.StrategyStore reloaded = new AutoZapret.Zapret.StrategyStore();
+                bool loaded = reloaded.Load(tmp);
+                Check("стратегии загружены", loaded && reloaded.Count == count, reloaded.Count + "/" + count);
+
+                AutoZapret.Zapret.Strategy back = reloaded.Find("flowseal.general");
+                Check("round-trip сохранил профили",
+                    back != null && back.Profiles.Count == general.Profiles.Count,
+                    back == null ? "null" : back.Profiles.Count.ToString());
+            }
+            finally
+            {
+                try { System.IO.File.Delete(tmp); } catch { }
+            }
+        }
+
+        private static void TestCommandLine()
+        {
+            // правила квотирования Windows
+            Check("простое слово", AutoZapret.Zapret.CommandLine.Quote("abc") == "abc", "abc");
+            Check("пробел -> кавычки",
+                AutoZapret.Zapret.CommandLine.Quote("a b") == "\"a b\"", "a b");
+            Check("путь с пробелом",
+                AutoZapret.Zapret.CommandLine.Quote(@"C:\Program Files\x") == "\"C:\\Program Files\\x\"",
+                @"C:\Program Files\x");
+            Check("пустая строка", AutoZapret.Zapret.CommandLine.Quote("") == "\"\"", "empty");
+            Check("кавычка внутри",
+                AutoZapret.Zapret.CommandLine.Quote("a\"b") == "\"a\\\"b\"",
+                AutoZapret.Zapret.CommandLine.Quote("a\"b"));
+
+            // round-trip: собрали строку -> разобрали обратно
+            List<string> original = new List<string>
+            {
+                "--wf-tcp=80,443",
+                @"--hostlist=C:\Program Files\AutoZapret\engine\lists\list-general.txt",
+                "--dpi-desync=fake,multisplit",
+                @"C:\path with spaces\and trailing\",
+                "!",
+                "--dpi-desync-fake-tls=0x00000000"
+            };
+
+            string built = AutoZapret.Zapret.CommandLine.Build(original);
+            List<string> parsed = AutoZapret.Zapret.CommandLine.Split(built);
+
+            bool same = parsed.Count == original.Count;
+            if (same)
+                for (int i = 0; i < original.Count; i++)
+                    if (parsed[i] != original[i]) { same = false; break; }
+
+            Check("round-trip аргументов", same, same ? "ok" : "built: " + built);
+        }
 
         private static void Section(string title)
         {

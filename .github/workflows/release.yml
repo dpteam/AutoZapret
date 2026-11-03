@@ -1,0 +1,121 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to attach the release to (e.g. v0.1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Cache WebView2 SDK
+        id: cache-webview2
+        uses: actions/cache@v4
+        with:
+          path: lib/webview2
+          key: webview2-sdk-1.0.4314.35
+
+      - name: Fetch WebView2 SDK
+        if: steps.cache-webview2.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: ./tools/fetch-webview2.ps1
+
+      - name: Build
+        shell: pwsh
+        run: |
+          dotnet build AutoZapret.csproj -c Release -v minimal --nologo
+          if ($LASTEXITCODE -ne 0) { throw "build failed" }
+
+      - name: Selftest
+        shell: pwsh
+        run: |
+          Push-Location bin
+          try {
+            $p = Start-Process -FilePath ./AutoZapret.exe -ArgumentList '--selftest' -Wait -PassThru -NoNewWindow
+            if (Test-Path selftest.txt) { Get-Content selftest.txt -Encoding UTF8 | Write-Host }
+            if ($p.ExitCode -ne 0) { throw "selftest failed" }
+          } finally { Pop-Location }
+
+      # portable-архив: exe + dll + ассеты + ЛИЦЕНЗИИ (обязательно, см. ROADMAP §3)
+      - name: Assemble portable package
+        shell: pwsh
+        run: |
+          $stage = 'stage/AutoZapret'
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+
+          Copy-Item 'bin/AutoZapret.exe'                      $stage
+          Copy-Item 'bin/WebView2Loader.dll'                  $stage
+          Copy-Item 'bin/Microsoft.Web.WebView2.Core.dll'     $stage
+          Copy-Item 'bin/Microsoft.Web.WebView2.WinForms.dll' $stage
+
+          foreach ($extra in @('README.md','LICENSE','licenses')) {
+            if (Test-Path $extra) { Copy-Item $extra $stage -Recurse -Force }
+          }
+
+          # движок zapret НЕ шипим (ROADMAP §P1): качается tools\fetch-engine.ps1
+          Set-Content -Path (Join-Path $stage 'ПРОЧТИ-МЕНЯ.txt') -Encoding UTF8 -Value @'
+AutoZapret - portable
+
+1. Распакуйте в папку без кириллицы в пути (например C:\AutoZapret).
+2. Если скачивали через браузер: правый клик по архиву -> Свойства -> Разблокировать.
+3. Запустите AutoZapret.exe, согласитесь на UAC.
+
+Движок обхода DPI (zapret) скачивается отдельно:
+    powershell -ExecutionPolicy Bypass -File tools\fetch-engine.ps1
+
+Это не VPN. WinDivert может вызвать реакцию антивируса - это ожидаемо.
+
+Требуется: Windows x64, .NET Framework 4.8, WebView2 Runtime.
+'@
+
+          Compress-Archive -Path "$stage/*" -DestinationPath 'AutoZapret-portable.zip' -Force
+          Write-Host "package: $((Get-Item 'AutoZapret-portable.zip').Length) bytes"
+
+      - name: Checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem -Filter 'AutoZapret-portable.zip' | ForEach-Object {
+            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$h  $($_.Name)" | Out-File -FilePath 'checksums.txt' -Encoding ASCII
+            Write-Host "$h  $($_.Name)"
+          }
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-package
+          path: |
+            AutoZapret-portable.zip
+            checksums.txt
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            AutoZapret-portable.zip
+            checksums.txt
+          generate_release_notes: true
+          draft: true

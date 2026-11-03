@@ -61,7 +61,7 @@ if not "%RC%"=="0" (
 )
 
 rem ---------------------------------------------------------------- layout
-echo [3/3] checking output...
+echo [3/3] laying out engine...
 if not exist "%OUT%\AutoZapret.exe" (
   echo [ERROR] %OUT%\AutoZapret.exe was not produced.
   exit /b 1
@@ -70,10 +70,20 @@ if not exist "%OUT%\WebView2Loader.dll" (
   echo [WARN] WebView2Loader.dll is missing next to the exe - the window will not start.
 )
 
-if not exist "%OUT%\engine" (
+rem The engine must sit next to the exe: Paths.EngineDir = <exe dir>\engine.
+rem robocopy /XO copies only newer files, so repeated builds stay fast.
+if exist "%ROOT%engine\bin\winws.exe" (
+  if not exist "%OUT%\engine" mkdir "%OUT%\engine"
+  robocopy "%ROOT%engine" "%OUT%\engine" /E /XO /NJH /NJS /NDL /NFL /NP /R:1 /W:1 >nul 2>&1
+  if errorlevel 8 (
+    echo [WARN] engine copy failed - is winws.exe running? Close it and rebuild.
+  ) else (
+    echo       engine -^> %OUT%\engine
+  )
+) else (
   echo.
-  echo [note] engine\ is not installed yet. The GUI will start, but DPI bypass needs it:
-  echo        powershell -File tools\fetch-engine.ps1
+  echo [note] engine\ is not installed. The GUI will start, but bypass needs it:
+  echo        powershell -ExecutionPolicy Bypass -File tools\fetch-engine.ps1
 )
 
 echo.

@@ -46,12 +46,9 @@
       <h1>Обход блокировок</h1>
       <p class="subtitle">Zapret + Telegram-прокси в одном окне</p>
 
-      <div class="notice" id="p0-notice">
+      <div class="notice" id="p0-notice" style="display:none">
         <span>ⓘ</span>
-        <div>
-          Это <b>каркас интерфейса</b> (фаза P0). Движок обхода и прокси появятся
-          в следующих версиях — пока работают окно, трей, настройки и логи.
-        </div>
+        <div id="p0-notice-text"></div>
       </div>
 
       <div class="card">
@@ -76,7 +73,13 @@
             <div class="row-label">Стратегия</div>
             <div class="row-hint">Набор правил обхода для вашего провайдера</div>
           </div>
-          <span class="tag mono" id="strategy-name">—</span>
+          <select id="strategy-select" style="min-width:260px"></select>
+        </div>
+
+        <div class="row" id="row-strategy-note" style="display:none">
+          <div>
+            <div class="row-hint mono" id="strategy-note"></div>
+          </div>
         </div>
 
         <div class="row">
