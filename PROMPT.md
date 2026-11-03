@@ -79,7 +79,8 @@ WebView2 в ресурсах, `postMessage`-мост, `refs/` в `.gitignore`, `
 - [x] Клонированы все источники в `refs/`
 - [x] Проведено исследование → `docs/research/` (6 разборов, ~400 КБ)
 - [x] Собран `ROADMAP.md` (P0-P10)
-- [x] Создан `.git` + `.gitignore` (`refs/`, `engine/`, `bin/`, `data/state/` исключены)
+- [x] Создан `.git` + `.gitignore` + `.gitattributes` (`refs/`, `engine/`, `bin/`, `data/state/` исключены)
+- [x] Первый коммит `7e471cd`
 - [ ] **P0 — фундамент** (окно + трей + настройки + логи + `--selftest`)
 - [ ] P1 — движок zapret v1
 - [ ] P2 — UI v1
