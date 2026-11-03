@@ -315,6 +315,42 @@
       </div>
 
       <div class="card">
+        <div class="card-title">Hosts</div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Объединить источники</div>
+            <div class="row-hint">Flowseal + dns.malw.link. Ваши записи не трогаются, дубликаты схлопываются</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <label class="check-inline" title="Проверить IP по TCP и выбрать живые">
+              <input type="checkbox" id="hosts-verify" checked> проверять IP
+            </label>
+            <button class="btn primary" id="btn-hosts-apply">Применить</button>
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Проверить записанное</div>
+            <div class="row-hint">Какие адреса из блока отвечают, какие мертвы</div>
+          </div>
+          <button class="btn" id="btn-hosts-check">Проверить</button>
+        </div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Восстановить</div>
+            <div class="row-hint">Вернуть hosts из резервной копии (создаётся при первом изменении)</div>
+          </div>
+          <button class="btn danger" id="btn-hosts-restore">Восстановить</button>
+        </div>
+
+        <div id="hosts-status" class="row-hint" style="margin-top:10px"></div>
+        <div id="hosts-conflicts" class="diag-list" style="margin-top:10px;display:none"></div>
+      </div>
+
+      <div class="card">
         <div class="card-title">Фейк-payload'ы</div>
         <div class="row">
           <div>

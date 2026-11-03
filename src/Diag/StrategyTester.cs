@@ -226,6 +226,109 @@ namespace AutoZapret.Diag
             return 0;
         }
 
+        /// <summary>
+        /// --hosts [--verify] [--apply] [--check]
+        /// Собрать hosts из источников, показать конфликты/дубликаты, применить.
+        /// </summary>
+        public static int RunHosts(string[] args)
+        {
+            bool verify = HasFlagLocal(args, "--verify");
+            bool apply = HasFlagLocal(args, "--apply");
+            bool check = HasFlagLocal(args, "--check");
+
+            Console.WriteLine("== hosts ==");
+            Console.WriteLine("системный файл: " + Lists.HostsFile.SystemPath);
+            Console.WriteLine();
+
+            if (check)
+            {
+                Lists.HostsUpdateResult inspected = Lists.HostsUpdater.VerifyCurrent(msg => Console.WriteLine("  " + msg));
+                Console.WriteLine("  " + inspected.Message);
+                return inspected.Ok ? 0 : 1;
+            }
+
+            Lists.HostsUpdateResult built = Lists.HostsUpdater.Build(true, true, verify,
+                msg => Console.WriteLine("  " + msg));
+
+            if (!built.Ok)
+            {
+                Console.WriteLine("ОШИБКА: " + built.Message);
+                return 1;
+            }
+
+            Lists.HostsAnalysis a = built.Analysis;
+
+            Console.WriteLine();
+            Console.WriteLine("  имён:            " + a.UniqueHosts);
+            Console.WriteLine("  дубликатов:      " + a.ExactDuplicates);
+            Console.WriteLine("  конфликтов:      " + a.Conflicts.Count);
+            Console.WriteLine("  мусорных строк:  " + a.Invalid.Count);
+            Console.WriteLine("  ваших записей:   " + a.UserCollisions);
+
+            if (a.Conflicts.Count > 0)
+            {
+                Console.WriteLine();
+                Console.WriteLine("  конфликты (одно имя — разные IP):");
+                int shown = 0;
+                foreach (Lists.HostsConflict c in a.Conflicts)
+                {
+                    if (shown++ >= 15) { Console.WriteLine("    … и ещё " + (a.Conflicts.Count - 15)); break; }
+                    Console.WriteLine("    " + c.Describe());
+                }
+
+                if (!verify)
+                    Console.WriteLine("\n    (запустите с --verify, чтобы проверить адреса по TCP)");
+            }
+
+            if (a.UserCollisionNames.Count > 0)
+            {
+                Console.WriteLine();
+                Console.WriteLine("  не тронуты (уже есть в вашем hosts): " +
+                                  string.Join(", ", a.UserCollisionNames.GetRange(0,
+                                      Math.Min(10, a.UserCollisionNames.Count)).ToArray()) +
+                                  (a.UserCollisionNames.Count > 10 ? " …" : ""));
+            }
+
+            if (a.Invalid.Count > 0)
+            {
+                Console.WriteLine();
+                Console.WriteLine("  примеры мусора: " + string.Join(" | ", a.Invalid.GetRange(0,
+                    Math.Min(3, a.Invalid.Count)).ToArray()));
+            }
+
+            if (!apply)
+            {
+                Console.WriteLine();
+                Console.WriteLine("ничего не записано (добавьте --apply)");
+                return 0;
+            }
+
+            Console.WriteLine();
+            Console.WriteLine("записываю…");
+            string error = Lists.HostsFile.Apply(built.Preview);
+            if (error != null)
+            {
+                Console.WriteLine("ОШИБКА: " + error);
+                return 1;
+            }
+
+            Console.WriteLine("готово. Откат: --hosts --check? нет — используйте кнопку «Восстановить» или --hosts-restore");
+            return 0;
+        }
+
+        /// <summary>--hosts-restore: вернуть hosts из резервной копии.</summary>
+        public static int RunHostsRestore(string[] args)
+        {
+            string error = Lists.HostsFile.Restore();
+            if (error != null)
+            {
+                Console.WriteLine("ОШИБКА: " + error);
+                return 1;
+            }
+            Console.WriteLine("hosts восстановлен из " + Lists.HostsFile.BackupPath);
+            return 0;
+        }
+
         /// <summary>--test-proxy [dc]: проверить путь до Telegram и работу прокси.</summary>
         public static int RunTestProxy(string[] args)
         {

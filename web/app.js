@@ -622,6 +622,63 @@
         el.className = "row-hint " + (msg.ok ? "diag-ok" : "diag-bad");
     }
 
+    function initHosts() {
+        var apply = document.getElementById("btn-hosts-apply");
+        if (apply) apply.addEventListener("click", function () {
+            var verify = document.getElementById("hosts-verify");
+            apply.disabled = true;
+            apply.textContent = "Собираю…";
+            send("hosts.apply", { verify: verify ? verify.checked : false });
+        });
+
+        var check = document.getElementById("btn-hosts-check");
+        if (check) check.addEventListener("click", function () {
+            check.disabled = true;
+            check.textContent = "Проверяю…";
+            send("hosts.check");
+        });
+
+        var restore = document.getElementById("btn-hosts-restore");
+        if (restore) restore.addEventListener("click", function () {
+            send("hosts.restore");
+        });
+    }
+
+    function renderHosts(msg) {
+        var apply = document.getElementById("btn-hosts-apply");
+        if (apply) { apply.disabled = false; apply.textContent = "Применить"; }
+
+        var check = document.getElementById("btn-hosts-check");
+        if (check) { check.disabled = false; check.textContent = "Проверить"; }
+
+        var status = document.getElementById("hosts-status");
+        if (status) {
+            status.textContent = msg.message || "";
+            status.className = "row-hint " + (msg.ok ? (msg.warn ? "diag-warn" : "diag-ok") : "diag-bad");
+        }
+
+        var box = document.getElementById("hosts-conflicts");
+        if (!box) return;
+
+        var conflicts = msg.conflicts || [];
+        box.innerHTML = "";
+
+        if (conflicts.length === 0) { box.style.display = "none"; return; }
+
+        conflicts.forEach(function (c) {
+            var div = document.createElement("div");
+            div.className = "diag-row";
+            div.innerHTML =
+                '<span class="badge warn">≠</span>' +
+                '<span class="name">' + c.host + '</span>' +
+                '<span class="verdict">' + c.ips.join(" / ") + '</span>' +
+                '<span class="detail">' + c.chosen + ' · ' + c.reason + '</span>';
+            box.appendChild(div);
+        });
+
+        box.style.display = "";
+    }
+
     function renderIpstat(msg) {
         var el = document.getElementById("ipset-state");
         if (el) el.textContent = msg.text || "—";
@@ -797,6 +854,10 @@
                 renderListStatus(msg);
                 break;
 
+            case "hosts":
+                renderHosts(msg);
+                break;
+
             case "lists.ipset":
                 renderIpstat(msg);
                 break;
@@ -856,6 +917,7 @@
         initSettings();
         initDiag();
         initLists();
+        initHosts();
         initProxy();
         initUpdates();
         initButtons();

@@ -280,6 +280,15 @@ namespace AutoZapret.App
             // ---- фейки
             bridge.Register("fakes.scan", msg => RunInBackground("fakes", SendFakes));
 
+            // ---- hosts
+            bridge.Register("hosts.apply", msg =>
+            {
+                bool verify = Json.GetBool(msg, "verify", true);
+                RunInBackground("hosts-apply", () => ApplyHostsUi(verify));
+            });
+            bridge.Register("hosts.check", msg => RunInBackground("hosts-check", CheckHostsUi));
+            bridge.Register("hosts.restore", msg => RunInBackground("hosts-restore", RestoreHostsUi));
+
             // ---- прокси
             bridge.Register("proxy.state", msg => SendProxyState());
             bridge.Register("proxy.toggle", msg => RunInBackground("proxy-toggle", () =>
@@ -459,6 +468,84 @@ namespace AutoZapret.App
         }
 
         // ---------------------------------------------------------------- fakes
+
+        // ---------------------------------------------------------------- hosts
+
+        private void ApplyHostsUi(bool verify)
+        {
+            HostsUpdateResult built = HostsUpdater.Build(true, true, verify,
+                line => SendUpdateProgress(line, false, true));
+
+            if (!built.Ok)
+            {
+                SendHosts(false, true, built.Message, null);
+                return;
+            }
+
+            string error = HostsFile.Apply(built.Preview);
+            if (error != null)
+            {
+                SendHosts(false, true, "Не записано: " + error, built.Analysis);
+                _tray.Notify(AppInfo.Name, "hosts: " + error, ToolTipIcon.Error);
+                return;
+            }
+
+            string message = "Записано: " + built.Analysis.Summary();
+            SendHosts(true, false, message, built.Analysis);
+
+            _tray.Notify(AppInfo.Name, "hosts обновлён: " + built.Analysis.UniqueHosts + " имён",
+                ToolTipIcon.Info);
+        }
+
+        private void CheckHostsUi()
+        {
+            HostsUpdateResult result = HostsUpdater.VerifyCurrent(
+                line => SendUpdateProgress(line, false, true));
+
+            SendHosts(result.Ok, !result.Ok, result.Message, null);
+        }
+
+        private void RestoreHostsUi()
+        {
+            string error = HostsFile.Restore();
+            SendHosts(error == null, error != null,
+                error ?? "hosts восстановлен из резервной копии", null);
+        }
+
+        private void SendHosts(bool ok, bool warn, string message, HostsAnalysis analysis)
+        {
+            List<object> conflicts = new List<object>();
+
+            if (analysis != null && analysis.Conflicts.Count > 0)
+            {
+                int limit = Math.Min(analysis.Conflicts.Count, 40);
+                for (int i = 0; i < limit; i++)
+                {
+                    HostsConflict c = analysis.Conflicts[i];
+
+                    List<object> ips = new List<object>();
+                    foreach (string ip in c.Ips) ips.Add(ip);
+
+                    string reason = c.Verified
+                        ? "проверен TCP: " + (c.VerifiedMs >= 0 ? c.VerifiedMs + " мс" : c.VerifiedNote)
+                        : "по приоритету источника";
+
+                    conflicts.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                    {
+                        { "host", c.Hostname },
+                        { "ips", ips },
+                        { "chosen", c.Chosen },
+                        { "reason", reason }
+                    });
+                }
+            }
+
+            _form.Bridge.Send(WebBridge.Msg("hosts",
+                "ok", ok,
+                "warn", warn,
+                "message", message ?? "",
+                "conflicts", conflicts));
+        }
 
         private void SendFakes()
         {

@@ -82,6 +82,9 @@ namespace AutoZapret.App
                 Section("списки");
                 TestLists();
 
+                Section("hosts");
+                TestHosts();
+
                 Section("фейки");
                 TestPayloads();
 
@@ -653,6 +656,105 @@ namespace AutoZapret.App
             {
                 try { System.IO.Directory.Delete(dir, true); } catch { }
             }
+        }
+
+        private static void TestHosts()
+        {
+            // --- разбор
+            string source1 =
+                "# comment\r\n" +
+                "1.2.3.4 example.com www.example.com\r\n" +
+                "1.2.3.4 example.com\r\n" +              // точный дубликат
+                "5.6.7.8 other.org\r\n" +
+                "мусор\r\n" +                            // невалидная строка
+                "9.9.9.9 bad_host\r\n";                  // невалидное имя
+
+            List<KeyValuePair<string, string>> sources = new List<KeyValuePair<string, string>>
+            {
+                new KeyValuePair<string, string>("flowseal", source1)
+            };
+
+            AutoZapret.Lists.HostsAnalysis a = AutoZapret.Lists.HostsFile.Analyze(sources, "");
+
+            Check("hosts: имена разобраны", a.UniqueHosts == 3,
+                a.UniqueHosts + " имён (example.com, www.example.com, other.org)");
+            Check("hosts: дубликат найден", a.ExactDuplicates == 1, a.ExactDuplicates.ToString());
+            Check("hosts: мусор отброшен", a.Invalid.Count == 2, a.Invalid.Count + " строк");
+            Check("hosts: конфликтов нет", a.Conflicts.Count == 0, a.Conflicts.Count.ToString());
+
+            // --- IPv4 + IPv6 для одного имени не конфликт
+            List<KeyValuePair<string, string>> dualStack = new List<KeyValuePair<string, string>>
+            {
+                new KeyValuePair<string, string>("src1", "1.2.3.4 dual.example\r\n"),
+                new KeyValuePair<string, string>("src2", "2606:50c0::1 dual.example\r\n")
+            };
+
+            AutoZapret.Lists.HostsAnalysis dual = AutoZapret.Lists.HostsFile.Analyze(dualStack, "");
+            Check("hosts: IPv4+IPv6 не конфликт", dual.Conflicts.Count == 0,
+                dual.Conflicts.Count + " конфликтов");
+            Check("hosts: обе записи сохранены", dual.Entries.Count == 2,
+                dual.Entries.Count + " записей");
+
+            // --- два разных IPv4 для одного имени = конфликт
+            List<KeyValuePair<string, string>> clash = new List<KeyValuePair<string, string>>
+            {
+                new KeyValuePair<string, string>("flowseal", "1.1.1.1 clash.example\r\n"),
+                new KeyValuePair<string, string>("malw", "2.2.2.2 clash.example\r\n")
+            };
+
+            AutoZapret.Lists.HostsAnalysis conflicted = AutoZapret.Lists.HostsFile.Analyze(clash, "");
+            Check("hosts: конфликт IPv4 найден", conflicted.Conflicts.Count == 1,
+                conflicted.Conflicts.Count + " конфликтов");
+            Check("hosts: выбран по приоритету",
+                conflicted.Conflicts.Count == 1 && conflicted.Conflicts[0].Chosen == "1.1.1.1",
+                conflicted.Conflicts.Count == 1 ? conflicted.Conflicts[0].Chosen : "—");
+
+            // --- приоритет проверки важнее приоритета источника
+            Dictionary<string, string> preferred = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                { "clash.example", "2.2.2.2" }
+            };
+            AutoZapret.Lists.HostsAnalysis verified = AutoZapret.Lists.HostsFile.Analyze(clash, "", preferred);
+            Check("hosts: проверенный IP важнее приоритета",
+                verified.Conflicts.Count == 1 && verified.Conflicts[0].Chosen == "2.2.2.2",
+                verified.Conflicts.Count == 1 ? verified.Conflicts[0].Chosen : "—");
+
+            // --- пользовательские записи не перекрываются
+            string userHosts = "10.0.0.1 myserver.local\r\n1.1.1.1 keep.example\r\n";
+            List<KeyValuePair<string, string>> withUser = new List<KeyValuePair<string, string>>
+            {
+                new KeyValuePair<string, string>("flowseal", "9.9.9.9 keep.example\r\n8.8.8.8 fresh.example\r\n")
+            };
+            AutoZapret.Lists.HostsAnalysis userAware = AutoZapret.Lists.HostsFile.Analyze(withUser, userHosts);
+            Check("hosts: своя запись не перекрыта", userAware.UserCollisions == 1,
+                userAware.UserCollisions.ToString());
+            Check("hosts: новое имя добавлено", userAware.UniqueHosts == 1,
+                userAware.UniqueHosts + " имён");
+
+            // --- сборка файла: маркеры и сохранение пользовательской части
+            string built = AutoZapret.Lists.HostsFile.Build(userHosts, userAware, "тест");
+            Check("hosts: маркер начала", built.Contains(AutoZapret.Lists.HostsFile.BeginMarker), "ok");
+            Check("hosts: маркер конца", built.Contains(AutoZapret.Lists.HostsFile.EndMarker), "ok");
+            Check("hosts: пользовательская часть сохранена",
+                built.Contains("10.0.0.1 myserver.local"), "ok");
+            Check("hosts: новое имя записано", built.Contains("fresh.example"), "ok");
+
+            // --- повторная сборка не дублирует блок
+            string rebuilt = AutoZapret.Lists.HostsFile.Build(built, userAware, "тест");
+            int markers = 0;
+            int idx = 0;
+            while ((idx = rebuilt.IndexOf(AutoZapret.Lists.HostsFile.BeginMarker, idx, StringComparison.Ordinal)) >= 0)
+            {
+                markers++;
+                idx += 1;
+            }
+            Check("hosts: блок не дублируется", markers == 1, markers + " блоков");
+
+            // --- StripBlock убирает ровно наш блок
+            string stripped = AutoZapret.Lists.HostsFile.StripBlock(built);
+            Check("hosts: StripBlock убирает блок",
+                stripped.IndexOf(AutoZapret.Lists.HostsFile.BeginMarker, StringComparison.Ordinal) < 0 &&
+                stripped.Contains("myserver.local"), "ok");
         }
 
         private static void TestPayloads()
