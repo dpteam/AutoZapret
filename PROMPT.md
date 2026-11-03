@@ -81,7 +81,7 @@ WebView2 в ресурсах, `postMessage`-мост, `refs/` в `.gitignore`, `
 - [x] Собран `ROADMAP.md` (P0-P10)
 - [x] Создан `.git` + `.gitignore` + `.gitattributes` (`refs/`, `engine/`, `bin/`, `data/state/` исключены)
 - [x] Первый коммит `7e471cd`
-- [ ] **P0 — фундамент** (окно + трей + настройки + логи + `--selftest`)
+- [x] **P0 — фундамент** (окно + трей + настройки + логи + `--selftest`) — `RESULT: ok`
 - [ ] P1 — движок zapret v1
 - [ ] P2 — UI v1
 - [ ] P3 — фейки и списки

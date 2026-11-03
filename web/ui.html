@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:;">
+<title>AutoZapret</title>
+<style>
+/*{{THEME}}*/
+</style>
+</head>
+<body>
+
+<div class="shell">
+
+  <!-- ---------------------------------------------------------- сайдбар -->
+  <nav class="sidebar">
+    <div class="brand">
+      <div class="brand-mark"></div>
+      <div class="brand-text">
+        <span class="brand-name">AutoZapret</span>
+        <span class="brand-version">v{{VERSION}}</span>
+      </div>
+    </div>
+
+    <div class="nav">
+      <button class="nav-item active" data-screen="home"><span class="nav-icon">◉</span> Главная</button>
+      <button class="nav-item" data-screen="lists"><span class="nav-icon">▤</span> Списки</button>
+      <button class="nav-item" data-screen="logs"><span class="nav-icon">≡</span> Логи</button>
+      <button class="nav-item" data-screen="settings"><span class="nav-icon">⚙</span> Настройки</button>
+      <button class="nav-item" data-screen="about"><span class="nav-icon">ⓘ</span> О программе</button>
+    </div>
+
+    <div class="sidebar-footer">
+      <div id="env-mode">…</div>
+      <div id="env-admin" class="pill">…</div>
+    </div>
+  </nav>
+
+  <!-- ---------------------------------------------------------- контент -->
+  <main class="content">
+
+    <!-- ============================================================ ГЛАВНАЯ -->
+    <section class="screen active" id="screen-home">
+      <h1>Обход блокировок</h1>
+      <p class="subtitle">Zapret + Telegram-прокси в одном окне</p>
+
+      <div class="notice" id="p0-notice">
+        <span>ⓘ</span>
+        <div>
+          Это <b>каркас интерфейса</b> (фаза P0). Движок обхода и прокси появятся
+          в следующих версиях — пока работают окно, трей, настройки и логи.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="hero">
+          <button class="power" id="power" title="Включить / выключить обход">
+            <svg viewBox="0 0 24 24" width="34" height="34" fill="none"
+                 stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <path d="M12 3.5v8" />
+              <path d="M6.2 6.9a8 8 0 1 0 11.6 0" />
+            </svg>
+          </button>
+          <div class="hero-text">
+            <div class="hero-status">
+              <span class="status-dot" id="status-dot"></span><span id="status-text">Обход выключен</span>
+            </div>
+            <div class="hero-detail" id="status-detail">Движок не установлен</div>
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Стратегия</div>
+            <div class="row-hint">Набор правил обхода для вашего провайдера</div>
+          </div>
+          <span class="tag mono" id="strategy-name">—</span>
+        </div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Игровой фильтр</div>
+            <div class="row-hint">Обход для игр и приложений на высоких портах</div>
+          </div>
+          <span class="tag" id="game-filter">—</span>
+        </div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Telegram-прокси</div>
+            <div class="row-hint">MTProto через WebSocket, без VPN</div>
+          </div>
+          <span class="tag" id="proxy-state">—</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Быстрые действия</div>
+        <div class="row">
+          <div>
+            <div class="row-label">Свернуть в трей</div>
+            <div class="row-hint">Приложение продолжит работать в фоне</div>
+          </div>
+          <button class="btn" id="btn-hide">Свернуть</button>
+        </div>
+        <div class="row">
+          <div>
+            <div class="row-label">Открыть логи</div>
+            <div class="row-hint">Что происходило и почему</div>
+          </div>
+          <button class="btn" data-goto="logs">Открыть</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ СПИСКИ -->
+    <section class="screen" id="screen-lists">
+      <h1>Списки</h1>
+      <p class="subtitle">Какие домены обходить и какие не трогать</p>
+
+      <div class="notice warn">
+        <span>⏳</span>
+        <div>Управление списками появится в фазе P3. Ниже — что здесь будет.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Цели</div>
+        <div class="row">
+          <div>
+            <div class="row-label">Свои домены</div>
+            <div class="row-hint">Домены, которые нужно обходить дополнительно</div>
+          </div>
+          <span class="tag mono">list-general-user.txt</span>
+        </div>
+        <div class="row">
+          <div>
+            <div class="row-label">IP-подсети</div>
+            <div class="row-hint">Обход по адресам, когда домен неизвестен</div>
+          </div>
+          <span class="tag mono">ipset-all.txt</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Исключения</div>
+        <div class="row">
+          <div>
+            <div class="row-label">Домены-исключения</div>
+            <div class="row-hint">Банки, госуслуги, всё, что не должно ломаться</div>
+          </div>
+          <span class="tag mono">list-exclude-user.txt</span>
+        </div>
+        <div class="row">
+          <div>
+            <div class="row-label">Подсказка</div>
+            <div class="row-hint">Строка <span class="mono">!domain</span> в списке целей означает исключение</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ ЛОГИ -->
+    <section class="screen" id="screen-logs">
+      <h1>Логи</h1>
+      <p class="subtitle">Что делает приложение прямо сейчас</p>
+
+      <div class="log-toolbar">
+        <button class="btn" id="btn-log-refresh">Обновить</button>
+        <button class="btn" id="btn-log-folder">Открыть папку</button>
+        <button class="btn" id="btn-log-clear">Очистить</button>
+        <span class="dim mono" id="log-file" style="margin-left:auto;font-size:11px"></span>
+      </div>
+
+      <div class="log-view" id="log-view"></div>
+    </section>
+
+    <!-- ============================================================ НАСТРОЙКИ -->
+    <section class="screen" id="screen-settings">
+      <h1>Настройки</h1>
+      <p class="subtitle">Изменения сохраняются сразу</p>
+
+      <div class="card">
+        <div class="card-title">Обход</div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Игровой фильтр</div>
+            <div class="row-hint">Дополнительные порты для игр</div>
+          </div>
+          <select id="set-game-filter">
+            <option value="off">Выключен</option>
+            <option value="tcp">Только TCP</option>
+            <option value="udp">Только UDP</option>
+            <option value="tcp+udp">TCP и UDP</option>
+          </select>
+        </div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Режим списков IP</div>
+            <div class="row-hint">loaded — обход по ipset, any — всё подряд</div>
+          </div>
+          <select id="set-ipset-mode">
+            <option value="loaded">По спискам (loaded)</option>
+            <option value="off">Выключен (off)</option>
+            <option value="any">Всё (any)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Telegram-прокси</div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Порт</div>
+            <div class="row-hint">Локальный порт прослушивания</div>
+          </div>
+          <input type="number" id="set-proxy-port" min="1" max="65535" value="1443">
+        </div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Секрет</div>
+            <div class="row-hint mono" id="set-proxy-secret">—</div>
+          </div>
+          <button class="btn" id="btn-secret-regen">Новый</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Интерфейс</div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Простой режим</div>
+            <div class="row-hint">Скрыть расширенные настройки</div>
+          </div>
+          <div class="switch" id="set-simple-mode"></div>
+        </div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Закрывать в трей</div>
+            <div class="row-hint">Кнопка ✕ сворачивает окно, а не закрывает</div>
+          </div>
+          <div class="switch" id="set-minimize-to-tray"></div>
+        </div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Стартовать свёрнутым</div>
+            <div class="row-hint">Полезно вместе с автозапуском</div>
+          </div>
+          <div class="switch" id="set-start-minimized"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Обновления</div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Движок zapret</div>
+            <div class="row-hint">winws и драйвер</div>
+          </div>
+          <div class="switch" id="set-update-engine"></div>
+        </div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Приложение</div>
+            <div class="row-hint">Новые версии AutoZapret</div>
+          </div>
+          <div class="switch" id="set-update-app"></div>
+        </div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Списки</div>
+            <div class="row-hint">ipset и hosts</div>
+          </div>
+          <div class="switch" id="set-update-lists"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ О ПРОГРАММЕ -->
+    <section class="screen" id="screen-about">
+      <h1>О программе</h1>
+      <p class="subtitle">Обёртка над чужим трудом, сделанная с уважением</p>
+
+      <div class="card">
+        <div class="card-title">Сборка</div>
+        <div class="row"><span class="row-label">Версия</span><span class="tag mono" id="about-version">—</span></div>
+        <div class="row"><span class="row-label">Система</span><span class="tag mono" id="about-os">—</span></div>
+        <div class="row"><span class="row-label">Права</span><span class="tag" id="about-admin">—</span></div>
+        <div class="row"><span class="row-label">Режим данных</span><span class="tag" id="about-portable">—</span></div>
+        <div class="row"><span class="row-label">WebView2</span><span class="tag mono" id="about-webview2">—</span></div>
+        <div class="row"><span class="row-label">Каталог данных</span><span class="tag mono" id="about-datadir">—</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Что внутри</div>
+        <div class="row">
+          <div><div class="row-label">zapret / zapret2</div><div class="row-hint">bol-van</div></div>
+          <span class="tag">MIT</span>
+        </div>
+        <div class="row">
+          <div><div class="row-label">Конфиги стратегий</div><div class="row-hint">Flowseal, StressOzz</div></div>
+          <span class="tag">MIT</span>
+        </div>
+        <div class="row">
+          <div><div class="row-label">WinDivert</div><div class="row-hint">basil00</div></div>
+          <span class="tag">LGPLv3</span>
+        </div>
+        <div class="row">
+          <div><div class="row-label">tg-ws-proxy</div><div class="row-hint">Flowseal</div></div>
+          <span class="tag">MIT</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Выход</div>
+        <div class="row">
+          <div>
+            <div class="row-label">Закрыть приложение</div>
+            <div class="row-hint">Полностью, вместе с треем</div>
+          </div>
+          <button class="btn danger" id="btn-exit">Выход</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+//{{APP}}
+</script>
+</body>
+</html>

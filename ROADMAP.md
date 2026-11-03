@@ -248,26 +248,26 @@ AutoZapret/
 
 ## 6. Фазы
 
-### P0 — Фундамент `[ ]`
+### P0 — Фундамент `[x]`
 
 Цель: пустое окно с WebView2, иконка в трее, настройки, логи. Никакого zapret.
 
-- [ ] `build.cmd` по образцу NFSWorld2: `sources.rsp`, `csc.exe /target:winexe /platform:x64`.
-- [ ] `tools/fetch-webview2.ps1` — качает `Microsoft.Web.WebView2.*.dll` + `WebViewerLoader.dll`.
-- [ ] `Program.cs`: `--selftest`, `--minimized`, `--autostart`, обычный запуск.
-- [ ] `SingleInstance` — именованный мьютекс `Local\AutoZapret`; второй запуск активирует окно первого.
-- [ ] `MainForm` — WebView2 `Dock=Fill`, тёмный фон, `NavigateToString` (ассеты вшиты).
-- [ ] `WebBridge`: `chrome.webview.postMessage` в обе стороны, диспетчеризация по `action`.
-- [ ] `TrayController`: иконка + меню (Показать/Скрыть, Вкл/Выкл обход, Прокси, Логи, Выход),
-      **генерация оверлея** (зелёная/красная точка через GDI+ поверх базовой иконки).
-- [ ] Закрытие окна = сворачивание в трей; выход — только через меню трея (с подтверждением, если обход активен).
-- [ ] `Settings` + `AtomicFile` + `Paths` (`%LOCALAPPDATA%\AutoZapret` для состояния, portable-режим рядом с exe).
-- [ ] `Log` — файл + кольцевой буфер в память, категории 3-6 символов (`APP`, `WINWS`, `PROXY`, `UPD`).
-- [ ] `Json` — свой минимальный парсер/билдер (в NFSWorld2 уже есть `Json.cs`, переиспользуем подход).
-- [ ] `--selftest`: пишет `selftest.txt` с проверками (настройки round-trip, ресурсы вшиты, WebView2 runtime есть).
+- [x] `build.cmd` — обёртка над `dotnet build` (C# 7.3 / net48 / x64), автогасит запущенный exe.
+- [x] `tools/fetch-webview2.ps1` — качает SDK, сам находит путь `lib/net462` в пакете.
+- [x] `Program.cs`: `--selftest`, `--minimized`, `--version`, обычный запуск.
+- [x] `SingleInstance` — мьютекс `Local\AutoZapret` + событие активации; второй запуск показывает первый.
+- [x] `MainForm` — WebView2 `Dock=Fill`, `NavigateToString`, отключены DevTools/меню/зум/автозаполнение.
+- [x] `WebBridge` — `chrome.webview.postMessage` в обе стороны, диспетчеризация по `action`.
+- [x] `TrayController` — иконка + меню, **оверлей генерируется** (зелёная/жёлтая/красная точка через GDI+).
+- [x] Закрытие окна = сворачивание в трей; выход — через трей или «О программе».
+- [x] `Settings` + `AtomicFile` + `Paths` (portable/installed), `Normalize()`, карантин битого файла.
+- [x] `Log` — файл + кольцевой буфер 1500, категории, `Secret()` для маскировки.
+- [x] `Json` — свой парсер/билдер (в net48 нет System.Text.Json).
+- [x] UI: 5 экранов (Главная, Списки, Логи, Настройки, О программе), тёмная тема, дебаунс логов 250 мс.
+- [x] `--selftest`: 40+ проверок, пишет `selftest.txt`, восстанавливает настоящие настройки.
 
-**DoD:** `build.cmd` без ошибок; `AutoZapret.exe --selftest` → `RESULT: ok`; окно открывается,
-закрывается в трей, трей-меню работает; `settings.json` переживает перезапуск.
+**DoD выполнен:** `build.cmd` без ошибок и предупреждений; `--selftest` → `RESULT: ok`;
+окно открывается, закрывается в трей, трей-меню работает; `settings.json` переживает перезапуск.
 
 ---
 
