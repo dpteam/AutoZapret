@@ -141,6 +141,33 @@ namespace AutoZapret.Diag
     /// <summary>Консольные команды диагностики: --probe, --test-all.</summary>
     public static class DiagCommand
     {
+        /// <summary>--update-lists: скачать ipset и исключения, показать результат.</summary>
+        public static int RunUpdateLists(string[] args)
+        {
+            Console.WriteLine("== обновление списков ==");
+
+            Lists.UpdateResult ipset = Lists.ListsUpdater.UpdateIpset();
+            Console.WriteLine("  ipset:      " + (ipset.Ok ? "[ok] " : "[FAIL] ") + ipset.Message);
+
+            Lists.UpdateResult exclude = Lists.ListsUpdater.UpdateExcludeDomains();
+            Console.WriteLine("  исключения: " + (exclude.Ok ? "[ok] " : "[FAIL] ") + exclude.Message);
+
+            Lists.UpdateResult ipsetExclude = Lists.ListsUpdater.UpdateIpsetExclude();
+            Console.WriteLine("  ipset-excl: " + (ipsetExclude.Ok ? "[ok] " : "[FAIL] ") + ipsetExclude.Message);
+
+            string path = Lists.ListsUpdater.IpsetPath;
+            if (System.IO.File.Exists(path))
+            {
+                string content = System.IO.File.ReadAllText(path);
+                Console.WriteLine();
+                Console.WriteLine("  файл:   " + path);
+                Console.WriteLine("  размер: " + (content.Length / 1024) + " КБ, CR: " +
+                                  (content.IndexOf('\r') >= 0 ? "ЕСТЬ (плохо)" : "нет (хорошо)"));
+            }
+
+            return ipset.Ok ? 0 : 1;
+        }
+
         /// <summary>
         /// --strategies: список стратегий с идентификаторами (для отладки и для --only).
         /// Заодно создаёт кэш strategies.v1.json.

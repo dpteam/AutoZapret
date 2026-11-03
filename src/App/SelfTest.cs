@@ -74,6 +74,9 @@ namespace AutoZapret.App
 
                 Section("квотирование аргументов");
                 TestCommandLine();
+
+                Section("списки");
+                TestLists();
             }
             catch (Exception ex)
             {
@@ -473,6 +476,74 @@ namespace AutoZapret.App
                     if (parsed[i] != original[i]) { same = false; break; }
 
             Check("round-trip аргументов", same, same ? "ok" : "built: " + built);
+        }
+
+        private static void TestLists()
+        {
+            // валидация доменов
+            Check("домен валиден", AutoZapret.Lists.HostlistManager.IsValidDomain("example.com"), "example.com");
+            Check("маска валидна", AutoZapret.Lists.HostlistManager.IsValidDomain("*.example.com"), "*.example.com");
+            Check("!домен валиден", AutoZapret.Lists.HostlistManager.IsValidDomain("!example.com"), "!example.com");
+            Check("пустое отклонено", !AutoZapret.Lists.HostlistManager.IsValidDomain(""), "empty");
+            Check("без точки отклонено", !AutoZapret.Lists.HostlistManager.IsValidDomain("localhost"), "localhost");
+            Check("двойная точка отклонена", !AutoZapret.Lists.HostlistManager.IsValidDomain("a..com"), "a..com");
+            Check("пробел отклонён", !AutoZapret.Lists.HostlistManager.IsValidDomain("a b.com"), "a b.com");
+
+            // валидация IP
+            Check("IP валиден", AutoZapret.Lists.HostlistManager.IsValidIpOrCidr("10.0.0.1"), "10.0.0.1");
+            Check("CIDR валиден", AutoZapret.Lists.HostlistManager.IsValidIpOrCidr("192.168.0.0/16"), "192.168.0.0/16");
+            Check("CIDR v6 валиден", AutoZapret.Lists.HostlistManager.IsValidIpOrCidr("fe80::/10"), "fe80::/10");
+            Check("плохой префикс отклонён", !AutoZapret.Lists.HostlistManager.IsValidIpOrCidr("10.0.0.0/64"), "10.0.0.0/64");
+            Check("текст отклонён", !AutoZapret.Lists.HostlistManager.IsValidIpOrCidr("не ip"), "не ip");
+
+            // разбор ввода
+            List<string> parsed = AutoZapret.Lists.HostlistManager.ParseInput("a.com\nb.com, c.com; d.com");
+            Check("разбор ввода", parsed.Count == 4, parsed.Count + " значений");
+
+            // идемпотентность записи
+            string dir = System.IO.Path.Combine(Paths.StateDir, "selftest-lists");
+            System.IO.Directory.CreateDirectory(dir);
+            string path = System.IO.Path.Combine(dir, "list.txt");
+
+            try
+            {
+                List<AutoZapret.Lists.ListEntry> entries = new List<AutoZapret.Lists.ListEntry>
+                {
+                    new AutoZapret.Lists.ListEntry { Value = "a.com" },
+                    new AutoZapret.Lists.ListEntry { Value = "b.com" }
+                };
+
+                bool first = AutoZapret.Lists.HostlistManager.Write(path, entries);
+                Check("список записан", first && System.IO.File.Exists(path), path);
+
+                bool second = AutoZapret.Lists.HostlistManager.Write(path, entries);
+                Check("повторная запись не трогает файл", !second, second ? "перезаписал" : "ok");
+
+                List<AutoZapret.Lists.ListEntry> back = AutoZapret.Lists.HostlistManager.Read(path);
+                Check("список прочитан", back.Count == 2, back.Count + " записей");
+                Check("значения совпали",
+                    back.Count == 2 && back[0].Value == "a.com" && back[1].Value == "b.com",
+                    back.Count > 1 ? back[0].Value + ", " + back[1].Value : "");
+
+                // комментарии пользователя не должны теряться при повторной записи
+                System.IO.File.AppendAllText(path, "# моя заметка\r\n");
+                bool third = AutoZapret.Lists.HostlistManager.Write(path, entries);
+                Check("комментарий не вызывает перезапись", !third, third ? "перезаписал" : "ok");
+
+                // нормализация ipset: CRLF -> LF
+                string ipsetPath = System.IO.Path.Combine(dir, "ipset.txt");
+                System.IO.File.WriteAllText(ipsetPath, "10.0.0.0/8\r\n192.168.0.0/16\r\n\r\nмусор\r\n# коммент\r\n");
+                int normalized = AutoZapret.Lists.HostlistManager.NormalizeIpset(ipsetPath);
+                Check("ipset нормализован", normalized == 2, normalized + " записей");
+
+                string content = System.IO.File.ReadAllText(ipsetPath);
+                Check("ipset без CR", content.IndexOf('\r') < 0, content.IndexOf('\r') < 0 ? "ok" : "есть CR");
+                Check("мусор выброшен", content.IndexOf("мусор") < 0, "ok");
+            }
+            finally
+            {
+                try { System.IO.Directory.Delete(dir, true); } catch { }
+            }
         }
 
         private static void Section(string title)

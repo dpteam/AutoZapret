@@ -45,6 +45,12 @@
             navs[j].classList.toggle("active", navs[j].getAttribute("data-screen") === name);
         }
         document.querySelector(".content").scrollTop = 0;
+
+        // экраны с данными подтягивают их при открытии
+        if (name === "lists") {
+            send("lists.get", { kind: "general" });
+            send("lists.get", { kind: "exclude" });
+        }
     }
 
     function initNav() {
@@ -501,6 +507,78 @@
         box.style.display = "";
     }
 
+    function initLists() {
+        bindList("general");
+        bindList("exclude");
+
+        bindAction("btn-update-ipset", "lists.updateIpset", "Обновляю…");
+        bindAction("btn-update-exclude", "lists.updateExclude", "Дополняю…");
+        bindAction("btn-update-ipset-exclude", "lists.updateIpsetExclude", "Восстанавливаю…");
+    }
+
+    function bindList(kind) {
+        var input = document.getElementById("list-" + kind + "-input");
+        var save = document.getElementById("btn-list-" + kind + "-save");
+        var reload = document.getElementById("btn-list-" + kind + "-reload");
+        if (!input || !save || !reload) return;
+
+        save.addEventListener("click", function () {
+            save.disabled = true;
+            send("lists.save", { kind: kind, text: input.value });
+            setTimeout(function () { save.disabled = false; }, 400);
+        });
+
+        reload.addEventListener("click", function () {
+            send("lists.get", { kind: kind });
+        });
+    }
+
+    function bindAction(id, action, busyText) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener("click", function () {
+            var original = el.textContent;
+            el.disabled = true;
+            el.textContent = busyText;
+            send(action);
+            // вернём кнопку, даже если ответ потерялся
+            setTimeout(function () {
+                el.disabled = false;
+                el.textContent = original;
+            }, 30000);
+        });
+    }
+
+    function renderLists(msg) {
+        var kind = msg.kind;
+        var input = document.getElementById("list-" + kind + "-input");
+        var hint = document.getElementById("list-" + kind + "-hint");
+        if (!input) return;
+
+        // не затираем то, что пользователь печатает прямо сейчас
+        if (document.activeElement !== input) input.value = msg.text || "";
+
+        if (hint) {
+            var parts = [];
+            parts.push("записей: " + (msg.count || 0));
+            if (msg.excluded > 0) parts.push("исключений: " + msg.excluded);
+            if (msg.invalid > 0) parts.push("некорректных: " + msg.invalid);
+            hint.textContent = parts.join(" · ");
+        }
+    }
+
+    function renderListStatus(msg) {
+        var el = document.getElementById("list-update-status");
+        if (!el) return;
+        el.textContent = msg.message || "";
+        el.className = "row-hint " + (msg.ok ? "diag-ok" : "diag-bad");
+    }
+
+    function renderIpstat(msg) {
+        var el = document.getElementById("ipset-state");
+        if (el) el.textContent = msg.text || "—";
+    }
+
     function initButtons() {
         var power = document.getElementById("power");
         if (power) power.addEventListener("click", function () { send("toggle"); });
@@ -557,6 +635,18 @@
                 renderTestResult(msg);
                 break;
 
+            case "lists":
+                renderLists(msg);
+                break;
+
+            case "lists.status":
+                renderListStatus(msg);
+                break;
+
+            case "lists.ipset":
+                renderIpstat(msg);
+                break;
+
             case "logs":
                 logLines = msg.lines || [];
                 text("log-file", msg.file);
@@ -591,6 +681,7 @@
         initNav();
         initSettings();
         initDiag();
+        initLists();
         initButtons();
 
         if (host) {

@@ -194,43 +194,72 @@
       <p class="subtitle">Какие домены обходить и какие не трогать</p>
 
       <div class="notice warn">
-        <span>⏳</span>
-        <div>Управление списками появится в фазе P3. Ниже — что здесь будет.</div>
-      </div>
-
-      <div class="card">
-        <div class="card-title">Цели</div>
-        <div class="row">
-          <div>
-            <div class="row-label">Свои домены</div>
-            <div class="row-hint">Домены, которые нужно обходить дополнительно</div>
-          </div>
-          <span class="tag mono">list-general-user.txt</span>
-        </div>
-        <div class="row">
-          <div>
-            <div class="row-label">IP-подсети</div>
-            <div class="row-hint">Обход по адресам, когда домен неизвестен</div>
-          </div>
-          <span class="tag mono">ipset-all.txt</span>
+        <span>ⓘ</span>
+        <div>
+          Изменения применяются при следующем запуске обхода. Строка,
+          начинающаяся с <span class="mono">!</span> в списке целей, означает
+          <b>исключение</b>, а не цель.
         </div>
       </div>
 
       <div class="card">
-        <div class="card-title">Исключения</div>
+        <div class="card-title">Свои домены — обходить</div>
+        <div class="row" style="align-items:flex-start">
+          <div style="flex:1">
+            <textarea id="list-general-input" class="list-input"
+                      placeholder="example.com&#10;*.example.org&#10;!не-обходить.com"></textarea>
+            <div class="row-hint" id="list-general-hint"></div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <button class="btn primary" id="btn-list-general-save">Сохранить</button>
+            <button class="btn" id="btn-list-general-reload">Обновить</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Свои исключения — не трогать</div>
+        <div class="row" style="align-items:flex-start">
+          <div style="flex:1">
+            <textarea id="list-exclude-input" class="list-input"
+                      placeholder="sberbank.ru&#10;gosuslugi.ru"></textarea>
+            <div class="row-hint" id="list-exclude-hint"></div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <button class="btn primary" id="btn-list-exclude-save">Сохранить</button>
+            <button class="btn" id="btn-list-exclude-reload">Обновить</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Списки из интернета</div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">IP-подсети для обхода</div>
+            <div class="row-hint">Обход по адресам, когда домен неизвестен. Сейчас: <span id="ipset-state">—</span></div>
+          </div>
+          <button class="btn" id="btn-update-ipset">Обновить</button>
+        </div>
+
         <div class="row">
           <div>
             <div class="row-label">Домены-исключения</div>
-            <div class="row-hint">Банки, госуслуги, всё, что не должно ломаться</div>
+            <div class="row-hint">Банки, госуслуги, маркетплейсы — чтобы не сломать</div>
           </div>
-          <span class="tag mono">list-exclude-user.txt</span>
+          <button class="btn" id="btn-update-exclude">Дополнить</button>
         </div>
+
         <div class="row">
           <div>
-            <div class="row-label">Подсказка</div>
-            <div class="row-hint">Строка <span class="mono">!domain</span> в списке целей означает исключение</div>
+            <div class="row-label">Локальные сети</div>
+            <div class="row-hint">Обязательные исключения: 10/8, 192.168/16 и т.д.</div>
           </div>
+          <button class="btn" id="btn-update-ipset-exclude">Восстановить</button>
         </div>
+
+        <div id="list-update-status" class="row-hint" style="margin-top:10px"></div>
       </div>
     </section>
 

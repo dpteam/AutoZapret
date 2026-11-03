@@ -2,10 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 using AutoZapret.Core;
 using AutoZapret.Diag;
+using AutoZapret.Lists;
 using AutoZapret.Zapret;
 
 namespace AutoZapret.App
@@ -197,6 +199,148 @@ namespace AutoZapret.App
                 int count = Json.GetInt(msg, "count", 5);
                 RunInBackground("test", () => RunTestUi(count));
             });
+
+            // ---- списки
+            bridge.Register("lists.get", msg =>
+            {
+                string kind = Json.GetString(msg, "kind", "general");
+                SendList(kind);
+            });
+
+            bridge.Register("lists.save", msg =>
+            {
+                string kind = Json.GetString(msg, "kind", "general");
+                string text = Json.GetString(msg, "text", "");
+                SaveList(kind, text);
+            });
+
+            bridge.Register("lists.updateIpset", msg => RunInBackground("ipset", () =>
+            {
+                UpdateResult r = ListsUpdater.UpdateIpset();
+                SendUpdateStatus(r);
+                SendIpsetState();
+            }));
+
+            bridge.Register("lists.updateExclude", msg => RunInBackground("exclude", () =>
+            {
+                UpdateResult r = ListsUpdater.UpdateExcludeDomains();
+                SendUpdateStatus(r);
+                SendList("exclude");
+            }));
+
+            bridge.Register("lists.updateIpsetExclude", msg => RunInBackground("ipsecexcl", () =>
+            {
+                UpdateResult r = ListsUpdater.UpdateIpsetExclude();
+                SendUpdateStatus(r);
+            }));
+        }
+
+        // ---------------------------------------------------------------- lists
+
+        private static string PathForKind(string kind)
+        {
+            return kind == "exclude" ? HostlistManager.ExcludePath : HostlistManager.GeneralPath;
+        }
+
+        private void SendList(string kind)
+        {
+            string path = PathForKind(kind);
+            List<ListEntry> entries = HostlistManager.Read(path);
+
+            StringBuilder text = new StringBuilder();
+            int excluded = 0;
+
+            foreach (ListEntry entry in entries)
+            {
+                text.Append(entry.ToLine()).Append('\n');
+                if (!entry.Enabled) excluded++;
+            }
+
+            _form.Bridge.Send(WebBridge.Msg("lists",
+                "kind", kind,
+                "text", text.ToString(),
+                "count", (long)entries.Count,
+                "excluded", (long)excluded,
+                "invalid", 0L));
+        }
+
+        private void SaveList(string kind, string text)
+        {
+            List<string> values = HostlistManager.ParseInput(text);
+            List<ListEntry> entries = new List<ListEntry>();
+            int invalid = 0;
+
+            foreach (string value in values)
+            {
+                string v = value;
+
+                // «!domain» допустим только в списке целей
+                bool negated = v.StartsWith("!", StringComparison.Ordinal);
+                if (negated && kind != "general")
+                {
+                    invalid++;
+                    continue;
+                }
+
+                if (!HostlistManager.IsValidDomain(v))
+                {
+                    Log.Warn("LIST", "некорректный домен пропущен: " + v);
+                    invalid++;
+                    continue;
+                }
+
+                entries.Add(new ListEntry { Value = v, Enabled = true });
+            }
+
+            bool changed = HostlistManager.Write(PathForKind(kind), entries);
+
+            Log.Info("LIST", kind + ": сохранено " + entries.Count +
+                             (invalid > 0 ? ", отклонено " + invalid : "") +
+                             (changed ? "" : " (без изменений)"));
+
+            _form.Bridge.Send(WebBridge.Msg("lists",
+                "kind", kind,
+                "text", text,
+                "count", (long)entries.Count,
+                "excluded", 0L,
+                "invalid", (long)invalid));
+
+            SendUpdateStatus(new UpdateResult
+            {
+                Ok = true,
+                Message = changed
+                    ? "сохранено записей: " + entries.Count + (invalid > 0 ? ", отклонено: " + invalid : "")
+                    : "без изменений"
+            });
+        }
+
+        private void SendUpdateStatus(UpdateResult result)
+        {
+            _form.Bridge.Send(WebBridge.Msg("lists.status",
+                "ok", result.Ok,
+                "message", result.Message ?? ""));
+        }
+
+        private void SendIpsetState()
+        {
+            string path = ListsUpdater.IpsetPath;
+            string text = "нет файла";
+
+            try
+            {
+                if (System.IO.File.Exists(path))
+                {
+                    int lines = 0;
+                    foreach (string line in System.IO.File.ReadAllLines(path))
+                        if (line.Trim().Length > 0) lines++;
+
+                    long size = new System.IO.FileInfo(path).Length;
+                    text = lines + " подсетей, " + (size / 1024) + " КБ";
+                }
+            }
+            catch { }
+
+            _form.Bridge.Send(WebBridge.Msg("lists.ipset", "text", text));
         }
 
         // ------------------------------------------------------------ diagnostics

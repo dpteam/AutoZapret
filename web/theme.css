@@ -497,3 +497,25 @@ table.rank td {
 
 table.rank tr:last-child td { border-bottom: none; }
 table.rank tr.best td { background: rgba(0,214,143,.05); }
+
+/* ---------------------------------------------------------------- списки */
+
+textarea.list-input {
+    width: 100%;
+    min-height: 140px;
+    resize: vertical;
+    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-light);
+    background: #07090F;
+    color: var(--text-primary);
+    outline: none;
+    user-select: text;
+}
+
+textarea.list-input:focus { border-color: var(--accent-blue); }
+
+textarea.list-input::placeholder { color: var(--text-dim); }
