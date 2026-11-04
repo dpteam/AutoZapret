@@ -35,4 +35,37 @@ unused.forEach((u) => console.log("  - " + u));
 console.log("getElementById без элемента в разметке: " + missing.length);
 missing.forEach((m) => console.log("  ! " + m));
 
-process.exit(missing.length === 0 ? 0 : 1);
+// ---------------------------------------------------------------------------
+//  Состояние обхода: ядро присылает "on"/"off", интерфейс сравнивает с
+//  "running". Однажды это уже разъехалось: кнопка питания не подсвечивалась
+//  вообще, а подпись всегда говорила «ВЫКЛ». Проверяем, что нормализация на
+//  месте и что никто не начал сравнивать сырое значение снова.
+// ---------------------------------------------------------------------------
+const problems = [];
+
+if (!js.includes("function normalizeProtection")) {
+  problems.push("нет normalizeProtection: состояние проводами не совпадёт с ожидаемым");
+}
+
+if (!/normalizeProtection\(s\.protection\)/.test(js)) {
+  problems.push("renderState не нормализует s.protection");
+}
+
+// прямое сравнение сырого s.protection с "running" — та самая ошибка
+if (/s\.protection\s*===\s*"running"/.test(js)) {
+  problems.push("сравнение s.protection с \"running\" напрямую: ядро присылает \"on\"");
+}
+
+// кнопка должна получать класс и подпись из нормализованного значения
+if (!js.includes('power.classList.toggle("on"')) {
+  problems.push("кнопка питания не переключает класс on");
+}
+
+if (!js.includes("power-caption")) {
+  problems.push("у кнопки питания нет подписи ВКЛ/ВЫКЛ");
+}
+
+console.log("состояние обхода в UI: " + (problems.length === 0 ? "ok" : problems.length + " проблем"));
+problems.forEach((p) => console.log("  ! " + p));
+
+process.exit(missing.length === 0 && problems.length === 0 ? 0 : 1);

@@ -237,12 +237,14 @@ h1 {
 /* Подпись внутри кнопки: одно слово, которое видно без чтения статуса рядом.
    «on/off» мелким текстом справа читают не все — кнопка должна говорить сама. */
 .power-caption {
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: .6px;
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: .8px;
     line-height: 1;
-    opacity: .8;
+    opacity: .85;
 }
+
+.power.on .power-caption { opacity: 1; }
 
 .power:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
 
@@ -262,10 +264,20 @@ h1 {
 .power.on::after {
     content: "";
     position: absolute;
-    inset: -8px;
+    inset: -10px;
     border-radius: 50%;
-    border: 2px solid rgba(0, 214, 143, .35);
+    border: 2px solid rgba(0, 214, 143, .55);
     animation: power-ring 2.6s ease-out infinite;
+    pointer-events: none;
+}
+
+/* Второе, статичное кольцо: даже если анимацию отключили, «включено» видно */
+.power.on::before {
+    content: "";
+    position: absolute;
+    inset: -5px;
+    border-radius: 50%;
+    border: 1px solid rgba(0, 214, 143, .30);
     pointer-events: none;
 }
 
@@ -292,21 +304,53 @@ h1 {
     box-shadow: 0 0 0 6px rgba(255, 92, 108, .10), 0 0 24px rgba(255, 92, 108, .28);
 }
 
+/* Выключенная кнопка (нет движка) гасит только взаимодействие.
+   Раньше она убивала и подсветку — и включённый обход выглядел выключенным,
+   если движок ещё не определился. Это было хуже, чем отсутствие анимации. */
 .power:disabled {
-    opacity: .45;
     cursor: not-allowed;
-    animation: none;
+    opacity: .75;
 }
 
-.power:disabled::after { display: none; }
+.power:disabled:not(.on) { opacity: .45; }
 
 @keyframes pulse {
     0%, 100% { opacity: 1; }
     50%      { opacity: .45; }
 }
 
-.hero-text { display: flex; flex-direction: column; gap: 5px; }.hero-status { font-size: 17px; font-weight: 600; }
+.hero-text { display: flex; flex-direction: column; gap: 5px; }
+.hero-status { font-size: 17px; font-weight: 600; }
 .hero-detail { font-size: 12.5px; color: var(--text-muted); }
+
+/* Включённый обход подсвечивает всю шапку: кольцо вокруг кнопки видно, когда
+   смотришь на неё, а цвет статуса и мягкое свечение — боковым зрением. */
+.hero.on .hero-status { color: var(--accent-green); }
+.hero.on .hero-detail { color: rgba(0, 214, 143, .75); }
+.hero.on .status-dot { background: var(--accent-green); box-shadow: 0 0 10px rgba(0, 214, 143, .8); }
+
+.hero.on::before {
+    content: "";
+    position: absolute;
+    left: -40px;
+    top: -40px;
+    width: 200px;
+    height: 200px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(0, 214, 143, .16), rgba(0, 214, 143, 0) 68%);
+    pointer-events: none;
+    z-index: 0;
+}
+
+.hero { position: relative; }
+.hero > * { position: relative; z-index: 1; }
+
+/* Уважаем системную настройку «меньше движения»: свечение оставляем,
+   пульсацию убираем. */
+@media (prefers-reduced-motion: reduce) {
+    .power.on { animation: none; }
+    .power.on::after { animation: none; opacity: .35; transform: none; }
+}
 
 .status-dot {
     display: inline-block;

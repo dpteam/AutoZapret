@@ -320,6 +320,16 @@
         "error": "Ошибка"
     };
 
+    /// Ядро присылает состояние проводами: "on", "off", "starting", "stopping",
+    /// "error". Интерфейс сравнивает с "running" — раньше это не совпадало, и
+    /// подсветка кнопки, зелёная точка и подпись ВКЛ не включались никогда.
+    /// Нормализация в одном месте, чтобы значения не разъехались снова.
+    function normalizeProtection(raw) {
+        if (raw === "on") return "running";
+        if (raw === "off" || !raw) return "off";
+        return raw;
+    }
+
     var i18nRequested = "";
 
     function requestLanguage(lang) {
@@ -338,7 +348,7 @@
         text("env-admin", t(s.admin ? "администратор" : "без прав админа"));
 
         // главная
-        var protection = s.protection || "off";
+        var protection = normalizeProtection(s.protection);
         text("status-text", t(PROTECTION_LABEL[protection] || protection));
 
         var detail;
@@ -380,7 +390,8 @@
             power.classList.toggle("error", protection === "error");
             power.disabled = !s.engineReady;
 
-            // Подпись внутри кнопки: состояние видно и без чтения строки статуса
+            // Подпись внутри кнопки и подсветка всей шапки: состояние видно и без
+            // чтения строки статуса. Класс на .hero нужен, чтобы светился и текст.
             var caption = document.getElementById("power-caption");
             if (caption) {
                 caption.textContent =
@@ -389,6 +400,12 @@
                     protection === "stopping" ? "СТОП" :
                     protection === "error" ? "ОШИБКА" : "ВЫКЛ";
             }
+
+            var hero = document.querySelector(".hero");
+            if (hero) hero.classList.toggle("on", protection === "running");
+
+            // для скринридеров: кнопка сообщает состояние, а не только вид
+            power.setAttribute("aria-pressed", protection === "running" ? "true" : "false");
 
             var svg = power.querySelector("svg");
             if (svg) {
