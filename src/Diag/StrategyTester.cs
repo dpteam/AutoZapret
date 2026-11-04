@@ -712,6 +712,69 @@ namespace AutoZapret.Diag
         }
 
         /// <summary>
+        /// --own [секунды] [--split N] [--dry]: свой движок, техника split.
+        ///
+        /// Первый живой прогон P10.3: перехват TCP/443, разрез TLS ClientHello,
+        /// пересчёт сумм, отправка двух частей. `--dry` только показывает, что
+        /// было бы сделано — безопасный первый запуск.
+        /// </summary>
+        public static int RunOwn(string[] args)
+        {
+            AutoZapret.Zapret.Own.OwnEngineOptions options = new AutoZapret.Zapret.Own.OwnEngineOptions();
+
+            for (int i = 0; i < args.Length; i++)
+            {
+                string a = args[i];
+
+                if (string.Equals(a, "--dry", StringComparison.OrdinalIgnoreCase))
+                {
+                    options.DryRun = true;
+                    continue;
+                }
+
+                if (string.Equals(a, "--split", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    int.TryParse(args[i + 1], out options.SplitPosition);
+                    continue;
+                }
+
+                if (string.Equals(a, "--own", StringComparison.OrdinalIgnoreCase)) continue;
+
+                int seconds;
+                if (int.TryParse(a, out seconds) && seconds > 0) options.Seconds = seconds;
+            }
+
+            if (options.Seconds <= 0) options.Seconds = 20;
+
+            if (!AutoZapret.App.Elevation.IsElevated)
+            {
+                Console.WriteLine("нужны права администратора: WinDivert без них не открывается");
+                return 1;
+            }
+
+            Console.WriteLine("== свой движок: split pos=" + options.SplitPosition +
+                              ", " + options.Seconds + " с" + (options.DryRun ? ", показ" : "") + " ==");
+            Console.WriteLine("откройте https://www.youtube.com в браузере во время работы");
+            Console.WriteLine();
+
+            AutoZapret.Zapret.Own.OwnEngine engine = new AutoZapret.Zapret.Own.OwnEngine(options);
+
+            System.Threading.CancellationTokenSource cancel =
+                new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(options.Seconds + 5));
+
+            string error = engine.Run(cancel.Token);
+
+            if (error != null)
+            {
+                Console.WriteLine(error);
+                return 1;
+            }
+
+            Console.WriteLine(engine.Stats.Summary());
+            return engine.Stats.Split > 0 ? 0 : 2;
+        }
+
+        /// <summary>
         /// --preflight [стратегия]: проверить готовность перед запуском.
         /// Без аргумента проверяется окружение без привязки к стратегии.
         /// </summary>

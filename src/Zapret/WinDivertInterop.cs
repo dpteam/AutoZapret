@@ -100,6 +100,16 @@ namespace AutoZapret.Zapret
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool WinDivertSetParam(IntPtr handle, int param, ulong value);
 
+        /// <summary>
+        /// Пересчёт контрольных сумм IP/TCP/UDP прямо в буфере пакета.
+        /// Без него любой наш изменённый пакет уйдёт с битой суммой, и получатель
+        /// молча его выбросит — самый неприятный вид «ничего не работает».
+        /// </summary>
+        [DllImport(Dll, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool WinDivertHelperCalcChecksums(byte[] packet, uint packetLen,
+                                                               IntPtr address, ulong flags);
+
         // Параметры WinDivertSetParam
         public const int ParamQueueLength = 0;
         public const int ParamQueueTime = 1;

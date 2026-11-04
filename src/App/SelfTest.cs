@@ -112,6 +112,9 @@ namespace AutoZapret.App
                 Section("сниффер трафика");
                 TestSniffResult();
 
+                Section("свой движок: пакеты и суммы");
+                TestTcpPacket();
+
                 Section("пресеты по процессам");
                 TestProcessPresets();
 
@@ -2773,6 +2776,119 @@ namespace AutoZapret.App
         /// Проверяем именно формулировки: от них зависит, поймёт ли человек,
         /// что делать дальше.
         /// </summary>
+        /// <summary>
+        /// Свой движок: арифметика пакета. Это то, что нельзя проверять «на глаз» —
+        /// битая сумма означает, что получатель молча выбросит пакет, и всё
+        /// выглядит как «обход не работает».
+        ///
+        /// Проверяем инвариантом, а не магическими числами: сумма заголовка вместе
+        /// с записанной в него суммой обязана давать 0xFFFF.
+        /// </summary>
+        private static void TestTcpPacket()
+        {
+            // ---- 1. сумма из примера RFC 1071: сумма 0xDDF2, дополнительный код 0x220D
+            byte[] sample = { 0x00, 0x01, 0xF2, 0x03, 0xF4, 0xF5, 0xF6, 0xF7 };
+            uint sampleSum = AutoZapret.Zapret.Own.TcpPacket.Sum(sample, 0, sample.Length, 0);
+
+            Check("сумма RFC 1071", sampleSum == 0xDDF2, sampleSum.ToString("X4"));
+            Check("дополнительный код RFC 1071", (ushort)~sampleSum == 0x220D,
+                ((ushort)~sampleSum).ToString("X4"));
+
+            // ---- 2. разбор синтетического пакета
+            byte[] packet = SynthTlsPacket(1000, 0x3A000000);
+
+            AutoZapret.Zapret.Own.TcpPacket tcp = AutoZapret.Zapret.Own.TcpPacket.Parse(packet, packet.Length);
+
+            Check("пакет: разобран", tcp != null, tcp == null ? "null" : "ok");
+
+            if (tcp == null) return;
+
+            Check("пакет: dport 443", tcp.DstPort == 443, tcp.DstPort.ToString());
+            Check("пакет: есть payload", tcp.PayloadLength > 0, tcp.PayloadLength.ToString());
+            Check("пакет: начало ClientHello",
+                packet[tcp.PayloadOffset] == 0x16 && packet[tcp.PayloadOffset + 1] == 0x03,
+                packet[tcp.PayloadOffset].ToString("X2"));
+
+            // ---- 3. суммы сходятся
+            Check("пакет: IP-сумма верна", AutoZapret.Zapret.Own.TcpPacket.VerifyIpChecksum(packet, packet.Length), "ok");
+            Check("пакет: TCP-сумма верна",
+                AutoZapret.Zapret.Own.TcpPacket.VerifyTcpChecksum(packet, tcp.TcpOffset, packet.Length - tcp.TcpOffset),
+                "ok");
+
+            // ---- 4. разрез: две части, seq непрерывный, суммы сходятся
+            int pos = 1;
+            int firstLen, secondLen;
+
+            byte[] first = tcp.BuildSegment(0, pos, 0, out firstLen);
+            byte[] second = tcp.BuildSegment(pos, tcp.PayloadLength, pos, out secondLen);
+
+            Check("разрез: длины в сумме дают оригинал",
+                (firstLen - tcp.PayloadOffset) + (secondLen - tcp.PayloadOffset) == tcp.PayloadLength,
+                firstLen + "+" + secondLen);
+
+            AutoZapret.Zapret.Own.TcpPacket firstTcp =
+                AutoZapret.Zapret.Own.TcpPacket.Parse(first, firstLen);
+            AutoZapret.Zapret.Own.TcpPacket secondTcp =
+                AutoZapret.Zapret.Own.TcpPacket.Parse(second, secondLen);
+
+            Check("разрез: части разобраны", firstTcp != null && secondTcp != null, "ok");
+
+            if (firstTcp != null && secondTcp != null)
+            {
+                Check("разрез: seq первой не сдвинут", firstTcp.Seq == tcp.Seq, firstTcp.Seq.ToString());
+                Check("разрез: seq второй сдвинут на pos",
+                    secondTcp.Seq == tcp.Seq + (uint)pos, secondTcp.Seq.ToString());
+
+                Check("разрез: суммы первой верны",
+                    AutoZapret.Zapret.Own.TcpPacket.VerifyIpChecksum(first, firstLen) &&
+                    AutoZapret.Zapret.Own.TcpPacket.VerifyTcpChecksum(first, firstTcp.TcpOffset, firstLen - firstTcp.TcpOffset),
+                    "ok");
+                Check("разрез: суммы второй верны",
+                    AutoZapret.Zapret.Own.TcpPacket.VerifyIpChecksum(second, secondLen) &&
+                    AutoZapret.Zapret.Own.TcpPacket.VerifyTcpChecksum(second, secondTcp.TcpOffset, secondLen - secondTcp.TcpOffset),
+                    "ok");
+            }
+
+            // ---- 5. не TCP и не IPv4 — не наш пакет
+            byte[] udp = SynthTlsPacket(1000, 0x3A000000);
+            udp[9] = 17;   // protocol = UDP
+
+            Check("пакет: UDP не считается TCP",
+                AutoZapret.Zapret.Own.TcpPacket.Parse(udp, udp.Length) == null, "ok");
+        }
+
+        /// <summary>Синтетический IPv4+TCP+ClientHello: 20 байт IP, 20 байт TCP, 100 байт payload.</summary>
+        private static byte[] SynthTlsPacket(int payloadLength, uint seq)
+        {
+            int total = 40 + payloadLength;
+            byte[] p = new byte[total];
+
+            p[0] = 0x45;                 // IPv4, IHL=5
+            p[2] = (byte)(total >> 8);
+            p[3] = (byte)(total & 0xFF);
+            p[8] = 64;                   // TTL
+            p[9] = 6;                    // TCP
+
+            p[12] = 192; p[13] = 168; p[14] = 1; p[15] = 11;
+            p[16] = 142; p[17] = 251; p[18] = 150; p[19] = 4;
+
+            int t = 20;
+            p[t] = 0xC0; p[t + 1] = 0x00;       // sport 49152
+            p[t + 2] = 0x01; p[t + 3] = 0xBB;   // dport 443
+            p[t + 4] = (byte)(seq >> 24); p[t + 5] = (byte)(seq >> 16);
+            p[t + 6] = (byte)(seq >> 8); p[t + 7] = (byte)seq;
+            p[t + 12] = 0x50;                   // data offset = 5
+            p[t + 13] = 0x18;                   // PSH+ACK
+
+            p[40] = 0x16; p[41] = 0x03; p[42] = 0x01;
+
+            for (int i = 43; i < total; i++) p[i] = (byte)(i * 7);
+
+            AutoZapret.Zapret.Own.TcpPacket.RecomputeChecksums(p, total, 20, 20, total - 20);
+
+            return p;
+        }
+
         private static void TestSniffResult()
         {
             AutoZapret.Diag.SniffResult ok = new AutoZapret.Diag.SniffResult
