@@ -413,6 +413,19 @@ namespace AutoZapret.App
             // попадать на заглушку 198.18.x.
             bridge.Register("sysdns.get", msg => SendSystemDns());
 
+            // Ручной сброс кэша DNS: после правки hosts, смены DNS или когда
+            // сайт «не открывается» непонятно почему. Права не нужны.
+            bridge.Register("dns.flush", msg =>
+            {
+                string error = DnsCache.Flush();
+
+                _form.Bridge.Send(WebBridge.Msg("dns.flushed",
+                    "ok", error == null,
+                    "message", error == null
+                        ? "Кэш DNS сброшен"
+                        : "Не получилось сбросить кэш DNS: " + error));
+            });
+
             bridge.Register("sysdns.enable", msg =>
             {
                 if (!EnsureElevation())
@@ -444,7 +457,12 @@ namespace AutoZapret.App
                     _settings.SystemDns = true;
                     _settings.Save();
 
-                    Log.Info("DNS", "системный DoH включён: " + _localDns.StatusLine());
+                    // после смены DNS старые ответы живут в кэше: без сброса
+                    // «включил, а не работает» — ровно этот случай
+                    bool flushed = DnsCache.TryFlush();
+
+                    Log.Info("DNS", "системный DoH включён: " + _localDns.StatusLine() +
+                                    (flushed ? ", кэш сброшен" : ""));
                     _tray.Notify(AppInfo.Name, "Системный DNS переключён на DoH", ToolTipIcon.Info);
 
                     SendSystemDns();
@@ -474,6 +492,8 @@ namespace AutoZapret.App
 
                     _settings.SystemDns = false;
                     _settings.Save();
+
+                    DnsCache.TryFlush();
 
                     Log.Info("DNS", "системный DoH выключен, вернул автоматический DNS");
                     SendSystemDns();
@@ -706,8 +726,12 @@ namespace AutoZapret.App
                     }
 
                     Log.Info("HOSTS", "hosts пересоздан с нуля");
+
+                    bool flushed = DnsCache.TryFlush();
+
                     SendHosts(true, false,
-                        "hosts пересоздан: только localhost. Прежнее — через «Восстановить»", null);
+                        "hosts пересоздан: только localhost. Прежнее — через «Восстановить»" +
+                        (flushed ? " · кэш DNS сброшен" : " · кэш DNS не сброшен"), null);
                     _tray.Notify(AppInfo.Name, "hosts пересоздан с нуля", ToolTipIcon.Info);
                 });
             });
@@ -744,8 +768,15 @@ namespace AutoZapret.App
                     }
 
                     Log.Info("HOSTS", "hosts сохранён из редактора");
+
+                    // без сброса кэша система продолжит отдавать старые адреса,
+                    // и правка будет выглядеть несработавшей
+                    bool flushed = DnsCache.TryFlush();
+
                     SendHostsRaw();
-                    SendHosts(true, false, "hosts сохранён вручную", null);
+                    SendHosts(true, false,
+                        "hosts сохранён вручную" + (flushed ? " · кэш DNS сброшен" : " · кэш DNS не сброшен"),
+                        null);
                 });
             });
 
@@ -874,7 +905,12 @@ namespace AutoZapret.App
                     }
 
                     Log.Info("HOSTS", "блок AutoZapret убран");
-                    SendHosts(true, false, "Блок AutoZapret убран, ваши записи на месте", null);
+
+                    bool flushed = DnsCache.TryFlush();
+
+                    SendHosts(true, false,
+                        "Блок AutoZapret убран, ваши записи на месте" +
+                        (flushed ? " · кэш DNS сброшен" : " · кэш DNS не сброшен"), null);
                     _tray.Notify(AppInfo.Name, "hosts очищен от записей AutoZapret", ToolTipIcon.Info);
                 });
             });
@@ -1275,6 +1311,12 @@ namespace AutoZapret.App
 
             string message = "Записано: " + built.Analysis.Summary();
 
+            // Кэш DNS сбрасываем сразу: иначе Windows продолжит отдавать старые
+            // адреса, и человек решит, что hosts не сработал. Он уже сработал —
+            // просто система об этом ещё не знает.
+            if (DnsCache.TryFlush()) message += " · кэш DNS сброшен";
+            else message += " · кэш DNS сбросить не удалось (ipconfig /flushdns)";
+
             // hosts, перенаправляющий сайты, которые и так обходит движок, —
             // частая причина «обход включён, а браузер не открывает». Говорим
             // это прямо в результате, а не только в лог.
@@ -1306,8 +1348,13 @@ namespace AutoZapret.App
         private void RestoreHostsUi()
         {
             string error = HostsFile.Restore();
-            SendHosts(error == null, error != null,
-                error ?? "hosts восстановлен из резервной копии", null);
+
+            string message = error ?? "hosts восстановлен из резервной копии";
+
+            if (error == null)
+                message += DnsCache.TryFlush() ? " · кэш DNS сброшен" : " · кэш DNS не сброшен";
+
+            SendHosts(error == null, error != null, message, null);
         }
 
         // ---------------------------------------------------------------- autopilot

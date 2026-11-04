@@ -226,6 +226,19 @@
 
         <div class="row" style="margin-top:14px">
           <div>
+            <div class="row-label">Сбросить кэш DNS</div>
+            <div class="row-hint">
+              Windows держит ответы в кэше: после правки hosts или смены DNS старые
+              адреса продолжают работать. Сбрасывается автоматически при записи
+              hosts и при включении системного DNS — эта кнопка на всякий случай
+            </div>
+          </div>
+          <button class="btn" id="btn-dns-flush">Сбросить кэш</button>
+        </div>
+        <div class="row-hint" id="dns-flush-status"></div>
+
+        <div class="row" style="margin-top:14px">
+          <div>
             <div class="row-label">Архив для поддержки</div>
             <div class="row-hint">
               Логи, настройки, версии и проверки в одном ZIP. Секрет прокси вырезан <span class="dim">· ~2 s</span>

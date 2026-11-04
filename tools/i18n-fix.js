@@ -1,4 +1,4 @@
-// Разовая правка словаря (порция: подсветка кнопки и все списки).
+// Разовая правка словаря: кэш DNS.
 const fs = require("fs");
 const path = require("path");
 
@@ -6,16 +6,11 @@ const p = path.join(__dirname, "..", "web", "i18n", "en.json");
 const dict = JSON.parse(fs.readFileSync(p, "utf8"));
 
 const add = {
-  "ВЫКЛ": "OFF",
-  "ВКЛ": "ON",
-  "СТАРТ": "START",
-  "СТОП": "STOP",
-  "ОШИБКА": "ERROR",
-  "Все списки движка": "All engine lists",
-  "Какой список открыть": "Which list to open",
-  "Здесь лежат и ваши списки, и скачиваемые: основной, Google, исключения, IP-подсети":
-    "Both your lists and the downloaded ones live here: main, Google, exclusions, IP subnets",
-  "стр.": "lines"
+  "Сбросить кэш DNS": "Flush DNS cache",
+  "Windows держит ответы в кэше: после правки hosts или смены DNS старые адреса продолжают работать. Сбрасывается автоматически при записи hosts и при включении системного DNS — эта кнопка на всякий случай":
+    "Windows caches answers: after editing hosts or changing DNS the old addresses keep working. Flushed automatically when hosts is written and when system DNS is enabled - this button is for everything else",
+  "Сбросить кэш": "Flush cache",
+  "Сбрасываю…": "Flushing…"
 };
 
 let added = 0;

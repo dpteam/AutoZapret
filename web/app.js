@@ -829,6 +829,24 @@
             sysOff.textContent = "Возвращаю…";
             send("sysdns.disable");
         });
+
+        var flush = document.getElementById("btn-dns-flush");
+        if (flush) flush.addEventListener("click", function () {
+            flush.disabled = true;
+            flush.textContent = "Сбрасываю…";
+            send("dns.flush");
+        });
+    }
+
+    function renderDnsFlushed(msg) {
+        var btn = document.getElementById("btn-dns-flush");
+        if (btn) { btn.disabled = false; btn.textContent = "Сбросить кэш"; }
+
+        var status = document.getElementById("dns-flush-status");
+        if (!status) return;
+
+        status.textContent = msg.message || "";
+        status.className = "row-hint " + (msg.ok ? "diag-ok" : "diag-bad");
     }
 
     function renderSystemDns(msg) {
@@ -2293,6 +2311,10 @@
 
             case "sysdns":
                 renderSystemDns(msg);
+                break;
+
+            case "dns.flushed":
+                renderDnsFlushed(msg);
                 break;
 
             case "diag.busy":

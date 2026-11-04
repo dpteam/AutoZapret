@@ -779,6 +779,27 @@ namespace AutoZapret.Diag
         }
 
         /// <summary>
+        /// --flushdns: сбросить кэш DNS. Права не нужны.
+        ///
+        /// Отдельная команда, потому что это первое, что нужно после правки
+        /// hosts: без сброса Windows продолжает отдавать старый адрес, и правка
+        /// выглядит несработавшей.
+        /// </summary>
+        public static int RunFlushDns()
+        {
+            string error = AutoZapret.Core.DnsCache.Flush();
+
+            if (error == null)
+            {
+                Console.WriteLine("кэш DNS сброшен");
+                return 0;
+            }
+
+            Console.WriteLine(error);
+            return 1;
+        }
+
+        /// <summary>
         /// --browser-doh [status|enable|disable]: Secure DNS в браузерах.
         ///
         /// Провайдер подменяет DNS, и браузер через системный резолв приходит на

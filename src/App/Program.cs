@@ -55,6 +55,7 @@ namespace AutoZapret.App
         if (HasFlag(args, "--own")) return Diag.DiagCommand.RunOwn(args);
         if (HasFlag(args, "--browser-doh")) return Diag.DiagCommand.RunBrowserDoh(args);
         if (HasFlag(args, "--sysdns")) return Diag.DiagCommand.RunSystemDns(args);
+        if (HasFlag(args, "--flushdns")) return Diag.DiagCommand.RunFlushDns();
             if (HasFlag(args, "--scores-reset")) return Diag.DiagCommand.RunScoresReset(args);
             if (HasFlag(args, "--hosts-restore")) return Diag.DiagCommand.RunHostsRestore(args);
             if (HasFlag(args, "--update-engine")) return Diag.DiagCommand.RunUpdateEngine(args);

@@ -133,6 +133,9 @@ namespace AutoZapret.App
                 Section("результаты скана");
                 TestScanResults();
 
+                Section("кэш DNS");
+                TestDnsCache();
+
                 Section("пресеты по процессам");
                 TestProcessPresets();
 
@@ -3279,6 +3282,36 @@ namespace AutoZapret.App
                     else if (System.IO.File.Exists(path)) System.IO.File.Delete(path);
                 }
                 catch { }
+            }
+        }
+
+        /// <summary>
+        /// Сброс кэша DNS: проверяем, что вызов не бросает и не висит.
+        ///
+        /// Сам факт сброса проверить нельзя (кэш не читается из кода), но можно
+        /// убедиться, что команда завершается и не оставляет висящий процесс —
+        /// именно на этом такие вызовы и ломаются: cmd ждёт ввода или висит.
+        /// </summary>
+        private static void TestDnsCache()
+        {
+            try
+            {
+                System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+
+                string error = AutoZapret.Core.DnsCache.Flush();
+
+                watch.Stop();
+
+                Check("кэш DNS: вызов завершился", watch.ElapsedMilliseconds < 6000,
+                    watch.ElapsedMilliseconds + " мс");
+
+                Check("кэш DNS: результат известен",
+                    error == null || error.Length > 0,
+                    error ?? "сброшен");
+            }
+            catch (Exception ex)
+            {
+                Check("кэш DNS: без исключений", false, ex.Message);
             }
         }
 
