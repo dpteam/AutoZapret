@@ -183,6 +183,23 @@
 
         <div class="row" style="margin-top:14px">
           <div>
+            <div class="row-label">Зашифрованный DNS в браузерах</div>
+            <div class="row-hint">
+              Провайдер подменяет DNS — браузер приходит на заглушку, и сайт не открывается
+              даже при рабочем обходе. Включает Secure DNS (DoH) в Chrome, Edge, Яндекс,
+              Firefox и родственных. Обратимо
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn primary" id="btn-browser-doh-on">Включить</button>
+            <button class="btn" id="btn-browser-doh-off">Выключить</button>
+          </div>
+        </div>
+        <div class="diag-list" id="browser-doh-list" style="margin-top:10px"></div>
+        <div class="row-hint" id="browser-doh-status"></div>
+
+        <div class="row" style="margin-top:14px">
+          <div>
             <div class="row-label">Архив для поддержки</div>
             <div class="row-hint">
               Логи, настройки, версии и проверки в одном ZIP. Секрет прокси вырезан <span class="dim">· ~2 s</span>

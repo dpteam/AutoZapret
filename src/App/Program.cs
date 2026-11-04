@@ -53,6 +53,7 @@ namespace AutoZapret.App
             if (HasFlag(args, "--netcap")) return Diag.DiagCommand.RunNetCap(args);
         if (HasFlag(args, "--stages")) return Diag.DiagCommand.RunStages(args);
         if (HasFlag(args, "--own")) return Diag.DiagCommand.RunOwn(args);
+        if (HasFlag(args, "--browser-doh")) return Diag.DiagCommand.RunBrowserDoh(args);
             if (HasFlag(args, "--scores-reset")) return Diag.DiagCommand.RunScoresReset(args);
             if (HasFlag(args, "--hosts-restore")) return Diag.DiagCommand.RunHostsRestore(args);
             if (HasFlag(args, "--update-engine")) return Diag.DiagCommand.RunUpdateEngine(args);

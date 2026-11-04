@@ -235,7 +235,7 @@ namespace AutoZapret.Diag
             }
 
             // Без адресов (нет DoH и нет системного DNS) — пусть curl решает сам
-            if (addresses.Count == 0) return RunCurl(target.Url, host, null, timeoutSec);
+            if (addresses.Count == 0) return Name(RunCurl(target.Url, host, null, timeoutSec), target.Name);
 
             ProbeResult first = null;
 
@@ -248,7 +248,7 @@ namespace AutoZapret.Diag
             {
                 if (tried++ >= 2) break;
 
-                ProbeResult r = RunCurl(target.Url, host, ip, timeoutSec);
+                ProbeResult r = Name(RunCurl(target.Url, host, ip, timeoutSec), target.Name);
 
                 if (r.Ok) return r;
                 if (first == null) first = r;
@@ -260,6 +260,17 @@ namespace AutoZapret.Diag
             }
 
             return first;
+        }
+
+        /// <summary>
+        /// Имя цели обязательно: по нему базовая линия и подбор понимают, что
+        /// именно заблокировано. Без него в baseline.json попадали пустые строки
+        /// и «заблокировано: , , , , ,» — а подбор терял список целей.
+        /// </summary>
+        private static ProbeResult Name(ProbeResult result, string name)
+        {
+            if (result != null) result.Name = name;
+            return result;
         }
 
         private static string SafeHost(string url)

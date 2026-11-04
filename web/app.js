@@ -167,6 +167,7 @@
             // идёт ли уже проверка: экран должен открываться с этим знанием,
             // иначе кнопки выглядят свободными, а нажатие молча отклоняется
             send("diag.state");
+            send("browser.doh.get");
         }
 
         // скорость сети нужна только на главной: опрос раз в секунду
@@ -766,6 +767,53 @@
             cancel.disabled = true;
             cancel.textContent = "Отменяю…";
             send("diag.cancel");
+        });
+
+        var dohOn = document.getElementById("btn-browser-doh-on");
+        if (dohOn) dohOn.addEventListener("click", function () {
+            dohOn.disabled = true;
+            dohOn.textContent = "Включаю…";
+            send("browser.doh.enable");
+        });
+
+        var dohOff = document.getElementById("btn-browser-doh-off");
+        if (dohOff) dohOff.addEventListener("click", function () {
+            dohOff.disabled = true;
+            dohOff.textContent = "Выключаю…";
+            send("browser.doh.disable");
+        });
+    }
+
+    // ------------------------------------------------------------ Secure DNS браузеров
+
+    function renderBrowserDoh(msg) {
+        var on = document.getElementById("btn-browser-doh-on");
+        if (on) { on.disabled = false; on.textContent = "Включить"; }
+
+        var off = document.getElementById("btn-browser-doh-off");
+        if (off) { off.disabled = false; off.textContent = "Выключить"; }
+
+        var status = document.getElementById("browser-doh-status");
+        if (status) {
+            // report приходит после действия, summary — при чтении состояния
+            status.textContent = msg.report ? msg.report.replace(/\n/g, " · ") : (msg.summary || "");
+            status.className = "row-hint " + (msg.changed ? "diag-ok" : "");
+        }
+
+        var list = document.getElementById("browser-doh-list");
+        if (!list || !msg.items) return;
+
+        list.innerHTML = "";
+
+        msg.items.forEach(function (b) {
+            var div = document.createElement("div");
+            div.className = "diag-row";
+            div.innerHTML =
+                '<span class="badge ' + (b.on ? "ok" : "warn") + '">' + (b.on ? "OK" : "—") + '</span>' +
+                '<span class="name">' + b.name + '</span>' +
+                '<span class="verdict">' + (b.on ? "Secure DNS включён" : "системный DNS") + '</span>' +
+                '<span class="detail">' + (b.detail || "") + '</span>';
+            list.appendChild(div);
         });
     }
 
@@ -1902,6 +1950,10 @@
 
             case "diag.state":
                 setDiagBusy(!!msg.running, msg.title || "");
+                break;
+
+            case "browser.doh":
+                renderBrowserDoh(msg);
                 break;
 
             case "diag.busy":

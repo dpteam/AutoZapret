@@ -222,5 +222,13 @@
   "Объяснить выбранную": "Explain selected",
   "«Объяснить» запускает одну стратегию с отладочным выводом winws и показывает, что он сделал с соединениями. Полезно, когда все стратегии дают нули": "\"Explain\" runs one strategy with winws debug output and shows what it did with the connections. Useful when every strategy scores zero",
   "Запускаю с отладкой…": "Starting with debug…",
-  "14 проверок системы": "14 system checks"
+  "14 проверок системы": "14 system checks",
+  "Зашифрованный DNS в браузерах": "Encrypted DNS in browsers",
+  "Провайдер подменяет DNS — браузер приходит на заглушку, и сайт не открывается даже при рабочем обходе. Включает Secure DNS (DoH) в Chrome, Edge, Яндекс, Firefox и родственных. Обратимо": "The provider substitutes DNS, so the browser lands on a stub and the site does not open even when the bypass works. Enables Secure DNS (DoH) in Chrome, Edge, Yandex, Firefox and relatives. Reversible",
+  "Включить": "Enable",
+  "Выключить": "Disable",
+  "Secure DNS включён": "Secure DNS enabled",
+  "системный DNS": "system DNS",
+  "Включаю…": "Enabling…",
+  "Выключаю…": "Disabling…"
 }

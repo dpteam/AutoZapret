@@ -377,6 +377,32 @@ namespace AutoZapret.App
             bridge.Register("diag.cancel", msg => CancelDiag());
             bridge.Register("diag.state", msg => SendDiagState());
 
+            // ---- Secure DNS (DoH) в браузерах
+            //
+            // Провайдер подменяет DNS, и браузер с системным резолвом приходит
+            // на заглушку: обход работает, сайт не открывается (Firefox:
+            // PR_CONNECT_RESET_ERROR). Это ровно то, что человек видит как
+            // «не работает», поэтому переключатель должен быть под рукой.
+            bridge.Register("browser.doh.get", msg => SendBrowserDoh());
+
+            bridge.Register("browser.doh.enable", msg =>
+            {
+                string report = Core.BrowserDoh.Enable();
+                Log.Info("BROWSER", "Secure DNS включён: " + report.Replace(Environment.NewLine, " | "));
+
+                bridge.Send(WebBridge.Msg("browser.doh", "report", report, "changed", true));
+                SendBrowserDoh();
+            });
+
+            bridge.Register("browser.doh.disable", msg =>
+            {
+                string report = Core.BrowserDoh.Disable();
+                Log.Info("BROWSER", "Secure DNS выключен: " + report.Replace(Environment.NewLine, " | "));
+
+                bridge.Send(WebBridge.Msg("browser.doh", "report", report, "changed", true));
+                SendBrowserDoh();
+            });
+
             // ---- язык интерфейса: словарь вшит в exe, наружу ничего не пишется
             bridge.Register("i18n.get", msg =>
             {
@@ -1378,6 +1404,30 @@ namespace AutoZapret.App
                     SendDiagState();
                 }
             });
+        }
+
+        /// <summary>Состояние Secure DNS по браузерам — для карточки на экране «Диагностика».</summary>
+        private void SendBrowserDoh()
+        {
+            List<object> items = new List<object>();
+
+            foreach (Core.BrowserInfo b in Core.BrowserDoh.Detect())
+            {
+                if (!b.Installed) continue;
+
+                items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    { "name", b.Name },
+                    { "kind", b.Kind },
+                    { "on", b.DohOn },
+                    { "detail", b.Detail ?? "" }
+                });
+            }
+
+            _form.Bridge.Send(WebBridge.Msg("browser.doh",
+                "items", items,
+                "template", Core.BrowserDoh.Template,
+                "summary", Core.BrowserDoh.StatusText()));
         }
 
         private void CancelDiag()

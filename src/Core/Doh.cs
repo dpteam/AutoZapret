@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Net.Sockets;
 using System.Text;
 
 namespace AutoZapret.Core
@@ -51,18 +53,53 @@ namespace AutoZapret.Core
             "https://9.9.9.9/dns-query"
         };
 
+        // список переехал в DohServers: там и IP, и имена, и подписи для UI
+
         private static readonly HttpClient Http = CreateClient();
+
+        /// <summary>
+        /// bootstrap: адрес имени DoH-сервера, полученный через IP-сервер.
+        /// «Нужен DNS, чтобы узнать адрес DNS» — решается так: сначала один из
+        /// серверов по IP, потом его ответом соединяемся с остальными.
+        /// </summary>
+        private static readonly object BootGate = new object();
+        private static readonly Dictionary<string, IPAddress> Bootstrap =
+            new Dictionary<string, IPAddress>(StringComparer.OrdinalIgnoreCase);
 
         private static HttpClient CreateClient()
         {
             try
             {
-                HttpClientHandler handler = new HttpClientHandler
+                SocketsHttpHandler handler = new SocketsHttpHandler
                 {
                     UseProxy = false,
                     AllowAutoRedirect = false,
-                    AutomaticDecompression = System.Net.DecompressionMethods.GZip |
-                                             System.Net.DecompressionMethods.Deflate
+                    ConnectTimeout = TimeSpan.FromSeconds(4),
+                    AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
+
+                    // Подключаемся к адресу из bootstrap, а имя оставляем настоящим:
+                    // SNI и проверка сертификата идут по имени из URI. Без этого
+                    // серверы «по имени» требовали бы системный DNS — тот самый,
+                    // который подменяют.
+                    ConnectCallback = (context, token) =>
+                    {
+                        IPAddress address = BootstrapAddress(context.DnsEndPoint.Host);
+
+                        Socket socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+                        socket.NoDelay = true;
+
+                        try
+                        {
+                            socket.Connect(new IPEndPoint(address, context.DnsEndPoint.Port));
+                            return new System.Threading.Tasks.ValueTask<Stream>(
+                                new NetworkStream(socket, ownsSocket: true));
+                        }
+                        catch
+                        {
+                            socket.Dispose();
+                            throw;
+                        }
+                    }
                 };
 
                 HttpClient client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(5) };
@@ -73,6 +110,64 @@ namespace AutoZapret.Core
             {
                 return new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
             }
+        }
+
+        /// <summary>Адрес для подключения к DoH-серверу: IP из URI или bootstrap.</summary>
+        private static IPAddress BootstrapAddress(string host)
+        {
+            IPAddress parsed;
+            if (IPAddress.TryParse(host, out parsed)) return parsed;
+
+            lock (BootGate)
+            {
+                IPAddress cached;
+                if (Bootstrap.TryGetValue(host, out cached)) return cached;
+            }
+
+            // bootstrap через серверы по IP: у них резолвить нечего
+            List<IPAddress> found = QueryByIp(host);
+
+            if (found.Count == 0)
+            {
+                // последняя попытка — системный DNS (может быть подменён,
+                // но если он отдал настоящий адрес, сервер всё равно сработает)
+                try
+                {
+                    foreach (IPAddress ip in Dns.GetHostAddresses(host))
+                    {
+                        if (ip.AddressFamily != AddressFamily.InterNetwork) continue;
+                        found.Add(ip);
+                    }
+                }
+                catch { }
+            }
+
+            if (found.Count == 0) throw new HttpRequestException("нет адреса для DoH-сервера " + host);
+
+            lock (BootGate) Bootstrap[host] = found[0];
+
+            return found[0];
+        }
+
+        /// <summary>Один запрос к IP-серверам: их адрес известен без DNS.</summary>
+        private static List<IPAddress> QueryByIp(string host)
+        {
+            List<IPAddress> result = new List<IPAddress>();
+
+            foreach (DohServer server in DohServers.All())
+            {
+                if (!server.ByIp) continue;
+
+                List<IPAddress> addresses;
+
+                if (TryQuery(server.Uri, host, 1, out addresses) && addresses.Count > 0)
+                {
+                    result.AddRange(addresses);
+                    break;
+                }
+            }
+
+            return result;
         }
 
         /// <summary>
@@ -131,51 +226,60 @@ namespace AutoZapret.Core
 
         private static List<IPAddress> ResolveCore(string host, int timeoutMs)
         {
-            byte[] query = BuildQuery(host, 1);   // 1 = A
-
-            foreach (string server in Servers)
+            foreach (DohServer server in DohServers.All())
             {
-                try
-                {
-                    long start = Environment.TickCount;
+                List<IPAddress> addresses;
 
-                    using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, server))
-                    {
-                        ByteArrayContent content = new ByteArrayContent(query);
-                        content.Headers.ContentType = new MediaTypeHeaderValue("application/dns-message");
-                        request.Content = content;
+                if (!TryQuery(server.Uri, host, 1, out addresses) || addresses.Count == 0) continue;
 
-                        request.Headers.Accept.Clear();
-                        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/dns-message"));
+                LastServer = server.Uri;
+                Log.Info("DNS", host + " → " + Join(addresses) + " через " + server.Title +
+                                " (" + server.Uri + ")");
 
-                        using (HttpResponseMessage response = Http.SendAsync(request).GetAwaiter().GetResult())
-                        {
-                            if (!response.IsSuccessStatusCode)
-                            {
-                                Log.Debug("DNS", server + ": HTTP " + (int)response.StatusCode);
-                                continue;
-                            }
-
-                            byte[] body = response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult();
-                            List<IPAddress> addresses = ParseAnswer(body, 1);
-
-                            if (addresses.Count == 0) continue;
-
-                            LastServer = server;
-                            Log.Info("DNS", host + " → " + Join(addresses) + " через " + server +
-                                            " (" + (Environment.TickCount - start) + " мс)");
-
-                            return addresses;
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Log.Debug("DNS", server + ": " + ex.GetType().Name + ": " + ex.Message);
-                }
+                return addresses;
             }
 
             return new List<IPAddress>();
+        }
+
+        /// <summary>Один DoH-запрос к конкретному серверу. false — сервер не ответил.</summary>
+        private static bool TryQuery(string server, string host, ushort type, out List<IPAddress> addresses)
+        {
+            addresses = new List<IPAddress>();
+
+            try
+            {
+                byte[] query = BuildQuery(host, type);
+
+                using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, server))
+                {
+                    ByteArrayContent content = new ByteArrayContent(query);
+                    content.Headers.ContentType = new MediaTypeHeaderValue("application/dns-message");
+                    request.Content = content;
+
+                    request.Headers.Accept.Clear();
+                    request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/dns-message"));
+
+                    using (HttpResponseMessage response = Http.SendAsync(request).GetAwaiter().GetResult())
+                    {
+                        if (!response.IsSuccessStatusCode)
+                        {
+                            Log.Debug("DNS", server + ": HTTP " + (int)response.StatusCode);
+                            return false;
+                        }
+
+                        byte[] body = response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult();
+                        addresses = ParseAnswer(body, type);
+
+                        return addresses.Count > 0;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Debug("DNS", server + ": " + ex.GetType().Name + ": " + ex.Message);
+                return false;
+            }
         }
 
         // ------------------------------------------------------------ DNS-формат

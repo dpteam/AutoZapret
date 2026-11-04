@@ -115,6 +115,9 @@ namespace AutoZapret.App
                 Section("свой движок: пакеты и суммы");
                 TestTcpPacket();
 
+                Section("Secure DNS в браузерах");
+                TestBrowserDoh();
+
                 Section("пресеты по процессам");
                 TestProcessPresets();
 
@@ -2887,6 +2890,54 @@ namespace AutoZapret.App
             AutoZapret.Zapret.Own.TcpPacket.RecomputeChecksums(p, total, 20, 20, total - 20);
 
             return p;
+        }
+
+        /// <summary>
+        /// Secure DNS в браузерах: только чтение состояния.
+        ///
+        /// Запись в реестр и user.js в selftest не проверяем сознательно: тест не
+        /// должен менять настройки человека. Проверяем, что определение браузеров
+        /// не падает и что шаблон — валидный DoH по IP (иначе браузер не сможет
+        /// его разрешить при подменённом DNS).
+        /// </summary>
+        private static void TestBrowserDoh()
+        {
+            string template = AutoZapret.Core.BrowserDoh.Template;
+
+            bool valid;
+            try
+            {
+                Uri uri = new Uri(template);
+                System.Net.IPAddress ip;
+
+                valid = uri.Scheme == "https" &&
+                        System.Net.IPAddress.TryParse(uri.Host, out ip);
+            }
+            catch { valid = false; }
+
+            Check("DoH для браузера: https по IP", valid, template);
+
+            try
+            {
+                System.Collections.Generic.List<AutoZapret.Core.BrowserInfo> list =
+                    AutoZapret.Core.BrowserDoh.Detect();
+
+                Check("DoH для браузера: список получен", list != null, list == null ? "null" : list.Count + " шт.");
+
+                int bad = 0;
+                if (list != null)
+                    foreach (AutoZapret.Core.BrowserInfo b in list)
+                        if (string.IsNullOrEmpty(b.Name)) bad++;
+
+                Check("DoH для браузера: у всех есть имя", bad == 0, bad + " без имени");
+                Check("DoH для браузера: статус читается",
+                    AutoZapret.Core.BrowserDoh.StatusText().Length > 0,
+                    AutoZapret.Core.BrowserDoh.StatusText());
+            }
+            catch (Exception ex)
+            {
+                Check("DoH для браузера: определение", false, ex.Message);
+            }
         }
 
         private static void TestSniffResult()

@@ -779,6 +779,57 @@ namespace AutoZapret.Diag
         }
 
         /// <summary>
+        /// --browser-doh [status|enable|disable]: Secure DNS в браузерах.
+        ///
+        /// Провайдер подменяет DNS, и браузер через системный резолв приходит на
+        /// заглушку — сайт не открывается, хотя обход работает. Здесь мы включаем
+        /// браузерам их собственный DoH (политики Chromium / user.js Firefox).
+        /// </summary>
+        public static int RunBrowserDoh(string[] args)
+        {
+            string action = "status";
+
+            foreach (string a in args)
+            {
+                if (a.StartsWith("--", StringComparison.Ordinal)) continue;
+
+                string v = a.Trim().ToLowerInvariant();
+                if (v == "enable" || v == "disable" || v == "status") action = v;
+            }
+
+            if (action == "enable")
+            {
+                Console.WriteLine(AutoZapret.Core.BrowserDoh.Enable());
+                return 0;
+            }
+
+            if (action == "disable")
+            {
+                Console.WriteLine(AutoZapret.Core.BrowserDoh.Disable());
+                return 0;
+            }
+
+            Console.WriteLine("== Secure DNS в браузерах ==");
+            Console.WriteLine("шаблон: " + AutoZapret.Core.BrowserDoh.Template);
+            Console.WriteLine();
+
+            bool any = false;
+
+            foreach (AutoZapret.Core.BrowserInfo b in AutoZapret.Core.BrowserDoh.Detect())
+            {
+                if (!b.Installed) continue;
+
+                any = true;
+                Console.WriteLine("  " + b.Name.PadRight(18) + (b.DohOn ? "включён" : "выключен") +
+                                  (b.Detail.Length > 0 ? "  (" + b.Detail + ")" : ""));
+            }
+
+            if (!any) Console.WriteLine("  браузеры не найдены");
+
+            return 0;
+        }
+
+        /// <summary>
         /// --preflight [стратегия]: проверить готовность перед запуском.
         /// Без аргумента проверяется окружение без привязки к стратегии.
         /// </summary>
