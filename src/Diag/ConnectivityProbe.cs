@@ -224,7 +224,54 @@ namespace AutoZapret.Diag
 
         private static ProbeResult CheckWithCurl(ProbeTarget target, int timeoutSec)
         {
-            ProbeResult result = new ProbeResult { Name = target.Name };
+            string host = SafeHost(target.Url);
+
+            List<IPAddress> addresses = new List<IPAddress>();
+
+            if (host.Length > 0)
+            {
+                try { addresses = Resolver.Resolve(host).Addresses; }
+                catch { }
+            }
+
+            // Без адресов (нет DoH и нет системного DNS) — пусть curl решает сам
+            if (addresses.Count == 0) return RunCurl(target.Url, host, null, timeoutSec);
+
+            ProbeResult first = null;
+
+            // Google/Discord отдают по 8 адресов, и часть может быть зарезана по IP.
+            // Проверяем до двух: «TLS» значит, что пакеты дошли и DPI ответил —
+            // второй адрес ничего не изменит, а два таймаута подряд стоят времени.
+            int tried = 0;
+
+            foreach (IPAddress ip in addresses)
+            {
+                if (tried++ >= 2) break;
+
+                ProbeResult r = RunCurl(target.Url, host, ip, timeoutSec);
+
+                if (r.Ok) return r;
+                if (first == null) first = r;
+
+                bool dpi = r.Error == "TLS" || r.Error == "сброс" ||
+                           r.Error == "сертификат" || r.Error == "пустой ответ";
+
+                if (dpi) return r;
+            }
+
+            return first;
+        }
+
+        private static string SafeHost(string url)
+        {
+            try { return new Uri(url).Host; }
+            catch { return ""; }
+        }
+
+        /// <summary>Один прогон curl: адрес прибит через --resolve, если он известен.</summary>
+        private static ProbeResult RunCurl(string url, string host, IPAddress ip, int timeoutSec)
+        {
+            ProbeResult result = new ProbeResult { Name = "" };
             Stopwatch sw = Stopwatch.StartNew();
 
             try
@@ -239,7 +286,7 @@ namespace AutoZapret.Diag
                     // --resolve + --noproxy: адрес берём из DoH, а не из системного
                     // DNS (его могут подменять), и не идём в случайный прокси из
                     // переменных окружения. Проверяем DPI, а не чужую заглушку.
-                    Arguments = CurlArguments(target, timeoutSec),
+                    Arguments = CurlArguments(url, host, ip, timeoutSec),
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardOutput = true,
@@ -291,29 +338,15 @@ namespace AutoZapret.Diag
         /// будет означать подмену, а не сломанный обход. `--resolve` подставляет
         /// адрес, оставляя правильный SNI и Host.
         /// </summary>
-        private static string CurlArguments(ProbeTarget target, int timeoutSec)
+        private static string CurlArguments(string url, string host, IPAddress ip, int timeoutSec)
         {
             string common = "-4 -s -o NUL --noproxy \"*\" --max-time " + timeoutSec +
                             " -w \"%{http_code}|%{time_total}|%{errormsg}\"";
 
-            string host;
-            try { host = new Uri(target.Url).Host; }
-            catch { host = ""; }
+            if (!string.IsNullOrEmpty(host) && ip != null)
+                return common + " --resolve \"" + host + ":443:" + ip + "\" \"" + url + "\"";
 
-            if (host.Length > 0)
-            {
-                try
-                {
-                    Resolver.Result resolved = Resolver.Resolve(host);
-
-                    if (resolved.Ok && resolved.Primary != null)
-                        return common + " --resolve \"" + host + ":443:" + resolved.Primary + "\" \"" +
-                               target.Url + "\"";
-                }
-                catch { }
-            }
-
-            return common + " \"" + target.Url + "\"";
+            return common + " \"" + url + "\"";
         }
 
         /// <summary>
