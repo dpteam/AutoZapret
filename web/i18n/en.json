@@ -292,5 +292,6 @@
   "Прогоняет каждую технику против заблокированных целей и показывает, какая реально пробивает ваш DPI": "Runs every technique against the blocked targets and shows which one actually beats your DPI",
   "Сравнить": "Compare",
   "Сравниваю…": "Comparing…",
-  "Техника": "Technique"
+  "Техника": "Technique",
+  "udplen — длина UDP (QUIC)": "udplen - UDP length (QUIC)"
 }

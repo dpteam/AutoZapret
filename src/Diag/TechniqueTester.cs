@@ -73,6 +73,7 @@ namespace AutoZapret.Diag
             list.Add(new KeyValuePair<string, Technique>("syndata", Technique.SynData));
             list.Add(new KeyValuePair<string, Technique>("oob", Technique.Oob));
             list.Add(new KeyValuePair<string, Technique>("wsize", Technique.WindowSize));
+            list.Add(new KeyValuePair<string, Technique>("udplen", Technique.UdpLen));
 
             return list;
         }
@@ -90,6 +91,7 @@ namespace AutoZapret.Diag
                 case Technique.SynData: return "syndata";
                 case Technique.Oob: return "oob";
                 case Technique.WindowSize: return "wsize";
+                case Technique.UdpLen: return "udplen";
                 default: return kind.ToString().ToLowerInvariant();
             }
         }

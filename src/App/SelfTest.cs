@@ -121,6 +121,9 @@ namespace AutoZapret.App
                 Section("счёт техник");
                 TestTechniqueScore();
 
+                Section("UDP и udplen");
+                TestUdpPacket();
+
                 Section("Secure DNS в браузерах");
                 TestBrowserDoh();
 
@@ -4001,6 +4004,178 @@ namespace AutoZapret.App
                 if (!names.Add(pair.Key)) duplicates++;
 
             Check("техника: названия уникальны", duplicates == 0, duplicates + " повторов");
+        }
+
+        /// <summary>
+        /// UDP: разбор и техника udplen.
+        ///
+        /// UDP-сумма — самое коварное место: в IPv4 ноль означает «не считать»,
+        /// и если его перезаписать, получатель начнёт проверять сумму там, где
+        /// её никто не считал, и выбросит пакет. Проверяем обе ветки: IPv4 с
+        /// нулевой суммой (не трогаем) и IPv6 (считать обязательно).
+        /// </summary>
+        private static void TestUdpPacket()
+        {
+            // ---- IPv4 + UDP + QUIC-подобный payload
+            byte[] packet = SynthUdpPacket(200, false);
+
+            AutoZapret.Zapret.Own.UdpPacket udp =
+                AutoZapret.Zapret.Own.UdpPacket.Parse(packet, packet.Length);
+
+            Check("UDP: пакет разобран", udp != null, udp == null ? "null" : "ok");
+
+            if (udp == null) return;
+
+            Check("UDP: порт назначения 443", udp.DstPort == 443, udp.DstPort.ToString());
+            Check("UDP: payload на месте", udp.PayloadLength == 200, udp.PayloadLength.ToString());
+            Check("UDP: это не IPv6", !udp.IsIPv6, udp.IsIPv6.ToString());
+
+            // ---- udplen: длина в заголовке становится другой
+            AutoZapret.Zapret.Own.TechniqueOptions udplen =
+                new AutoZapret.Zapret.Own.TechniqueOptions
+                {
+                    Kind = AutoZapret.Zapret.Own.Technique.UdpLen,
+                    UdpLengthDelta = -20
+                };
+
+            string error;
+            System.Collections.Generic.List<AutoZapret.Zapret.Own.Desync.Outgoing> parts =
+                AutoZapret.Zapret.Own.Desync.BuildUdp(udp, udplen, out error);
+
+            Check("udplen: два пакета", parts.Count == 2, parts.Count + " шт.");
+
+            if (parts.Count == 2)
+            {
+                AutoZapret.Zapret.Own.UdpPacket wrong =
+                    AutoZapret.Zapret.Own.UdpPacket.Parse(parts[0].Data, parts[0].Length);
+
+                int declared = (parts[0].Data[udp.UdpOffset + 4] << 8) | parts[0].Data[udp.UdpOffset + 5];
+                int expected = 8 + udp.PayloadLength - 20;
+
+                Check("udplen: длина в заголовке изменена", declared == expected,
+                    declared + " vs " + expected);
+
+                Check("udplen: payload не тронут",
+                    wrong != null && wrong.PayloadLength == udp.PayloadLength,
+                    wrong == null ? "?" : wrong.PayloadLength.ToString());
+
+                int declaredLength = (parts[1].Data[udp.UdpOffset + 4] << 8) | parts[1].Data[udp.UdpOffset + 5];
+
+                Check("udplen: второй пакет с настоящей длиной",
+                    declaredLength == 8 + udp.PayloadLength,
+                    declaredLength + " vs " + (8 + udp.PayloadLength));
+            }
+
+            // ---- IPv4 с НУЛЕВОЙ суммой: её нельзя трогать
+            byte[] noChecksum = SynthUdpPacket(100, false);
+            noChecksum[20 + 6] = 0;
+            noChecksum[20 + 7] = 0;
+
+            AutoZapret.Zapret.Own.UdpPacket zeroSum =
+                AutoZapret.Zapret.Own.UdpPacket.Parse(noChecksum, noChecksum.Length);
+
+            if (zeroSum != null)
+            {
+                int length;
+                byte[] rebuilt = zeroSum.BuildWithLengthDelta(-2, out length);
+
+                int after = (rebuilt[zeroSum.UdpOffset + 6] << 8) | rebuilt[zeroSum.UdpOffset + 7];
+
+                Check("udplen: нулевая сумма IPv4 не пересчитана", after == 0, after.ToString());
+            }
+
+            // ---- IPv6: сумма обязательна и должна сойтись
+            byte[] v6 = SynthUdpPacket(120, true);
+
+            AutoZapret.Zapret.Own.UdpPacket udp6 =
+                AutoZapret.Zapret.Own.UdpPacket.Parse(v6, v6.Length);
+
+            Check("UDP: IPv6 разобран", udp6 != null && udp6.IsIPv6,
+                udp6 == null ? "null" : udp6.IsIPv6.ToString());
+
+            if (udp6 != null)
+            {
+                int length;
+                byte[] rebuilt = udp6.BuildWithLengthDelta(-4, out length);
+
+                AutoZapret.Zapret.Own.UdpPacket back =
+                    AutoZapret.Zapret.Own.UdpPacket.Parse(rebuilt, length);
+
+                Check("udplen: IPv6 после правки разбирается", back != null, "ok");
+
+                // сумма не ноль — значит её посчитали, а не оставили как было
+                int sum = (rebuilt[udp6.UdpOffset + 6] << 8) | rebuilt[udp6.UdpOffset + 7];
+                Check("udplen: у IPv6 сумма посчитана", sum != 0, sum.ToString());
+            }
+
+            // ---- не UDP пакет не считается нашим
+            Check("UDP: TCP не считается UDP",
+                AutoZapret.Zapret.Own.UdpPacket.Parse(SynthTlsPacket(100, 1), 140) == null, "ok");
+        }
+
+        /// <summary>Синтетический UDP-пакет с QUIC-подобным payload.</summary>
+        private static byte[] SynthUdpPacket(int payloadLength, bool ipv6)
+        {
+            int ipHeader = ipv6 ? 40 : 20;
+            int total = ipHeader + 8 + payloadLength;
+
+            byte[] p = new byte[total];
+
+            if (ipv6)
+            {
+                p[0] = 0x60;                                  // IPv6
+                int payload = 8 + payloadLength;
+                p[4] = (byte)(payload >> 8);
+                p[5] = (byte)(payload & 0xFF);
+                p[6] = 17;                                    // next header = UDP
+                p[7] = 64;                                    // hop limit
+                p[8] = 0x20; p[9] = 0x01;                     // src 2001:...
+                p[24] = 0x20; p[25] = 0x01;                   // dst 2001:...
+            }
+            else
+            {
+                p[0] = 0x45;
+                p[2] = (byte)(total >> 8);
+                p[3] = (byte)(total & 0xFF);
+                p[8] = 64;
+                p[9] = 17;
+
+                p[12] = 192; p[13] = 168; p[14] = 1; p[15] = 11;
+                p[16] = 142; p[17] = 251; p[18] = 150; p[19] = 4;
+            }
+
+            int u = ipHeader;
+            p[u] = 0xC0; p[u + 1] = 0x00;                     // sport
+            p[u + 2] = 0x01; p[u + 3] = 0xBB;                 // dport 443
+
+            int udpLength = 8 + payloadLength;
+            p[u + 4] = (byte)(udpLength >> 8);
+            p[u + 5] = (byte)(udpLength & 0xFF);
+            p[u + 6] = 0; p[u + 7] = 0;                       // сумма пока нулевая
+
+            // QUIC Initial: long header form (0b11) + тип Initial (0b00)
+            p[u + 8] = 0xC0;
+
+            for (int i = u + 9; i < total; i++) p[i] = (byte)(i * 5);
+
+            if (ipv6)
+            {
+                // для IPv6 сумму считаем всегда
+                AutoZapret.Zapret.Own.UdpPacket temp =
+                    AutoZapret.Zapret.Own.UdpPacket.Parse(p, total);
+
+                if (temp != null)
+                {
+                    int length;
+                    temp.BuildWithLengthDelta(0, out length);
+                }
+            }
+            else
+            {
+                AutoZapret.Zapret.Own.TcpPacket.RecomputeChecksums(p, total, ipHeader, 0, 0);
+            }
+
+            return p;
         }
 
         private static void TestSniffResult()

@@ -36,7 +36,10 @@ namespace AutoZapret.Zapret.Own
         Oob = 8,
 
         /// <summary>Маленькое окно в копии: DPI думает, что поток закрыт.</summary>
-        WindowSize = 9
+        WindowSize = 9,
+
+        /// <summary>Изменить длину UDP в заголовке: DPI ошибается с разбором QUIC.</summary>
+        UdpLen = 10
     }
 
     /// <summary>
@@ -79,6 +82,9 @@ namespace AutoZapret.Zapret.Own
         /// <summary>SNI для сгенерированного фейка.</summary>
         public string FakeSni = "www.google.com";
 
+        /// <summary>Насколько изменить длину UDP для udplen (может быть меньше нуля).</summary>
+        public int UdpLengthDelta = -2;
+
         public string Describe()
         {
             switch (Kind)
@@ -90,6 +96,7 @@ namespace AutoZapret.Zapret.Own
                 case Technique.SynData: return "syndata";
                 case Technique.Oob: return "oob";
                 case Technique.WindowSize: return "wsize";
+                case Technique.UdpLen: return "udplen";
                 case Technique.Fake: return "fake seq=" + FakeSeqOffset + (BadSum ? " badsum" : "") + " x" + Repeats;
                 case Technique.FakeSplit: return "fakedsplit pos=" + Position + " seq=" + FakeSeqOffset;
                 default: return "выключено";
@@ -294,6 +301,52 @@ namespace AutoZapret.Zapret.Own
                     result.Add(Segment(tcp, 0, tcp.PayloadLength, 0, "настоящий"));
                     break;
                 }
+            }
+
+            if (result.Count == 0) error = "техника ничего не дала";
+
+            return result;
+        }
+
+        /// <summary>
+        /// Построить пакеты для UDP (техника `udplen`).
+        ///
+        /// Отдельный вход, потому что UDP — другой протокол: у него нет seq,
+        /// нет разрезания по позициям, зато есть поле длины, с которым играет
+        /// udplen. Смешивать с TCP в одном методе значило бы городить проверки
+        /// типов внутри горячего пути.
+        /// </summary>
+        public static List<Outgoing> BuildUdp(UdpPacket udp, TechniqueOptions options, out string error)
+        {
+            List<Outgoing> result = new List<Outgoing>();
+            error = "";
+
+            if (udp == null || options == null) { error = "нет пакета"; return result; }
+            if (options.Kind != Technique.UdpLen) { error = "техника не для UDP"; return result; }
+            if (!udp.HasPayload) { error = "нет данных"; return result; }
+
+            int length;
+
+            // 1) пакет с неверной длиной в заголовке: DPI разберёт его неправильно
+            byte[] wrong = udp.BuildWithLengthDelta(options.UdpLengthDelta, out length);
+
+            if (length > 0)
+                result.Add(new Outgoing
+                {
+                    Data = wrong,
+                    Length = length,
+                    Note = "длина " + options.UdpLengthDelta.ToString("+0;-0;0")
+                });
+
+            // 2) настоящий пакет следом: получатель отбросит первый и примет этот
+            byte[] real = udp.PayloadCopy();
+
+            if (real.Length > 0)
+            {
+                int realLength;
+                byte[] restored = udp.BuildWithLengthDelta(0, out realLength);
+
+                result.Add(new Outgoing { Data = restored, Length = realLength, Note = "настоящий" });
             }
 
             if (result.Count == 0) error = "техника ничего не дала";

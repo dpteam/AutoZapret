@@ -71,8 +71,14 @@ namespace AutoZapret.Zapret.Own
             if (!WinDivertInterop.IsAvailable())
                 return "WinDivert.dll не найден в " + Paths.EngineBinDir;
 
-            string filter = "outbound and tcp.DstPort == " + _options.Port +
-                            " and tcp.PayloadLength > 40";
+            // udplen работает с UDP/443 (QUIC), остальные техники — с TCP/443.
+            // Фильтр разный: у UDP нет payload-заголовков TCP, и WinDivert
+            // не поймёт `tcp.PayloadLength` для UDP-пакета.
+            bool udpMode = _options.Technique != null && _options.Technique.Kind == Technique.UdpLen;
+
+            string filter = udpMode
+                ? "outbound and udp.DstPort == " + _options.Port + " and udp.PayloadLength > 20"
+                : "outbound and tcp.DstPort == " + _options.Port + " and tcp.PayloadLength > 40";
 
             IntPtr handle;
 
@@ -190,6 +196,12 @@ namespace AutoZapret.Zapret.Own
         /// </summary>
         private bool Handle(IntPtr handle, IntPtr addressPtr, byte[] packet, int length, byte[] address)
         {
+            // UDP и TCP — разные ветки целиком: у них разная проверка «наше ли
+            // это», разные техники и разные поля. Одна общая функция с ветвлением
+            // внутри стала бы нечитаемой и опасной в горячем пути.
+            if (_options.Technique != null && _options.Technique.Kind == Technique.UdpLen)
+                return HandleUdp(handle, addressPtr, packet, length);
+
             TcpPacket tcp = TcpPacket.Parse(packet, length);
 
             if (tcp == null || !tcp.HasPayload) return false;
@@ -257,6 +269,78 @@ namespace AutoZapret.Zapret.Own
             }
 
             // Оригинал НЕ отправляем: он уже отправлен частями или после фейка.
+            return true;
+        }
+
+        /// <summary>
+        /// UDP-ветка: сейчас только `udplen` (QUIC).
+        ///
+        /// Проверка «наше ли это» проще, чем у TLS: QUIC Initial начинается с
+        /// длинного заголовка, где первый байт имеет старшие биты 0b11 (long
+        /// header form) и тип 0 (Initial). Проверять только порт мало — на 443
+        /// по UDP ходит и QUIC, и всякий мусор вроде игр.
+        /// </summary>
+        private bool HandleUdp(IntPtr handle, IntPtr addressPtr, byte[] packet, int length)
+        {
+            UdpPacket udp = UdpPacket.Parse(packet, length);
+
+            if (udp == null || !udp.HasPayload) return false;
+            if (udp.PayloadLength < 20) return false;
+
+            // long header form: 0b11xxxxxx, тип Initial = 0b1100xxxx
+            byte first = packet[udp.PayloadOffset];
+
+            if ((first & 0x80) == 0) return false;        // short header (1-RTT), не Initial
+            if ((first & 0x30) != 0) return false;        // не Initial
+
+            _stats.ClientHellos++;    // для UDP это QUIC Initial, счётчик общий
+
+            string error;
+            List<Desync.Outgoing> outgoing = Desync.BuildUdp(udp, _options.Technique, out error);
+
+            if (outgoing.Count == 0)
+            {
+                if (error.Length > 0 && _stats.Errors < 5)
+                    Log.Warn("OWN", "udplen не применился (" + error + "), пакет уходит как есть");
+
+                return false;
+            }
+
+            if (_options.DryRun)
+            {
+                Log.Info("OWN", "сделал бы udp " + udp.SrcPort + "->" + udp.DstPort + ": " +
+                                outgoing.Count + " пакет(ов), payload " + udp.PayloadLength);
+
+                foreach (Desync.Outgoing o in outgoing)
+                    Log.Info("OWN", "   " + o.Note + ", " + o.Length + " байт");
+
+                return false;
+            }
+
+            int sent = 0;
+
+            foreach (Desync.Outgoing o in outgoing)
+            {
+                if (!Send(handle, addressPtr, o.Data, o.Length))
+                {
+                    _stats.Errors++;
+                    if (sent == 0) return false;
+                    break;
+                }
+
+                sent++;
+            }
+
+            if (sent == 0) return false;
+
+            _stats.Applied++;
+
+            if (_stats.Applied <= 20 || _stats.Applied % 100 == 0)
+            {
+                Log.Info("OWN", "udplen " + udp.SrcPort + "->" + udp.DstPort + ": " +
+                                udp.PayloadLength + " байт → " + sent + " пакет(ов)");
+            }
+
             return true;
         }
 

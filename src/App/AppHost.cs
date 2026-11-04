@@ -2389,6 +2389,7 @@ namespace AutoZapret.App
             else if (kind == "syndata") technique.Kind = Zapret.Own.Technique.SynData;
             else if (kind == "oob") technique.Kind = Zapret.Own.Technique.Oob;
             else if (kind == "wsize") technique.Kind = Zapret.Own.Technique.WindowSize;
+            else if (kind == "udplen") technique.Kind = Zapret.Own.Technique.UdpLen;
             else technique.Kind = Zapret.Own.Technique.Split;
 
             technique.Position = Math.Max(1, Json.GetInt(msg, "position", 1));
