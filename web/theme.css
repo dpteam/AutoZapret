@@ -225,18 +225,59 @@ h1 {
     font-size: 30px;
     cursor: pointer;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 1px;
     transition: all .18s ease;
     font-family: inherit;
+    position: relative;
+}
+
+/* Подпись внутри кнопки: одно слово, которое видно без чтения статуса рядом.
+   «on/off» мелким текстом справа читают не все — кнопка должна говорить сама. */
+.power-caption {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .6px;
+    line-height: 1;
+    opacity: .8;
 }
 
 .power:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
 
 .power.on {
     border-color: var(--accent-green);
-    color: var(--accent-green);
-    box-shadow: 0 0 0 6px rgba(0, 214, 143, .08), 0 0 26px rgba(0, 214, 143, .22);
+    color: #052018;
+    background: radial-gradient(circle at 50% 35%, #4cf0b8, var(--accent-green) 62%, #00a86f);
+    box-shadow: 0 0 0 6px rgba(0, 214, 143, .10),
+                0 0 34px rgba(0, 214, 143, .40),
+                inset 0 1px 0 rgba(255, 255, 255, .35);
+    animation: power-glow 2.6s ease-in-out infinite;
+}
+
+.power.on .power-caption { opacity: .95; }
+
+/* Пульсирующее кольцо: включённый обход должен быть видно боковым зрением */
+.power.on::after {
+    content: "";
+    position: absolute;
+    inset: -8px;
+    border-radius: 50%;
+    border: 2px solid rgba(0, 214, 143, .35);
+    animation: power-ring 2.6s ease-out infinite;
+    pointer-events: none;
+}
+
+@keyframes power-glow {
+    0%, 100% { box-shadow: 0 0 0 6px rgba(0, 214, 143, .10), 0 0 30px rgba(0, 214, 143, .34); }
+    50%      { box-shadow: 0 0 0 10px rgba(0, 214, 143, .16), 0 0 46px rgba(0, 214, 143, .55); }
+}
+
+@keyframes power-ring {
+    0%   { transform: scale(.96); opacity: .55; }
+    70%  { transform: scale(1.16); opacity: 0; }
+    100% { transform: scale(1.16); opacity: 0; }
 }
 
 .power.busy {
@@ -244,6 +285,20 @@ h1 {
     color: var(--accent-yellow);
     animation: pulse 1.1s ease-in-out infinite;
 }
+
+.power.error {
+    border-color: #ff5c6c;
+    color: #ff5c6c;
+    box-shadow: 0 0 0 6px rgba(255, 92, 108, .10), 0 0 24px rgba(255, 92, 108, .28);
+}
+
+.power:disabled {
+    opacity: .45;
+    cursor: not-allowed;
+    animation: none;
+}
+
+.power:disabled::after { display: none; }
 
 @keyframes pulse {
     0%, 100% { opacity: 1; }

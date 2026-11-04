@@ -127,6 +127,9 @@ namespace AutoZapret.App
                 Section("источники hosts");
                 TestHostsSources();
 
+                Section("каталог списков");
+                TestListCatalog();
+
                 Section("пресеты по процессам");
                 TestProcessPresets();
 
@@ -3153,6 +3156,48 @@ namespace AutoZapret.App
             {
                 Check("источники hosts", false, ex.Message);
             }
+        }
+
+        /// <summary>
+        /// Каталог списков: все списки движка должны быть в нём, и у каждого —
+        /// существующий id и файл. Пропавший из каталога список означает, что
+        /// человек снова не сможет его открыть, а это и был баг.
+        /// </summary>
+        private static void TestListCatalog()
+        {
+            System.Collections.Generic.List<AutoZapret.Lists.ListKind> kinds =
+                AutoZapret.Lists.ListCatalog.All();
+
+            Check("каталог: списки есть", kinds.Count >= 7, kinds.Count + " шт.");
+
+            string[] required = { "general", "exclude", "general-default", "google", "ipset", "ipset-exclude" };
+
+            foreach (string id in required)
+            {
+                AutoZapret.Lists.ListKind kind = AutoZapret.Lists.ListCatalog.Find(id);
+
+                Check("каталог: " + id + " на месте", kind != null,
+                    kind == null ? "нет" : kind.File);
+            }
+
+            int badFile = 0, badTitle = 0, duplicated = 0;
+            System.Collections.Generic.HashSet<string> files =
+                new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (AutoZapret.Lists.ListKind kind in kinds)
+            {
+                if (string.IsNullOrEmpty(kind.File)) badFile++;
+                if (string.IsNullOrEmpty(kind.Title)) badTitle++;
+                if (!files.Add(kind.File)) duplicated++;
+            }
+
+            Check("каталог: у всех есть файл", badFile == 0, badFile + " без файла");
+            Check("каталог: у всех есть название", badTitle == 0, badTitle + " без названия");
+            Check("каталог: файлы не повторяются", duplicated == 0, duplicated + " повторов");
+
+            // неизвестный id не должен бросать: интерфейс спрашивает что попало
+            Check("каталог: неизвестный id", AutoZapret.Lists.ListCatalog.Find("нет-такого") == null, "ok");
+            Check("каталог: путь для null", AutoZapret.Lists.ListCatalog.PathOf(null) == "", "ok");
         }
 
         private static void TestSniffResult()

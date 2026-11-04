@@ -74,6 +74,7 @@
               <path d="M12 3.5v8" />
               <path d="M6.2 6.9a8 8 0 1 0 11.6 0" />
             </svg>
+            <span class="power-caption" id="power-caption">ВЫКЛ</span>
           </button>
           <div class="hero-text">
             <div class="hero-status">
@@ -453,6 +454,36 @@
             <button class="btn" id="btn-list-exclude-import">Из файла</button>
             <button class="btn" id="btn-list-exclude-reload">Обновить</button>
             <input type="file" id="file-list-exclude" accept=".txt,.lst,text/plain" style="display:none">
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Все списки движка</div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Какой список открыть</div>
+            <div class="row-hint" id="list-any-note">
+              Здесь лежат и ваши списки, и скачиваемые: основной, Google, исключения, IP-подсети
+            </div>
+          </div>
+          <select id="list-any-select" style="min-width:280px"></select>
+        </div>
+
+        <div class="row" style="align-items:flex-start;margin-top:8px">
+          <div style="flex:1">
+            <textarea id="list-any-input" class="list-input" spellcheck="false"
+                      placeholder="example.com&#10;!excluded.net&#10;10.0.0.0/8"></textarea>
+            <div class="row-hint" id="list-any-hint"></div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <button class="btn primary" id="btn-list-any-save">Сохранить</button>
+            <button class="btn" id="btn-list-any-check">Проверить</button>
+            <button class="btn" id="btn-list-any-dedupe">Убрать дубли</button>
+            <button class="btn" id="btn-list-any-import">Из файла</button>
+            <button class="btn" id="btn-list-any-reload">Обновить</button>
+            <input type="file" id="file-list-any" accept=".txt,.lst,text/plain" style="display:none">
           </div>
         </div>
       </div>

@@ -610,6 +610,8 @@ namespace AutoZapret.App
                 SendList(kind);
             });
 
+            bridge.Register("lists.catalog", msg => SendListCatalog());
+
             bridge.Register("lists.save", msg =>
             {
                 string kind = Json.GetString(msg, "kind", "general");
@@ -641,11 +643,14 @@ namespace AutoZapret.App
             bridge.Register("lists.stats", msg =>
             {
                 string text = Json.GetString(msg, "text", "");
+                string kind = Json.GetString(msg, "kind", "general");
+
                 HostlistManager.ListStats stats = HostlistManager.Stats(text);
+                ListKind info = ListCatalog.Find(kind);
 
                 bridge.Send(WebBridge.Msg("lists.stats",
-                    "kind", Json.GetString(msg, "kind", "general"),
-                    "stats", stats.Summary(),
+                    "kind", kind,
+                    "stats", stats.Summary() + (info != null && info.Cidr ? " · формат: адреса и CIDR" : " · формат: домены"),
                     "duplicates", (long)stats.Duplicates,
                     "invalid", ToObjects(stats.InvalidSample)));
             });
@@ -1424,81 +1429,195 @@ namespace AutoZapret.App
 
         // ---------------------------------------------------------------- lists
 
-        private static string PathForKind(string kind)
-        {
-            return kind == "exclude" ? HostlistManager.ExcludePath : HostlistManager.GeneralPath;
-        }
-
         private void SendList(string kind)
         {
-            string path = PathForKind(kind);
-            List<ListEntry> entries = HostlistManager.Read(path);
+            ListKind info = ListCatalog.Find(kind);
 
-            StringBuilder text = new StringBuilder();
-            int excluded = 0;
-
-            foreach (ListEntry entry in entries)
+            if (info == null)
             {
-                text.Append(entry.ToLine()).Append('\n');
-                if (!entry.Enabled) excluded++;
+                _form.Bridge.Send(WebBridge.Msg("lists", "kind", kind, "text", "",
+                    "count", 0L, "excluded", 0L, "invalid", 0L));
+                return;
             }
 
-            _form.Bridge.Send(WebBridge.Msg("lists",
-                "kind", kind,
-                "text", text.ToString(),
-                "count", (long)entries.Count,
-                "excluded", (long)excluded,
-                "invalid", 0L));
-        }
+            string path = ListCatalog.PathOf(info);
 
-        private void SaveList(string kind, string text)
-        {
-            List<string> values = HostlistManager.ParseInput(text);
-            List<ListEntry> entries = new List<ListEntry>();
-            int invalid = 0;
+            // Скачиваемые списки отдаём как есть, с комментариями: человек должен
+            // видеть файл целиком, а не то, что от него осталось после разбора.
+            // Личные списки — через разбор, чтобы «закомментированные» записи
+            // (с «#» в начале) остались видны как выключенные.
+            string text;
+            int count = 0, excluded = 0;
 
-            foreach (string value in values)
+            if (info.User)
             {
-                string v = value;
+                List<ListEntry> entries = HostlistManager.Read(path);
 
-                // «!domain» допустим только в списке целей
-                bool negated = v.StartsWith("!", StringComparison.Ordinal);
-                if (negated && kind != "general")
+                StringBuilder sb = new StringBuilder();
+                foreach (ListEntry entry in entries)
                 {
-                    invalid++;
-                    continue;
+                    sb.Append(entry.ToLine()).Append('\n');
+                    if (!entry.Enabled) excluded++;
                 }
 
-                if (!HostlistManager.IsValidDomain(v))
-                {
-                    Log.Warn("LIST", "некорректный домен пропущен: " + v);
-                    invalid++;
-                    continue;
-                }
+                text = sb.ToString();
+                count = entries.Count;
+            }
+            else
+            {
+                text = AtomicFile.ReadAllTextOrNull(path) ?? "";
 
-                entries.Add(new ListEntry { Value = v, Enabled = true });
+                foreach (string line in text.Split('\n'))
+                {
+                    string t = line.Trim();
+                    if (t.Length == 0) continue;
+                    if (t.StartsWith("#", StringComparison.Ordinal)) continue;
+                    count++;
+                }
             }
 
-            bool changed = HostlistManager.Write(PathForKind(kind), entries);
-
-            Log.Info("LIST", kind + ": сохранено " + entries.Count +
-                             (invalid > 0 ? ", отклонено " + invalid : "") +
-                             (changed ? "" : " (без изменений)"));
+            int lines;
+            long bytes;
+            ListCatalog.SizeOf(info, out lines, out bytes);
 
             _form.Bridge.Send(WebBridge.Msg("lists",
                 "kind", kind,
                 "text", text,
-                "count", (long)entries.Count,
-                "excluded", 0L,
-                "invalid", (long)invalid));
+                "count", (long)count,
+                "excluded", (long)excluded,
+                "invalid", 0L,
+                "title", info.Title,
+                "note", info.Note ?? "",
+                "user", info.User,
+                "cidr", info.Cidr,
+                "lines", (long)lines,
+                "bytes", bytes));
+        }
+
+        private void SaveList(string kind, string text)
+        {
+            ListKind info = ListCatalog.Find(kind);
+
+            if (info == null)
+            {
+                SendUpdateStatus(new UpdateResult { Ok = false, Message = "неизвестный список: " + kind });
+                return;
+            }
+
+            int invalid = 0;
+            int saved;
+
+            if (info.User)
+            {
+                List<string> values = HostlistManager.ParseInput(text);
+                List<ListEntry> entries = new List<ListEntry>();
+
+                foreach (string value in values)
+                {
+                    string v = value;
+
+                    // «!domain» допустим только в списке целей
+                    bool negated = v.StartsWith("!", StringComparison.Ordinal);
+                    if (negated && kind != "general")
+                    {
+                        invalid++;
+                        continue;
+                    }
+
+                    bool ok = info.Cidr ? HostlistManager.IsValidIpOrCidr(v) : HostlistManager.IsValidDomain(v);
+
+                    if (!ok)
+                    {
+                        Log.Warn("LIST", info.File + ": некорректное значение пропущено: " + v);
+                        invalid++;
+                        continue;
+                    }
+
+                    entries.Add(new ListEntry { Value = v, Enabled = true });
+                }
+
+                HostlistManager.Write(ListCatalog.PathOf(info), entries);
+                saved = entries.Count;
+            }
+            else
+            {
+                // Скачиваемый список правим как текст: комментарии и порядок
+                // сохраняются, а мусор отсекаем построчно.
+                List<string> lines = new List<string>();
+
+                foreach (string raw in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+                {
+                    string line = raw.TrimEnd();
+
+                    if (line.Trim().Length == 0) continue;
+                    if (line.TrimStart().StartsWith("#", StringComparison.Ordinal))
+                    {
+                        lines.Add(line);
+                        continue;
+                    }
+
+                    string value = line.Trim();
+
+                    // комментарий в конце строки отделяем: проверяем только значение
+                    int hash = value.IndexOf("  #", StringComparison.Ordinal);
+                    string check = hash > 0 ? value.Substring(0, hash).Trim() : value;
+
+                    bool ok = info.Cidr ? HostlistManager.IsValidIpOrCidr(check) : HostlistManager.IsValidDomain(check);
+
+                    if (!ok)
+                    {
+                        Log.Warn("LIST", info.File + ": некорректная строка пропущена: " + value);
+                        invalid++;
+                        continue;
+                    }
+
+                    lines.Add(value);
+                }
+
+                AtomicFile.WriteAllText(ListCatalog.PathOf(info), string.Join("\n", lines.ToArray()) + "\n");
+                saved = lines.Count;
+            }
+
+            Log.Info("LIST", info.File + ": сохранено " + saved +
+                             (invalid > 0 ? ", отклонено " + invalid : "") +
+                             (info.User ? "" : " (скачиваемый список, обновление его перезапишет)"));
+
+            SendList(kind);
 
             SendUpdateStatus(new UpdateResult
             {
                 Ok = true,
-                Message = changed
-                    ? "сохранено записей: " + entries.Count + (invalid > 0 ? ", отклонено: " + invalid : "")
-                    : "без изменений"
+                Message = "сохранено записей: " + saved + (invalid > 0 ? ", отклонено: " + invalid : "") +
+                          (info.User ? "" : " · при обновлении списков файл перезапишется")
             });
+        }
+
+        /// <summary>Список всех списков движка для переключателя в интерфейсе.</summary>
+        private void SendListCatalog()
+        {
+            List<object> items = new List<object>();
+
+            foreach (ListKind kind in ListCatalog.All())
+            {
+                int lines;
+                long bytes;
+                ListCatalog.SizeOf(kind, out lines, out bytes);
+
+                items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    { "id", kind.Id },
+                    { "title", kind.Title },
+                    { "note", kind.Note ?? "" },
+                    { "user", kind.User },
+                    { "cidr", kind.Cidr },
+                    { "file", kind.File },
+                    { "lines", (long)lines },
+                    { "bytes", bytes },
+                    { "exists", System.IO.File.Exists(ListCatalog.PathOf(kind)) }
+                });
+            }
+
+            _form.Bridge.Send(WebBridge.Msg("lists.catalog", "items", items));
         }
 
         private void SendUpdateStatus(UpdateResult result)

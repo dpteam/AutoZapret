@@ -153,6 +153,7 @@
         if (name === "lists") {
             send("lists.get", { kind: "general" });
             send("lists.get", { kind: "exclude" });
+            send("lists.catalog");
             send("fakes.scan");
             send("hosts.raw.get");
         }
@@ -376,7 +377,19 @@
         if (power) {
             power.classList.toggle("on", protection === "running");
             power.classList.toggle("busy", protection === "starting" || protection === "stopping");
+            power.classList.toggle("error", protection === "error");
             power.disabled = !s.engineReady;
+
+            // Подпись внутри кнопки: состояние видно и без чтения строки статуса
+            var caption = document.getElementById("power-caption");
+            if (caption) {
+                caption.textContent =
+                    protection === "running" ? "ВКЛ" :
+                    protection === "starting" ? "СТАРТ" :
+                    protection === "stopping" ? "СТОП" :
+                    protection === "error" ? "ОШИБКА" : "ВЫКЛ";
+            }
+
             var svg = power.querySelector("svg");
             if (svg) {
                 svg.innerHTML = protection === "running"
@@ -1341,6 +1354,7 @@
         bindList("exclude");
         bindListFile("general");
         bindListFile("exclude");
+        bindAnyList();
 
         bindAction("btn-update-ipset", "lists.updateIpset", "Обновляю…",
             "Список IP-подсетей будет скачан заново и заменён. Ваши домены не пострадают. Продолжить?");
@@ -1509,6 +1523,79 @@
         });
 
         list.style.display = "";
+    }
+
+    function bindAnyList() {
+        var sel = document.getElementById("list-any-select");
+        var input = document.getElementById("list-any-input");
+        if (!sel || !input) return;
+
+        sel.addEventListener("change", function () {
+            if (sel.value) send("lists.get", { kind: sel.value });
+        });
+
+        var save = document.getElementById("btn-list-any-save");
+        if (save) save.addEventListener("click", function () {
+            if (!sel.value) return;
+            save.disabled = true;
+            send("lists.save", { kind: sel.value, text: input.value });
+            setTimeout(function () { save.disabled = false; }, 500);
+        });
+
+        var reload = document.getElementById("btn-list-any-reload");
+        if (reload) reload.addEventListener("click", function () {
+            if (sel.value) send("lists.get", { kind: sel.value });
+        });
+
+        var check = document.getElementById("btn-list-any-check");
+        if (check) check.addEventListener("click", function () {
+            send("lists.stats", { kind: sel.value, text: input.value });
+        });
+
+        var dupes = document.getElementById("btn-list-any-dedupe");
+        if (dupes) dupes.addEventListener("click", function () {
+            send("lists.dedupe", { kind: sel.value, text: input.value });
+        });
+
+        var importBtn = document.getElementById("btn-list-any-import");
+        var file = document.getElementById("file-list-any");
+        if (importBtn && file) importBtn.addEventListener("click", function () { file.click(); });
+
+        if (file) file.addEventListener("change", function () {
+            var chosen = file.files && file.files[0];
+            if (chosen) importIntoTextarea(chosen, input, "any");
+            file.value = "";
+        });
+
+        input.addEventListener("dragover", function (e) { e.preventDefault(); input.classList.add("drop"); });
+        input.addEventListener("dragleave", function () { input.classList.remove("drop"); });
+        input.addEventListener("drop", function (e) {
+            e.preventDefault();
+            input.classList.remove("drop");
+            if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+            importIntoTextarea(e.dataTransfer.files[0], input, "any");
+        });
+    }
+
+    function renderListCatalog(msg) {
+        var sel = document.getElementById("list-any-select");
+        if (!sel) return;
+
+        var current = sel.value;
+        sel.innerHTML = "";
+
+        (msg.items || []).forEach(function (k) {
+            var opt = document.createElement("option");
+            opt.value = k.id;
+            opt.textContent = k.title + (k.lines ? " · " + k.lines + " стр." : " · пусто");
+            opt.title = k.note || "";
+            sel.appendChild(opt);
+        });
+
+        if (current) sel.value = current;
+        else if (sel.options.length > 0) sel.value = sel.options[0].value;
+
+        if (sel.value) send("lists.get", { kind: sel.value });
     }
 
     function bindList(kind) {
@@ -2243,6 +2330,10 @@
                 if (hint) { hint.textContent = msg.summary || ""; hint.className = "row-hint diag-ok"; }
                 break;
             }
+
+            case "lists.catalog":
+                renderListCatalog(msg);
+                break;
 
             case "auto":
                 renderAuto(msg);
