@@ -1295,7 +1295,9 @@
 
     function renderHosts(msg) {
         var apply = document.getElementById("btn-hosts-apply");
-        if (apply) { apply.disabled = false; apply.textContent = "Применить"; }
+        // то же имя, что в разметке: иначе после первой операции кнопка
+        // «Обновить» превращается обратно в «Применить»
+        if (apply) { apply.disabled = false; apply.textContent = t("Обновить"); }
 
         var check = document.getElementById("btn-hosts-check");
         if (check) { check.disabled = false; check.textContent = "Проверить"; }
