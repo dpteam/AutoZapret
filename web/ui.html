@@ -487,6 +487,30 @@
       </div>
 
       <div class="card">
+        <div class="card-title">Пресеты по процессам</div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Переключать под приложение</div>
+            <div class="row-hint">
+              Запущен Discord или игра — обход сам сменит стратегию и набор портов
+            </div>
+          </div>
+          <div class="switch" id="presets-toggle"></div>
+        </div>
+
+        <div id="presets-list" class="diag-list" style="margin-top:12px"></div>
+
+        <div class="row" style="margin-top:10px">
+          <div class="row-hint" id="presets-active">Активный пресет: нет</div>
+          <div style="display:flex;gap:8px">
+            <button class="btn" id="btn-presets-reload">Перечитать</button>
+            <button class="btn" id="btn-presets-file">Файл</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
         <div class="card-title">Telegram-прокси</div>
 
         <div class="row">

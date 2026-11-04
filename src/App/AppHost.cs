@@ -28,6 +28,7 @@ namespace AutoZapret.App
         private readonly TgProxyServer _proxy;
         private readonly AutoPilot _autoPilot;
         private readonly ScoreStore _scores;
+        private readonly ProcessPresetWatcher _presets;
         private bool _disposed;
         private bool _exiting;
 
@@ -43,12 +44,14 @@ namespace AutoZapret.App
             _scores = new ScoreStore();
             _scores.Load();
             _autoPilot = new AutoPilot(_zapret, _scores);
+            _presets = new ProcessPresetWatcher(_zapret);
 
             WireForm();
             WireTray();
             WireEngine();
             WireProxy();
             WireAutoPilot();
+            WirePresets();
             RegisterBridgeHandlers();
 
             _tray.SetState(TrayState.Off);
@@ -171,6 +174,23 @@ namespace AutoZapret.App
             };
         }
 
+        private void WirePresets()
+        {
+            // Пресет сработал — говорим об этом вслух. Молчаливая смена стратегии
+            // выглядит как случайный обрыв, и человек идёт искать проблему в провайдере.
+            _presets.Changed += preset =>
+            {
+                string text = preset == null
+                    ? "Пресет снят — вернул стратегию из настроек"
+                    : "Пресет «" + preset.Name + "» применён";
+
+                try { _tray.Notify(AppInfo.Name, text, ToolTipIcon.Info); } catch { }
+                PushPresets();
+            };
+
+            _presets.Start();
+        }
+
         private static string DescribeState(ProtectionState state)
         {
             switch (state)
@@ -192,6 +212,7 @@ namespace AutoZapret.App
                 Log.Info("UI", "страница загрузилась и подключилась к мосту");
                 PushState();
                 PushStrategies();
+                PushPresets();
             });
 
             bridge.Register("state", msg => PushState());
@@ -288,6 +309,54 @@ namespace AutoZapret.App
             {
                 int count = Json.GetInt(msg, "count", 5);
                 RunInBackground("test", () => RunTestUi(count));
+            });
+
+            // ---- пресеты по процессам
+            bridge.Register("presets.get", msg => PushPresets());
+
+            bridge.Register("presets.enable", msg =>
+            {
+                _settings.ProcessPresets = Json.GetBool(msg, "enabled", _settings.ProcessPresets);
+                _settings.Save();
+                Log.Info("PRSET", "пресеты по процессам: " +
+                                  (_settings.ProcessPresets ? "включены" : "выключены"));
+                PushPresets();
+            });
+
+            bridge.Register("presets.set", msg =>
+            {
+                string id = Json.GetString(msg, "id", "");
+                if (string.IsNullOrEmpty(id)) return;
+
+                bool enabled = Json.GetBool(msg, "enabled", true);
+
+                List<ProcessPreset> presets = _presets.Presets;
+                foreach (ProcessPreset preset in presets)
+                {
+                    if (!string.Equals(preset.Id, id, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    preset.Enabled = enabled;
+                    Log.Info("PRSET", "пресет «" + preset.Name + "» " + (enabled ? "включён" : "выключен"));
+                }
+
+                ProcessPresets.Save(presets, ProcessPresets.FilePath);
+                _presets.Reload();
+                PushPresets();
+            });
+
+            bridge.Register("presets.reload", msg =>
+            {
+                _presets.Reload();
+                Log.Info("PRSET", "пресеты перечитаны с диска");
+                PushPresets();
+            });
+
+            bridge.Register("presets.openFile", msg =>
+            {
+                if (!System.IO.File.Exists(ProcessPresets.FilePath))
+                    ProcessPresets.Save(_presets.Presets, ProcessPresets.FilePath);
+
+                OpenPath(ProcessPresets.FilePath);
             });
 
             // ---- списки
@@ -862,6 +931,37 @@ namespace AutoZapret.App
                 "folder", DiagnosticBundle.DefaultDirectory()));
         }
 
+        private void PushPresets()
+        {
+            List<object> items = new List<object>();
+            ProcessPreset active = _presets.Active;
+
+            foreach (ProcessPreset preset in _presets.Presets)
+            {
+                List<object> processes = new List<object>();
+                foreach (string p in preset.Processes) processes.Add(p);
+
+                items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    { "id", preset.Id },
+                    { "name", preset.Name },
+                    { "processes", processes },
+                    { "strategy", preset.Strategy ?? "" },
+                    { "gameFilter", preset.GameFilter ?? "" },
+                    { "enabled", preset.Enabled },
+                    { "changes", preset.ChangesSomething },
+                    { "active", active != null && string.Equals(active.Id, preset.Id, StringComparison.OrdinalIgnoreCase) },
+                    { "running", ProcessPresets.IsRunning(preset.Processes.Count > 0 ? preset.Processes[0] : "") }
+                });
+            }
+
+            _form.Bridge.Send(WebBridge.Msg("presets",
+                "items", items,
+                "enabled", _settings.ProcessPresets,
+                "active", active == null ? "" : active.Name,
+                "file", ProcessPresets.FilePath));
+        }
+
         private void RunSystemChecksUi()
         {
             List<CheckResult> results = SystemChecks.RunAll();
@@ -1278,6 +1378,7 @@ namespace AutoZapret.App
             _disposed = true;
 
             try { _autoPilot.Dispose(); } catch { }
+            try { _presets.Dispose(); } catch { }
             try { _zapret.Dispose(); } catch { }
             try { _proxy.Dispose(); } catch { }
             try { _tray.Dispose(); } catch { }

@@ -148,6 +148,16 @@ namespace AutoZapret.Zapret
 
         public string Start(string strategyId)
         {
+            return Start(strategyId, null);
+        }
+
+        /// <summary>
+        /// Запуск с явным фильтром портов. gameFilterOverride = null означает «взять из настроек».
+        /// Нужно пресетам по процессам: игра требует широкий диапазон, браузинг — нет,
+        /// и менять глобальные настройки ради этого было бы неправильно.
+        /// </summary>
+        public string Start(string strategyId, string gameFilterOverride)
+        {
             EnsureStrategies();
 
             Strategy strategy = _store.Find(strategyId);
@@ -164,7 +174,12 @@ namespace AutoZapret.Zapret
             }
 
             Settings settings = Settings.Current;
-            Dictionary<string, string> placeholders = _engine.BuildPlaceholders(settings.GameFilter);
+
+            string filter = string.IsNullOrEmpty(gameFilterOverride)
+                ? settings.GameFilter
+                : gameFilterOverride;
+
+            Dictionary<string, string> placeholders = _engine.BuildPlaceholders(filter);
 
             // Проверяем фейки ДО запуска: winws не проверяет содержимое .bin,
             // и битый файл превращается в «стратегия не работает» без объяснений.

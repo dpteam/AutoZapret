@@ -6,6 +6,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using AutoZapret.Core;
+using AutoZapret.Orchestrator;
 using AutoZapret.Payloads;
 using AutoZapret.Zapret;
 
@@ -400,6 +401,49 @@ namespace AutoZapret.Diag
             }
 
             return result;
+        }
+
+        /// <summary>--presets: показать пресеты по процессам и что совпадает сейчас.</summary>
+        public static int RunPresets(string[] args)
+        {
+            Console.WriteLine("== пресеты по процессам ==");
+            Console.WriteLine("файл: " + ProcessPresets.FilePath);
+            Console.WriteLine();
+
+            List<ProcessPreset> presets = ProcessPresets.Load(ProcessPresets.FilePath);
+            string source = "файл";
+
+            if (presets.Count == 0)
+            {
+                presets = ProcessPresets.Builtin();
+                source = "встроенный набор";
+            }
+
+            Console.WriteLine("источник: " + source + ", пресетов: " + presets.Count);
+            Console.WriteLine("включено глобально: " + (Settings.Current.ProcessPresets ? "да" : "нет"));
+            Console.WriteLine();
+
+            foreach (ProcessPreset preset in presets)
+            {
+                string mark = preset.Enabled ? "[on] " : "[off]";
+                Console.WriteLine(mark + " " + preset.Describe());
+
+                foreach (string process in preset.Processes)
+                    if (ProcessPresets.IsRunning(process))
+                        Console.WriteLine("       запущен: " + process);
+
+                if (!preset.ChangesSomething)
+                    Console.WriteLine("       ВНИМАНИЕ: пресет ничего не меняет");
+            }
+
+            Console.WriteLine();
+
+            ProcessPreset active = ProcessPresets.Match(presets, ProcessPresets.IsRunning);
+            Console.WriteLine(active == null
+                ? "сейчас не совпадает ни один пресет"
+                : "сейчас совпадает: " + active.Name);
+
+            return 0;
         }
 
         /// <summary>--diagnose: 12 проверок окружения (почему не работает).</summary>

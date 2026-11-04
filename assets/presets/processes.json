@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "note": "Пресеты по процессам: когда запущено приложение, включается подходящая стратегия и фильтр портов. Порядок = приоритет, первый совпавший побеждает. Пустая strategy или gameFilter означает 'не менять'.",
+  "presets": [
+    {
+      "id": "discord",
+      "name": "Discord",
+      "processes": [ "Discord", "DiscordPTB", "DiscordCanary" ],
+      "strategy": "flowseal.general-alt12",
+      "gameFilter": "",
+      "enabled": true
+    },
+    {
+      "id": "games",
+      "name": "Игры (CS2, Dota 2, Valorant)",
+      "processes": [ "cs2", "dota2", "VALORANT", "VALORANT-Win64-Shipping", "r5apex", "GTA5", "RainbowSix" ],
+      "strategy": "",
+      "gameFilter": "tcp+udp",
+      "enabled": true
+    }
+  ]
+}

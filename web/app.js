@@ -347,6 +347,19 @@
             send("auto.toggle", { enabled: next });
         });
 
+        var presets = document.getElementById("presets-toggle");
+        if (presets) presets.addEventListener("click", function () {
+            var next = !presets.classList.contains("on");
+            presets.classList.toggle("on", next);
+            send("presets.enable", { enabled: next });
+        });
+
+        var presetsReload = document.getElementById("btn-presets-reload");
+        if (presetsReload) presetsReload.addEventListener("click", function () { send("presets.reload"); });
+
+        var presetsFile = document.getElementById("btn-presets-file");
+        if (presetsFile) presetsFile.addEventListener("click", function () { send("presets.openFile"); });
+
         var im = document.getElementById("set-ipset-mode");
         if (im) im.addEventListener("change", function () { queueSave({ ipsetMode: im.value }); });
 
@@ -474,6 +487,54 @@
             '</div>' +
             '<div class="row-hint" style="word-break:break-all">' + msg.path + '</div>';
         box.style.display = "";
+    }
+
+    function renderPresets(msg) {
+        setSwitch("presets-toggle", !!msg.enabled);
+
+        var box = document.getElementById("presets-list");
+        if (!box) return;
+
+        var items = msg.items || [];
+        box.innerHTML = "";
+
+        if (items.length === 0) {
+            box.innerHTML = '<div class="row-hint">Пресетов нет — файл пуст или не найден</div>';
+            return;
+        }
+
+        items.forEach(function (p) {
+            var div = document.createElement("div");
+            div.className = "diag-row";
+
+            var state = p.active ? "активен" : (p.running ? "процесс запущен" : "");
+            var changes = [];
+            if (p.strategy) changes.push("стратегия " + p.strategy);
+            if (p.gameFilter) changes.push("порты " + p.gameFilter);
+
+            div.innerHTML =
+                '<span class="badge ' + (p.active ? "ok" : (p.enabled ? "" : "warn")) + '">' +
+                (p.active ? "ON" : (p.enabled ? "·" : "—")) + '</span>' +
+                '<span class="name">' + p.name + '</span>' +
+                '<span class="verdict">' + (changes.length ? changes.join(", ") : "ничего не меняет") +
+                (state ? " · " + state : "") + '</span>' +
+                '<span class="detail">' + (p.processes || []).join(", ") + '</span>';
+
+            div.style.cursor = "pointer";
+            div.title = p.enabled ? "Нажмите, чтобы выключить" : "Нажмите, чтобы включить";
+            div.addEventListener("click", function () {
+                send("presets.set", { id: p.id, enabled: !p.enabled });
+            });
+
+            box.appendChild(div);
+        });
+
+        var active = document.getElementById("presets-active");
+        if (active) {
+            active.textContent = msg.active
+                ? "Активный пресет: " + msg.active
+                : "Активный пресет: нет";
+        }
     }
 
     function renderSysResult(msg) {
@@ -1028,6 +1089,10 @@
 
             case "diag.bundle":
                 renderBundle(msg);
+                break;
+
+            case "presets":
+                renderPresets(msg);
                 break;
 
             case "diag.deep":

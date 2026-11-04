@@ -108,6 +108,9 @@ namespace AutoZapret.App
 
                 Section("счёт стратегий");
                 TestStrategyScoring();
+
+                Section("пресеты по процессам");
+                TestProcessPresets();
             }
             catch (Exception ex)
             {
@@ -1151,6 +1154,218 @@ namespace AutoZapret.App
 
                 try { System.IO.Directory.Delete(dir, true); } catch { }
             }
+        }
+
+        private static void TestProcessPresets()
+        {
+            // ---- загрузка из файла
+            List<AutoZapret.Orchestrator.ProcessPreset> fromFile =
+                AutoZapret.Orchestrator.ProcessPresets.Load(
+                    AutoZapret.Orchestrator.ProcessPresets.FilePath);
+
+            if (File.Exists(AutoZapret.Orchestrator.ProcessPresets.FilePath))
+            {
+                Check("пресеты загружены", fromFile.Count > 0, fromFile.Count + " штук");
+                Check("у пресетов есть процессы",
+                    fromFile.TrueForAll(p => p.Processes.Count > 0), "ok");
+                Check("у пресетов есть имена",
+                    fromFile.TrueForAll(p => p.Name.Length > 0), "ok");
+                Check("пресеты что-то меняют",
+                    fromFile.TrueForAll(p => p.ChangesSomething), "ok");
+                Check("фильтры пресетов валидны",
+                    fromFile.TrueForAll(p =>
+                        AutoZapret.Orchestrator.ProcessPresets.IsValidFilter(p.GameFilter)), "ok");
+            }
+            else
+            {
+                Skip("пресеты загружены", "файла нет");
+            }
+
+            List<AutoZapret.Orchestrator.ProcessPreset> builtin =
+                AutoZapret.Orchestrator.ProcessPresets.Builtin();
+
+            Check("встроенные пресеты непусты", builtin.Count >= 2, builtin.Count + " штук");
+            Check("встроенные пресеты что-то меняют",
+                builtin.TrueForAll(p => p.ChangesSomething), "ok");
+
+            // ---- Match: порядок = приоритет, первый совпавший
+            List<AutoZapret.Orchestrator.ProcessPreset> two = new List<AutoZapret.Orchestrator.ProcessPreset>
+            {
+                Preset("first", new[] { "aaa" }, "strat-A", "", true),
+                Preset("second", new[] { "bbb" }, "strat-B", "", true)
+            };
+
+            AutoZapret.Orchestrator.ProcessPreset hit = AutoZapret.Orchestrator.ProcessPresets.Match(
+                two, name => name == "bbb");
+
+            Check("Match: нашёл второй пресет", hit != null && hit.Id == "second",
+                hit == null ? "null" : hit.Id);
+
+            hit = AutoZapret.Orchestrator.ProcessPresets.Match(two, name => true);
+            Check("Match: приоритет у первого", hit != null && hit.Id == "first",
+                hit == null ? "null" : hit.Id);
+
+            hit = AutoZapret.Orchestrator.ProcessPresets.Match(two, name => false);
+            Check("Match: ничего не запущено -> null", hit == null, hit == null ? "null" : hit.Id);
+
+            // ---- выключенный пресет игнорируется
+            List<AutoZapret.Orchestrator.ProcessPreset> withDisabled =
+                new List<AutoZapret.Orchestrator.ProcessPreset>
+                {
+                    Preset("off", new[] { "aaa" }, "strat-A", "", false),
+                    Preset("on", new[] { "aaa" }, "strat-B", "", true)
+                };
+
+            hit = AutoZapret.Orchestrator.ProcessPresets.Match(withDisabled, name => true);
+            Check("Match: выключенный пресет пропущен", hit != null && hit.Id == "on",
+                hit == null ? "null" : hit.Id);
+
+            // ---- пресет-пустышка игнорируется: он ничего не делает
+            List<AutoZapret.Orchestrator.ProcessPreset> empty =
+                new List<AutoZapret.Orchestrator.ProcessPreset>
+                {
+                    Preset("empty", new[] { "aaa" }, "", "", true),
+                    Preset("real", new[] { "aaa" }, "strat-B", "", true)
+                };
+
+            hit = AutoZapret.Orchestrator.ProcessPresets.Match(empty, name => true);
+            Check("Match: пустышка пропущена", hit != null && hit.Id == "real",
+                hit == null ? "null" : hit.Id);
+
+            // ---- валидация фильтров
+            Check("фильтр off допустим",
+                AutoZapret.Orchestrator.ProcessPresets.IsValidFilter("off"), "ok");
+            Check("фильтр tcp+udp допустим",
+                AutoZapret.Orchestrator.ProcessPresets.IsValidFilter("tcp+udp"), "ok");
+            Check("фильтр пустой допустим (не менять)",
+                AutoZapret.Orchestrator.ProcessPresets.IsValidFilter(""), "ok");
+            Check("мусор в фильтре отклонён",
+                !AutoZapret.Orchestrator.ProcessPresets.IsValidFilter("everything"), "ok");
+
+            // ---- round-trip сохранения
+            string dir = System.IO.Path.Combine(Paths.DataDir, "selftest-presets");
+
+            try
+            {
+                Directory.CreateDirectory(dir);
+                string file = System.IO.Path.Combine(dir, "processes.json");
+
+                List<AutoZapret.Orchestrator.ProcessPreset> original =
+                    new List<AutoZapret.Orchestrator.ProcessPreset>
+                    {
+                        Preset("discord", new[] { "Discord", "DiscordPTB" }, "flowseal.general-alt12", "", true),
+                        Preset("games", new[] { "cs2", "dota2" }, "", "tcp+udp", false)
+                    };
+
+                bool saved = AutoZapret.Orchestrator.ProcessPresets.Save(original, file);
+                Check("пресеты сохранены", saved, file);
+
+                List<AutoZapret.Orchestrator.ProcessPreset> reloaded =
+                    AutoZapret.Orchestrator.ProcessPresets.Load(file);
+
+                Check("round-trip: столько же пресетов",
+                    reloaded.Count == original.Count, reloaded.Count + " из " + original.Count);
+                Check("round-trip: выключенный остался выключенным",
+                    reloaded.Count == 2 && !reloaded[1].Enabled,
+                    reloaded.Count == 2 ? reloaded[1].Enabled.ToString() : "нет данных");
+                Check("round-trip: процессы сохранились",
+                    reloaded.Count == 2 && reloaded[0].Processes.Count == 2,
+                    reloaded.Count == 2 ? reloaded[0].Processes.Count.ToString() : "нет данных");
+                Check("round-trip: фильтр сохранился",
+                    reloaded.Count == 2 && reloaded[1].GameFilter == "tcp+udp",
+                    reloaded.Count == 2 ? reloaded[1].GameFilter : "нет данных");
+
+                // ---- Watcher.Tick: главные сценарии
+                TestPresetWatcher(two);
+            }
+            finally
+            {
+                try { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+                catch { }
+            }
+        }
+
+        private static void TestPresetWatcher(List<AutoZapret.Orchestrator.ProcessPreset> presets)
+        {
+            AutoZapret.Orchestrator.ProcessPresetWatcher watcher =
+                new AutoZapret.Orchestrator.ProcessPresetWatcher(null);
+
+            List<string> running = new List<string>();
+            watcher.ProcessChecker = name => running.Contains(name);
+            watcher.Presets = presets;
+            watcher.CooldownSeconds = 0;
+
+            // ---- обход выключен: ничего не применяем, но запоминаем пресет
+            running.Add("aaa");
+            AutoZapret.Orchestrator.PresetDecision decision =
+                watcher.Tick(false, "", "default", "off");
+
+            Check("Tick: при выключенном обходе не применяет", !decision.Apply, decision.Reason);
+            Check("Tick: пресет запомнен как активный",
+                watcher.Active != null && watcher.Active.Id == "first",
+                watcher.Active == null ? "null" : watcher.Active.Id);
+
+            // ---- тот же пресет второй раз: не дёргаем winws
+            decision = watcher.Tick(false, "", "default", "off");
+            Check("Tick: повтор не применяет", !decision.Apply, decision.Reason);
+
+            // ---- обход включён, но стратегия уже нужная -> применять нечего
+            watcher = new AutoZapret.Orchestrator.ProcessPresetWatcher(null);
+            watcher.ProcessChecker = name => running.Contains(name);
+            watcher.Presets = presets;
+            watcher.CooldownSeconds = 0;
+
+            decision = watcher.Tick(true, "strat-A", "strat-A", "off");
+            Check("Tick: параметры совпали -> без перезапуска", !decision.Apply, decision.Reason);
+
+            // ---- пресет исчез: ОБЯЗАН вернуть настройки. Это был баг.
+            watcher = new AutoZapret.Orchestrator.ProcessPresetWatcher(null);
+            watcher.ProcessChecker = name => running.Contains(name);
+            watcher.Presets = presets;
+            watcher.CooldownSeconds = 0;
+
+            decision = watcher.Tick(true, "default", "default", "off");
+            Check("Tick: пресет применился", decision.Apply,
+                decision.Preset == null ? "нет пресета" : decision.Preset.Id);
+
+            running.Clear();
+            decision = watcher.Tick(true, "strat-A", "default", "off");
+            Check("Tick: пресет исчез -> возврат к настройкам", decision.Apply, decision.Reason);
+            Check("Tick: активно «нет пресета»", watcher.Active == null,
+                watcher.Active == null ? "null" : watcher.Active.Id);
+
+            // ---- кулдаун блокирует переключение
+            AutoZapret.Orchestrator.ProcessPresetWatcher slow =
+                new AutoZapret.Orchestrator.ProcessPresetWatcher(null);
+            slow.ProcessChecker = name => running.Contains(name);
+            slow.Presets = presets;
+            slow.CooldownSeconds = 60;
+
+            running.Add("aaa");
+            decision = slow.Tick(true, "default", "default", "off");
+            Check("Tick: первое переключение проходит", decision.Apply, decision.Reason);
+
+            running.Clear();
+            running.Add("bbb");
+            decision = slow.Tick(true, "strat-A", "default", "off");
+            Check("Tick: кулдаун блокирует второе", !decision.Apply, decision.Reason);
+        }
+
+        private static AutoZapret.Orchestrator.ProcessPreset Preset(
+            string id, string[] processes, string strategy, string filter, bool enabled)
+        {
+            AutoZapret.Orchestrator.ProcessPreset preset =
+                new AutoZapret.Orchestrator.ProcessPreset
+                {
+                    Id = id,
+                    Name = id,
+                    Strategy = strategy,
+                    GameFilter = filter,
+                    Enabled = enabled
+                };
+
+            preset.Processes.AddRange(processes);
+            return preset;
         }
 
         private static void TestStrategyScoring()

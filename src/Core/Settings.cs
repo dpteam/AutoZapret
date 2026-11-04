@@ -31,6 +31,7 @@ namespace AutoZapret.Core
         public bool AutoStart = true;
         public bool ServiceMode = false;           // запускать как службу, а не как процесс
         public bool AutoPilot = false;             // автоподбор стратегии в фоне
+        public bool ProcessPresets = false;        // переключать стратегию под запущенное приложение
 
         // ---- proxy
         public bool ProxyEnabled = false;
@@ -134,6 +135,7 @@ namespace AutoZapret.Core
                 s.AutoStart = Json.GetBool(zapret, "autoStart", s.AutoStart);
                 s.ServiceMode = Json.GetBool(zapret, "serviceMode", s.ServiceMode);
                 s.AutoPilot = Json.GetBool(zapret, "autoPilot", s.AutoPilot);
+                s.ProcessPresets = Json.GetBool(zapret, "processPresets", s.ProcessPresets);
             }
 
             Dictionary<string, object> proxy = Json.GetObject(map, "proxy");
@@ -200,7 +202,8 @@ namespace AutoZapret.Core
                 "ipsetMode", IpsetMode,
                 "autoStart", AutoStart,
                 "serviceMode", ServiceMode,
-                "autoPilot", AutoPilot);
+                "autoPilot", AutoPilot,
+                "processPresets", ProcessPresets);
 
             root["proxy"] = Map(
                 "enabled", ProxyEnabled,
