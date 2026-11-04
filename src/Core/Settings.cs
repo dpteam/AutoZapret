@@ -30,6 +30,7 @@ namespace AutoZapret.Core
         public string IpsetMode = "loaded";        // off | loaded | any
         public bool AutoStart = true;
         public bool ServiceMode = false;           // запускать как службу, а не как процесс
+        public bool AutoPilot = false;             // автоподбор стратегии в фоне
 
         // ---- proxy
         public bool ProxyEnabled = false;
@@ -132,6 +133,7 @@ namespace AutoZapret.Core
                 s.IpsetMode = Json.GetString(zapret, "ipsetMode", s.IpsetMode);
                 s.AutoStart = Json.GetBool(zapret, "autoStart", s.AutoStart);
                 s.ServiceMode = Json.GetBool(zapret, "serviceMode", s.ServiceMode);
+                s.AutoPilot = Json.GetBool(zapret, "autoPilot", s.AutoPilot);
             }
 
             Dictionary<string, object> proxy = Json.GetObject(map, "proxy");
@@ -197,7 +199,8 @@ namespace AutoZapret.Core
                 "gameFilter", GameFilter,
                 "ipsetMode", IpsetMode,
                 "autoStart", AutoStart,
-                "serviceMode", ServiceMode);
+                "serviceMode", ServiceMode,
+                "autoPilot", AutoPilot);
 
             root["proxy"] = Map(
                 "enabled", ProxyEnabled,

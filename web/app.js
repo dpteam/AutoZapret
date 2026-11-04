@@ -340,6 +340,13 @@
             send("engine.select", { kind: eng.value });
         });
 
+        var auto = document.getElementById("auto-toggle");
+        if (auto) auto.addEventListener("click", function () {
+            var next = !auto.classList.contains("on");
+            auto.classList.toggle("on", next);
+            send("auto.toggle", { enabled: next });
+        });
+
         var im = document.getElementById("set-ipset-mode");
         if (im) im.addEventListener("change", function () { queueSave({ ipsetMode: im.value }); });
 
@@ -790,6 +797,36 @@
         }
     }
 
+    function renderAuto(msg) {
+        setSwitch("auto-toggle", !!msg.enabled);
+
+        var hint = document.getElementById("auto-hint");
+        if (hint) {
+            if (!msg.enabled) {
+                hint.textContent = "Сам проверяет обход и переключает стратегию при поломке";
+                hint.className = "row-hint";
+            } else if (!msg.protectionRunning) {
+                hint.textContent = "Включите обход — автопилот работает только с запущенным обходом";
+                hint.className = "row-hint diag-warn";
+            } else {
+                hint.textContent = "Автопилот включён · сеть " + (msg.network || "?");
+                hint.className = "row-hint diag-ok";
+            }
+        }
+
+        var box = document.getElementById("auto-status");
+        if (!box) return;
+
+        var parts = [];
+        if (msg.state) parts.push(msg.state);
+        if (msg.message) parts.push(msg.message);
+        if (msg.nextCheck) parts.push("следующая проверка: " + msg.nextCheck);
+
+        box.textContent = parts.join(" · ");
+        box.className = "row-hint " + (msg.state === "Failed" ? "diag-bad" : "");
+        box.style.display = parts.length > 0 ? "" : "none";
+    }
+
     function initButtons() {
         var power = document.getElementById("power");
         if (power) power.addEventListener("click", function () { send("toggle"); });
@@ -856,6 +893,10 @@
 
             case "hosts":
                 renderHosts(msg);
+                break;
+
+            case "auto":
+                renderAuto(msg);
                 break;
 
             case "lists.ipset":

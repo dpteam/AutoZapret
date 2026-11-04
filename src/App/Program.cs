@@ -38,6 +38,9 @@ namespace AutoZapret.App
             if (HasFlag(args, "--test-proxy")) return Diag.DiagCommand.RunTestProxy(args);
             if (HasFlag(args, "--check-updates")) return Diag.DiagCommand.RunCheckUpdates(args);
             if (HasFlag(args, "--hosts")) return Diag.DiagCommand.RunHosts(args);
+            if (HasFlag(args, "--scores")) return Diag.DiagCommand.RunScores(args);
+            if (HasFlag(args, "--auto-once")) return Diag.DiagCommand.RunAutoOnce(args);
+            if (HasFlag(args, "--scores-reset")) return Diag.DiagCommand.RunScoresReset(args);
             if (HasFlag(args, "--hosts-restore")) return Diag.DiagCommand.RunHostsRestore(args);
             if (HasFlag(args, "--update-engine")) return Diag.DiagCommand.RunUpdateEngine(args);
             if (HasFlag(args, "--deep")) return Diag.DiagCommand.RunDeep(args);

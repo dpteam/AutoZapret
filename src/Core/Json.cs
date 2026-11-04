@@ -320,8 +320,7 @@ namespace AutoZapret.Core
             return def;
         }
 
-        public static long GetLong(Dictionary<string, object> map, string key, long def)
-        {
+        public static long GetLong(Dictionary<string, object> map, string key, long def)        {
             if (map == null) return def;
             object v;
             if (!map.TryGetValue(key, out v) || v == null) return def;
@@ -334,8 +333,23 @@ namespace AutoZapret.Core
             return def;
         }
 
-        public static Dictionary<string, object> GetObject(Dictionary<string, object> map, string key)
+        public static double GetDouble(Dictionary<string, object> map, string key, double def)
         {
+            if (map == null) return def;
+            object v;
+            if (!map.TryGetValue(key, out v) || v == null) return def;
+            if (v is double) return (double)v;
+            if (v is long) return (long)v;
+
+            double parsed;
+            if (double.TryParse(Convert.ToString(v, CultureInfo.InvariantCulture),
+                                NumberStyles.Float, CultureInfo.InvariantCulture, out parsed))
+                return parsed;
+
+            return def;
+        }
+
+        public static Dictionary<string, object> GetObject(Dictionary<string, object> map, string key)        {
             if (map == null) return null;
             object v;
             return map.TryGetValue(key, out v) ? v as Dictionary<string, object> : null;

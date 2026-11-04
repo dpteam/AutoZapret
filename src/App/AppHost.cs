@@ -8,6 +8,7 @@ using System.Windows.Forms;
 using AutoZapret.Core;
 using AutoZapret.Diag;
 using AutoZapret.Lists;
+using AutoZapret.Orchestrator;
 using AutoZapret.Payloads;
 using AutoZapret.Proxy;
 using AutoZapret.Update;
@@ -25,6 +26,8 @@ namespace AutoZapret.App
         private readonly Settings _settings;
         private readonly ZapretService _zapret;
         private readonly TgProxyServer _proxy;
+        private readonly AutoPilot _autoPilot;
+        private readonly ScoreStore _scores;
         private bool _disposed;
         private bool _exiting;
 
@@ -37,10 +40,15 @@ namespace AutoZapret.App
             _zapret = new ZapretService();
             _proxy = new TgProxyServer();
 
+            _scores = new ScoreStore();
+            _scores.Load();
+            _autoPilot = new AutoPilot(_zapret, _scores);
+
             WireForm();
             WireTray();
             WireEngine();
             WireProxy();
+            WireAutoPilot();
             RegisterBridgeHandlers();
 
             _tray.SetState(TrayState.Off);
@@ -117,7 +125,19 @@ namespace AutoZapret.App
                 if (state == ProtectionState.Error && !string.IsNullOrEmpty(error))
                     _tray.Notify(AppInfo.Name, error, ToolTipIcon.Error);
 
+                // автопилот живёт только вместе с запущенным обходом
+                if (state == ProtectionState.Running)
+                {
+                    if (_settings.AutoPilot && !_autoPilot.IsRunning)
+                        _autoPilot.Start(_settings.StrategyId);
+                }
+                else if (state == ProtectionState.Stopped || state == ProtectionState.Error)
+                {
+                    if (_autoPilot.IsRunning) _autoPilot.Stop();
+                }
+
                 PushState();
+                SendAutoState();
             };
         }
 
@@ -129,6 +149,25 @@ namespace AutoZapret.App
                     _tray.Notify(AppInfo.Name, "Прокси: " + error, ToolTipIcon.Error);
 
                 SendProxyState();
+            };
+        }
+
+        private void WireAutoPilot()
+        {
+            _autoPilot.StatusChanged += status => SendAutoState();
+
+            // автопилот сменил стратегию — сохраняем, иначе после перезапуска вернётся старая
+            _autoPilot.StrategySwitched += id =>
+            {
+                _settings.StrategyId = id;
+                try { _settings.Save(); } catch { }
+
+                Log.Info("AUTO", "стратегия переключена автопилотом: " + id);
+                _tray.Notify(AppInfo.Name, "Автопилот выбрал другую стратегию", ToolTipIcon.Info);
+
+                PushState();
+                PushStrategies();
+                SendAutoState();
             };
         }
 
@@ -288,6 +327,36 @@ namespace AutoZapret.App
             });
             bridge.Register("hosts.check", msg => RunInBackground("hosts-check", CheckHostsUi));
             bridge.Register("hosts.restore", msg => RunInBackground("hosts-restore", RestoreHostsUi));
+
+            // ---- автопилот
+            bridge.Register("auto.state", msg => SendAutoState());
+            bridge.Register("auto.toggle", msg =>
+            {
+                bool enabled = Json.GetBool(msg, "enabled", false);
+
+                if (enabled)
+                {
+                    if (_zapret.State != ProtectionState.Running)
+                    {
+                        _tray.Notify(AppInfo.Name,
+                            "Сначала включите обход — автопилот работает с запущенным обходом",
+                            ToolTipIcon.Warning);
+                        SendAutoState();
+                        return;
+                    }
+
+                    _autoPilot.Start(_settings.StrategyId);
+                    _settings.AutoPilot = true;
+                }
+                else
+                {
+                    _autoPilot.Stop();
+                    _settings.AutoPilot = false;
+                }
+
+                _settings.Save();
+                SendAutoState();
+            });
 
             // ---- прокси
             bridge.Register("proxy.state", msg => SendProxyState());
@@ -512,8 +581,32 @@ namespace AutoZapret.App
                 error ?? "hosts восстановлен из резервной копии", null);
         }
 
-        private void SendHosts(bool ok, bool warn, string message, HostsAnalysis analysis)
+        // ---------------------------------------------------------------- autopilot
+
+        private void SendAutoState()
         {
+            AutoPilotStatus status = _autoPilot.Status;
+
+            string stateName = status.State.ToString();
+            string next = "";
+
+            if (_autoPilot.IsRunning && status.NextCheck > DateTime.Now)
+                next = status.NextCheck.ToString("HH:mm");
+
+            _form.Bridge.Send(WebBridge.Msg("auto",
+                "enabled", _autoPilot.IsRunning,
+                "protectionRunning", _zapret.State == ProtectionState.Running,
+                "state", stateName,
+                "message", status.Message ?? "",
+                "network", status.Network ?? "",
+                "strategy", status.CurrentStrategy ?? "",
+                "score", (long)status.LastScore,
+                "failures", (long)status.ConsecutiveFailures,
+                "probes", (long)status.ProbesDone,
+                "nextCheck", next));
+        }
+
+        private void SendHosts(bool ok, bool warn, string message, HostsAnalysis analysis)        {
             List<object> conflicts = new List<object>();
 
             if (analysis != null && analysis.Conflicts.Count > 0)
@@ -929,6 +1022,7 @@ namespace AutoZapret.App
                 "strategyId", _settings.StrategyId,
                 "gameFilter", _settings.GameFilter,
                 "ipsetMode", _settings.IpsetMode,
+                "autoPilot", _settings.AutoPilot,
                 "proxyEnabled", _settings.ProxyEnabled,
                 "proxyHost", _settings.ProxyHost,
                 "proxyPort", (long)_settings.ProxyPort,
@@ -1003,6 +1097,7 @@ namespace AutoZapret.App
             Log.Info("APP", "выход по запросу");
 
             // сначала гасим winws, потом всё остальное
+            try { _autoPilot.Dispose(); } catch (Exception ex) { Log.Exception("APP", "остановка автопилота", ex); }
             try { _zapret.Dispose(); } catch (Exception ex) { Log.Exception("APP", "остановка движка", ex); }
             try { _proxy.Dispose(); } catch (Exception ex) { Log.Exception("APP", "остановка прокси", ex); }
 
@@ -1034,6 +1129,7 @@ namespace AutoZapret.App
             if (_disposed) return;
             _disposed = true;
 
+            try { _autoPilot.Dispose(); } catch { }
             try { _zapret.Dispose(); } catch { }
             try { _proxy.Dispose(); } catch { }
             try { _tray.Dispose(); } catch { }

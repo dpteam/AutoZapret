@@ -227,6 +227,125 @@ namespace AutoZapret.Diag
         }
 
         /// <summary>
+        /// --auto-once [strategyId]: один цикл автопилота (запустить обход, проверить,
+        /// при провале переключиться). Нужны права администратора.
+        /// </summary>
+        public static int RunAutoOnce(string[] args)
+        {
+            string strategyId = "flowseal.general-alt12";
+
+            for (int i = 0; i < args.Length; i++)
+                if (string.Equals(args[i], "--auto-once", StringComparison.OrdinalIgnoreCase) &&
+                    i + 1 < args.Length && !args[i + 1].StartsWith("--"))
+                    strategyId = args[i + 1];
+
+            Console.WriteLine("== один цикл автопилота ==");
+            Console.WriteLine("стратегия: " + strategyId);
+
+            using (ZapretService svc = new ZapretService())
+            {
+                AutoZapret.Orchestrator.ScoreStore store = new AutoZapret.Orchestrator.ScoreStore();
+                store.Load();
+                svc.EnsureStrategies();
+
+                string error = svc.Start(strategyId);
+                if (error != null)
+                {
+                    Console.WriteLine("не удалось запустить обход: " + error);
+                    return 1;
+                }
+
+                Console.WriteLine("обход запущен, ждём 5 с…");
+                System.Threading.Thread.Sleep(5000);
+
+                using (Orchestrator.AutoPilot pilot = new Orchestrator.AutoPilot(svc, store))
+                {
+                    pilot.StatusChanged += status =>
+                        Console.WriteLine("  [" + status.State + "] " + status.Message);
+
+                    pilot.RunOnce(strategyId);
+                }
+
+                Orchestrator.StrategyStats stats = store.Get(strategyId, Diag.NetworkFingerprint.Hash());
+
+                Console.WriteLine();
+                Console.WriteLine("  проб:       " + stats.Probes);
+                Console.WriteLine("  успехов:    " + stats.Successes);
+                Console.WriteLine("  балл:       " + stats.LastScore);
+                Console.WriteLine("  неудач:     " + stats.ConsecutiveFailures);
+                Console.WriteLine("  сеть:       " + stats.Network);
+
+                store.Save();
+                svc.Stop();
+                return 0;
+            }
+        }
+
+        /// <summary>--scores: накопленная статистика стратегий по текущей сети.</summary>
+        public static int RunScores(string[] args)
+        {
+            string network = Diag.NetworkFingerprint.Hash();
+
+            Orchestrator.ScoreStore store = new Orchestrator.ScoreStore();
+            store.Load();
+
+            Console.WriteLine("== статистика автопилота ==");
+            Console.WriteLine("сеть: " + network);
+            Console.WriteLine();
+
+            List<Orchestrator.StrategyStats> forNetwork = store.ForNetwork(network);
+            if (forNetwork.Count == 0)
+            {
+                Console.WriteLine("для этой сети данных ещё нет — включите автопилот и дайте ему поработать");
+                return 0;
+            }
+
+            forNetwork.Sort((a, b) =>
+            {
+                double wa = Orchestrator.Bandit.WilsonLowerBound(a.Successes, a.Probes);
+                double wb = Orchestrator.Bandit.WilsonLowerBound(b.Successes, b.Probes);
+                return wb.CompareTo(wa);
+            });
+
+            Console.WriteLine("  {0,-32} {1,7} {2,7} {3,6} {4}", "стратегия", "пробы", "успехи", "вера", "последний балл");
+            foreach (Orchestrator.StrategyStats s in forNetwork)
+            {
+                double wilson = Orchestrator.Bandit.WilsonLowerBound(s.Successes, s.Probes);
+                Console.WriteLine("  {0,-32} {1,7} {2,7} {3,6} {4}{5}",
+                    s.StrategyId,
+                    s.Probes,
+                    s.Successes,
+                    wilson.ToString("0.00", CultureInfo.InvariantCulture),
+                    s.LastScore,
+                    s.ConsecutiveFailures > 0 ? "  (неудач подряд: " + s.ConsecutiveFailures + ")" : "");
+            }
+
+            int total = store.All().Count;
+            Console.WriteLine();
+            Console.WriteLine("всего записей (по всем сетям): " + total);
+            return 0;
+        }
+
+        /// <summary>--scores-reset: очистить статистику (все сети или текущую).</summary>
+        public static int RunScoresReset(string[] args)
+        {
+            Orchestrator.ScoreStore store = new Orchestrator.ScoreStore();
+            store.Load();
+
+            bool all = HasFlagLocal(args, "--all");
+            string network = all ? null : Diag.NetworkFingerprint.Hash();
+
+            store.Clear(network);
+            store.Save();
+
+            Console.WriteLine(all
+                ? "статистика очищена для всех сетей"
+                : "статистика очищена для сети " + network);
+
+            return 0;
+        }
+
+        /// <summary>
         /// --hosts [--verify] [--apply] [--check]
         /// Собрать hosts из источников, показать конфликты/дубликаты, применить.
         /// </summary>

@@ -93,6 +93,9 @@ namespace AutoZapret.App
 
                 Section("обновления");
                 TestUpdates();
+
+                Section("автопилот");
+                TestAutoPilot();
             }
             catch (Exception ex)
             {
@@ -991,6 +994,137 @@ namespace AutoZapret.App
             for (int i = 0; i < a.Length; i++)
                 if (a[i] != b[i]) return false;
             return true;
+        }
+
+        private static void TestAutoPilot()
+        {
+            // ---- Beta-сэмплер: значения в [0,1], распределение вменяемое
+            AutoZapret.Orchestrator.Bandit bandit = new AutoZapret.Orchestrator.Bandit(42);
+
+            double sum = 0;
+            int outOfRange = 0;
+            for (int i = 0; i < 500; i++)
+            {
+                double v = bandit.Sample(2, 2);
+                if (v < 0 || v > 1 || double.IsNaN(v)) outOfRange++;
+                sum += v;
+            }
+            Check("Beta: значения в [0,1]", outOfRange == 0, outOfRange + " вне диапазона");
+
+            double mean = sum / 500;
+            Check("Beta(2,2): среднее ≈ 0.5", Math.Abs(mean - 0.5) < 0.06,
+                mean.ToString("0.000", CultureInfo.InvariantCulture));
+
+            // Beta(8,2) должно быть заметно выше 0.5
+            double sum2 = 0;
+            for (int i = 0; i < 500; i++) sum2 += bandit.Sample(8, 2);
+            double mean2 = sum2 / 500;
+            Check("Beta(8,2): среднее ≈ 0.8", mean2 > 0.7,
+                mean2.ToString("0.000", CultureInfo.InvariantCulture));
+
+            // ---- Wilson: одна удача не должна обгонять десять из десяти
+            double oneOfOne = AutoZapret.Orchestrator.Bandit.WilsonLowerBound(1, 1);
+            double tenOfTen = AutoZapret.Orchestrator.Bandit.WilsonLowerBound(10, 10);
+            Check("Wilson: 10/10 > 1/1", tenOfTen > oneOfOne,
+                oneOfOne.ToString("0.000", CultureInfo.InvariantCulture) + " vs " +
+                tenOfTen.ToString("0.000", CultureInfo.InvariantCulture));
+
+            double eightOfTen = AutoZapret.Orchestrator.Bandit.WilsonLowerBound(8, 10);
+            Check("Wilson: 8/10 < 10/10", eightOfTen < tenOfTen,
+                eightOfTen.ToString("0.000", CultureInfo.InvariantCulture));
+            Check("Wilson: 0 проб -> 0", AutoZapret.Orchestrator.Bandit.WilsonLowerBound(0, 0) == 0, "0");
+
+            // ---- ScoreStore: статистика и привязка к сети
+            AutoZapret.Orchestrator.ScoreStore store = new AutoZapret.Orchestrator.ScoreStore();
+
+            store.Register("s1", "netA", true, 100, 150, "");
+            store.Register("s1", "netA", true, 80, 200, "");
+            store.Register("s2", "netA", false, 0, 0, "нет связи");
+            store.Register("s1", "netB", false, 0, 0, "блок");
+
+            AutoZapret.Orchestrator.StrategyStats s1a = store.Get("s1", "netA");
+            Check("ScoreStore: пробы учтены", s1a.Probes == 2, s1a.Probes.ToString());
+            Check("ScoreStore: успехи учтены", s1a.Successes == 2, s1a.Successes.ToString());
+            Check("ScoreStore: alpha дробный", Math.Abs(s1a.Alpha - 2.8) < 0.01,
+                s1a.Alpha.ToString("0.00", CultureInfo.InvariantCulture));
+
+            AutoZapret.Orchestrator.StrategyStats s2a = store.Get("s2", "netA");
+            Check("ScoreStore: неудача учтена", s2a.ConsecutiveFailures == 1,
+                s2a.ConsecutiveFailures.ToString());
+
+            // разделение по сетям: та же стратегия в другой сети — отдельная запись
+            AutoZapret.Orchestrator.StrategyStats s1b = store.Get("s1", "netB");
+            Check("ScoreStore: сети раздельны", s1b.Probes == 1 && s1a.Probes == 2,
+                "netA=" + s1a.Probes + ", netB=" + s1b.Probes);
+
+            Check("ScoreStore: сброс неудачи после успеха",
+                s1a.ConsecutiveFailures == 0, s1a.ConsecutiveFailures.ToString());
+
+            // ---- бандит: предпочитает проверенного лидера
+            AutoZapret.Orchestrator.ScoreStore banditStore = new AutoZapret.Orchestrator.ScoreStore();
+            for (int i = 0; i < 30; i++) banditStore.Register("good", "net", true, 100, 100, "");
+            for (int i = 0; i < 30; i++) banditStore.Register("bad", "net", false, 0, 0, "нет");
+
+            AutoZapret.Orchestrator.Bandit picker = new AutoZapret.Orchestrator.Bandit(7);
+            picker.ExplorationPermil = 0;   // чистый exploitation
+
+            int goodPicked = 0;
+            List<string> candidates = new List<string> { "good", "bad" };
+            for (int i = 0; i < 200; i++)
+                if (picker.Pick(candidates, banditStore, "net") == "good") goodPicked++;
+
+            Check("бандит: выбирает рабочую", goodPicked > 180, goodPicked + "/200");
+
+            // при полном исследовании должен пробовать и плохую
+            picker.ExplorationPermil = 1000;
+            int badPicked = 0;
+            for (int i = 0; i < 200; i++)
+                if (picker.Pick(candidates, banditStore, "net") == "bad") badPicked++;
+
+            Check("бандит: исследует и плохую", badPicked > 20, badPicked + "/200");
+
+            // ---- сохранение статистики: без него автопилот не накапливает опыт
+            string dir = System.IO.Path.Combine(Paths.StateDir, "selftest-scores");
+            System.IO.Directory.CreateDirectory(dir);
+
+            string savedPath = System.IO.Path.Combine(Paths.StateDir, "scores.json");
+            string backup = System.IO.File.Exists(savedPath)
+                ? System.IO.File.ReadAllText(savedPath)
+                : null;
+
+            try
+            {
+                AutoZapret.Orchestrator.ScoreStore persist = new AutoZapret.Orchestrator.ScoreStore();
+                persist.Register("keep", "netX", true, 90, 120, "");
+                persist.Register("keep", "netX", true, 70, 140, "");
+                persist.Register("drop", "netX", false, 0, 0, "нет связи");
+                persist.Save();
+
+                Check("ScoreStore: файл создан", System.IO.File.Exists(savedPath), savedPath);
+
+                AutoZapret.Orchestrator.ScoreStore reloaded = new AutoZapret.Orchestrator.ScoreStore();
+                reloaded.Load();
+
+                AutoZapret.Orchestrator.StrategyStats k = reloaded.Get("keep", "netX");
+                Check("ScoreStore: пробы пережили перезапуск", k.Probes == 2, k.Probes.ToString());
+                Check("ScoreStore: успехи пережили", k.Successes == 2, k.Successes.ToString());
+                Check("ScoreStore: alpha пережил",
+                    Math.Abs(k.Alpha - 2.6) < 0.02, k.Alpha.ToString("0.00", CultureInfo.InvariantCulture));
+
+                AutoZapret.Orchestrator.StrategyStats d = reloaded.Get("drop", "netX");
+                Check("ScoreStore: неудача пережила", d.ConsecutiveFailures == 1,
+                    d.ConsecutiveFailures.ToString());
+                Check("ScoreStore: причина сохранена", d.LastError == "нет связи", d.LastError);
+            }
+            finally
+            {
+                if (backup != null)
+                    System.IO.File.WriteAllText(savedPath, backup);
+                else
+                    try { System.IO.File.Delete(savedPath); } catch { }
+
+                try { System.IO.Directory.Delete(dir, true); } catch { }
+            }
         }
 
         private static void TestUpdates()
