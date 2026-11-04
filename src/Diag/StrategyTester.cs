@@ -226,6 +226,44 @@ namespace AutoZapret.Diag
             return 0;
         }
 
+        /// <summary>--diagnose: 12 проверок окружения (почему не работает).</summary>
+        public static int RunDiagnose(string[] args)
+        {
+            Console.WriteLine("== проверки окружения ==");
+            Console.WriteLine();
+
+            List<CheckResult> results = SystemChecks.RunAll(name => Console.WriteLine("  проверяю " + name + "…"));
+
+            Console.WriteLine();
+
+            int problems = 0, warnings = 0;
+
+            foreach (CheckResult r in results)
+            {
+                string mark;
+                switch (r.Status)
+                {
+                    case CheckStatus.Ok: mark = "[ok]  "; break;
+                    case CheckStatus.Warn: mark = "[warn]"; warnings++; break;
+                    case CheckStatus.Fail: mark = "[FAIL]"; problems++; break;
+                    default: mark = "[skip]"; break;
+                }
+
+                Console.WriteLine(mark + " " + r.Name.PadRight(28) + r.Detail);
+
+                if (r.Advice.Length > 0)
+                    Console.WriteLine("       → " + r.Advice);
+            }
+
+            Console.WriteLine();
+            if (problems == 0 && warnings == 0)
+                Console.WriteLine("всё в порядке");
+            else
+                Console.WriteLine("проблем: " + problems + ", предупреждений: " + warnings);
+
+            return problems == 0 ? 0 : 1;
+        }
+
         /// <summary>--import-fakes: импортировать набор TLSpack в assets\fakes.</summary>
         public static int RunImportFakes(string[] args)
         {

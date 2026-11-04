@@ -96,6 +96,9 @@ namespace AutoZapret.App
 
                 Section("автопилот");
                 TestAutoPilot();
+
+                Section("проверки окружения");
+                TestSystemChecks();
             }
             catch (Exception ex)
             {
@@ -1138,6 +1141,60 @@ namespace AutoZapret.App
                     try { System.IO.File.Delete(savedPath); } catch { }
 
                 try { System.IO.Directory.Delete(dir, true); } catch { }
+            }
+        }
+
+        private static void TestSystemChecks()
+        {
+            // ---- chcp 437: без него netsh/sc отвечают на языке системы
+            string output = AutoZapret.Diag.SystemChecks.Cmd("echo chcp-test");
+            Check("Cmd() возвращает вывод", output.IndexOf("chcp-test", StringComparison.Ordinal) >= 0,
+                output.Trim().Length > 0 ? "ok" : "пусто");
+
+            // ---- все 12 проверок выполняются и не бросают
+            List<AutoZapret.Diag.CheckResult> results = AutoZapret.Diag.SystemChecks.RunAll();
+
+            Check("проверок 12", results.Count == 12, results.Count.ToString());
+
+            int noName = 0;
+            int noDetail = 0;
+            foreach (AutoZapret.Diag.CheckResult r in results)
+            {
+                if (string.IsNullOrEmpty(r.Name)) noName++;
+                if (string.IsNullOrEmpty(r.Detail)) noDetail++;
+            }
+
+            Check("у всех есть название", noName == 0, noName + " без названия");
+            Check("у всех есть результат", noDetail == 0, noDetail + " без деталей");
+
+            // советы должны быть только у проблем и предупреждений
+            int uselessAdvice = 0;
+            foreach (AutoZapret.Diag.CheckResult r in results)
+            {
+                if (r.Status == AutoZapret.Diag.CheckStatus.Ok && r.Advice.Length > 0) uselessAdvice++;
+            }
+            Check("советы только там, где нужно", uselessAdvice == 0,
+                uselessAdvice + " советов при OK");
+
+            // ---- проверка «файлы драйвера» должна знать про отсутствие движка
+            AutoZapret.Diag.CheckResult driver = results.Find(
+                r => r.Name.IndexOf("драйвер", StringComparison.OrdinalIgnoreCase) >= 0);
+
+            if (driver != null)
+            {
+                bool engineInstalled = System.IO.File.Exists(
+                    System.IO.Path.Combine(Paths.EngineBinDir, "winws.exe"));
+
+                if (engineInstalled)
+                    Check("драйвер: движок установлен -> OK",
+                        driver.Status == AutoZapret.Diag.CheckStatus.Ok, driver.Detail);
+                else
+                    Check("драйвер: движка нет -> skip",
+                        driver.Status == AutoZapret.Diag.CheckStatus.Skip, driver.Detail);
+            }
+            else
+            {
+                Check("проверка драйвера найдена", false, "не найдена");
             }
         }
 

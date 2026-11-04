@@ -126,6 +126,18 @@
       <p class="subtitle">Что заблокировано, почему и чем это лечится</p>
 
       <div class="card">
+        <div class="card-title">Шаг 0 — проверки окружения</div>
+        <div class="row">
+          <div>
+            <div class="row-label">12 проверок системы</div>
+            <div class="row-hint">BFE, драйвер, timestamps, конфликтующие обходчики, VPN, антивирус…</div>
+          </div>
+          <button class="btn primary" id="btn-diag-sys">Проверить всё</button>
+        </div>
+        <div id="diag-sys-result" class="diag-list" style="margin-top:12px;display:none"></div>
+      </div>
+
+      <div class="card">
         <div class="card-title">Шаг 1 — что заблокировано</div>
         <div class="row">
           <div>

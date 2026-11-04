@@ -400,9 +400,14 @@ AutoZapret/
 - [ ] Диагностика (12 проверок): BFE, системный прокси, TCP timestamps, Adguard, Killer,
       Intel Connectivity, Check Point, SmartByte, `*.sys` на месте, VPN-службы,
       `hosts` с youtube.com, конфликтующие обходчики (`GoodbyeDPI`, `winws1/2`, `discordfix_zapret`).
-- [ ] **`chcp 437`** для всех вызовов `netsh`/`sc`/`tasklist` + декодирование CP437.
-- [ ] Диагностический ZIP: `diagnostics.txt`, `app.log`, `settings.json`, версии.
-- [ ] `netsh interface tcp set global timestamps=enabled` (нужно для `fooling=ts`).
+- [x] **`chcp 437`** для всех вызовов `netsh`/`sc`/`tasklist` + декодирование CP437.
+- [x] **12 проверок окружения** (`--diagnose` + кнопка в UI):
+      BFE, служба WinDivert, файлы драйвера, TCP timestamps, системный прокси,
+      свой hosts, конфликтующие обходчики, VPN/туннели, антивирус-перехватчики,
+      права администратора, свободное место, время системы.
+      У каждой проблемы — **совет, что делать**, а не только факт.
+- [x] Диагностический ZIP: `diagnostics.txt`, `app.log`, `settings.json`, версии.
+- [ ] Пресеты по процессам
 
 ---
 

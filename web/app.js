@@ -393,6 +393,14 @@
     // ------------------------------------------------------------ кнопки
 
     function initDiag() {
+        var sys = document.getElementById("btn-diag-sys");
+        if (sys) sys.addEventListener("click", function () {
+            sys.disabled = true;
+            sys.textContent = "Проверяю…";
+            document.getElementById("diag-sys-result").innerHTML = "";
+            send("diag.system");
+        });
+
         var probe = document.getElementById("btn-diag-probe");
         if (probe) probe.addEventListener("click", function () {
             probe.disabled = true;
@@ -427,6 +435,46 @@
     }
 
     var lastBestStrategy = null;
+
+    function renderSysResult(msg) {
+        var btn = document.getElementById("btn-diag-sys");
+        if (btn) { btn.disabled = false; btn.textContent = "Проверить всё"; }
+
+        var box = document.getElementById("diag-sys-result");
+        if (!box) return;
+
+        var items = msg.items || [];
+        box.innerHTML = "";
+
+        items.forEach(function (c) {
+            var badge = c.status === "Ok" ? "ok" : (c.status === "Warn" ? "warn" : (c.status === "Fail" ? "bad" : ""));
+            var div = document.createElement("div");
+            div.className = "diag-row";
+            div.innerHTML =
+                '<span class="badge ' + badge + '">' + (c.status === "Ok" ? "OK" : (c.status === "Skip" ? "—" : "!")) + '</span>' +
+                '<span class="name">' + c.name + '</span>' +
+                '<span class="verdict">' + (c.detail || "") + '</span>';
+            box.appendChild(div);
+
+            if (c.advice) {
+                var adv = document.createElement("div");
+                adv.className = "advice";
+                adv.style.margin = "0 0 6px 0";
+                adv.innerHTML = c.advice;
+                box.appendChild(adv);
+            }
+        });
+
+        if (msg.summary) {
+            var sum = document.createElement("div");
+            sum.className = "row-hint " + (msg.problems > 0 ? "diag-bad" : (msg.warnings > 0 ? "diag-warn" : "diag-ok"));
+            sum.style.marginTop = "10px";
+            sum.textContent = msg.summary;
+            box.appendChild(sum);
+        }
+
+        box.style.display = "";
+    }
 
     function renderProbeResult(msg) {
         var box = document.getElementById("diag-probe-result");
@@ -896,6 +944,10 @@
 
             case "diag.probe":
                 renderProbeResult(msg);
+                break;
+
+            case "diag.system":
+                renderSysResult(msg);
                 break;
 
             case "diag.deep":

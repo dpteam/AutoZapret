@@ -274,6 +274,7 @@ namespace AutoZapret.App
             });
 
             // ---- диагностика
+            bridge.Register("diag.system", msg => RunInBackground("system", RunSystemChecksUi));
             bridge.Register("diag.probe", msg => RunInBackground("probe", RunProbeUi));
             bridge.Register("diag.deep", msg => RunInBackground("deep", RunDeepUi));
             bridge.Register("diag.test", msg =>
@@ -831,6 +832,39 @@ namespace AutoZapret.App
                     _form.Bridge.Send(WebBridge.Msg("error", "message", ex.Message, "action", name));
                 }
             });
+        }
+
+        private void RunSystemChecksUi()
+        {
+            List<CheckResult> results = SystemChecks.RunAll();
+
+            List<object> items = new List<object>();
+            int problems = 0, warnings = 0;
+
+            foreach (CheckResult r in results)
+            {
+                if (r.Status == CheckStatus.Fail) problems++;
+                else if (r.Status == CheckStatus.Warn) warnings++;
+
+                items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    { "name", r.Name },
+                    { "status", r.Status.ToString() },
+                    { "detail", r.Detail ?? "" },
+                    { "advice", r.Advice ?? "" }
+                });
+            }
+
+            string summary;
+            if (problems == 0 && warnings == 0) summary = "всё в порядке — 12 проверок пройдено";
+            else if (problems == 0) summary = "предупреждений: " + warnings;
+            else summary = "проблем: " + problems + ", предупреждений: " + warnings;
+
+            _form.Bridge.Send(WebBridge.Msg("diag.system",
+                "items", items,
+                "problems", (long)problems,
+                "warnings", (long)warnings,
+                "summary", summary));
         }
 
         private void RunProbeUi()
