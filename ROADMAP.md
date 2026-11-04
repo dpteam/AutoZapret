@@ -88,8 +88,10 @@
 
 - [x] `licenses/zapret-MIT.txt`, `licenses/flowseal-MIT.txt`, `licenses/WinDivert-LGPLv3.txt`,
       `licenses/tg-ws-proxy-MIT.txt` — **скачаны и лежат в репозитории**.
-- [ ] Экран «О программе»: версии zapret/zapret2/WinDivert, ссылки, кнопка «Лицензии».
-- [ ] README: «это не VPN», «WinDivert может флагаться AV», «используйте на свой риск».
+- [x] Экран «О программе»: версия приложения, ОС, права, режим данных, WebView2,
+      каталог данных; таблица компонентов с лицензиями (MIT / LGPLv3).
+- [x] README: «это не VPN», «WinDivert может флагаться AV», «используйте на свой риск»,
+      раздел про SmartScreen и исключение Defender.
 
 ### 3.4 `TLSpack` и `_Add1` — вопрос закрыт (2026-11-04)
 
