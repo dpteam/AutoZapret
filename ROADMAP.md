@@ -986,6 +986,137 @@ GPL-3.0. Это **не** заразит десктопную версию, ес�
 
 ---
 
+### P13 — Кроссплатформенность: Linux, CLI, GUI для всех `[ ]` ⭐ идея на будущее
+
+> Записано со слов заказчика: «хочу поддержку Linux (автокомпил либ из bol-van), скрипт
+> как у Zapret Manager, GUI и CLI версии для всех платформ, Android только GUI.
+> .NET вроде кроссплатформенный, но надо обдумать универсально».
+
+**Главная мысль, которую надо принять до первой строки:** .NET кроссплатформенный,
+но **наша оболочка — нет**. WinForms + WebView2 + WinDivert — это три Windows-only
+кирпича, и ни один из них не «перекомпилируется под Linux». Переезжает не приложение,
+а **ядро**; оболочка пишется заново под каждую платформу.
+
+#### 1. Что реально переносится (проверено по коду, не на глаз)
+
+| Компонент | Linux | Android | Комментарий |
+|---|---|---|---|
+| `Core.Json`, `AtomicFile`, `Log`, `Settings` | ✅ | ✅ | пути через `Path.Combine`, разделители не хардкодить |
+| `Core.Doh`, `Core.Resolver`, `Core.LocalDns` | ✅ | ⚠️ | сокеты и `HttpClient` везде; на Android свой DNS не нужен — там `VpnService` |
+| `Lists.*` (списки, `HostsEditor`, `HostsFixes`) | ✅ | ⚠️ | hosts на Android не пишется (нужен root) |
+| `Zapret.StrategyParser`, `StrategyStore` | ✅ | ✅ | это чистая модель данных, ценность одна и та же |
+| `Orchestrator.ScoreStore`, `Bandit` | ✅ | ✅ | статистика переносится целиком |
+| `Proxy.*` (MTProto WS) | ✅ | ⚠️ | `HttpClient`/сокеты есть, но на Android нужен `VpnService` или локальный прокси |
+| `Diag.ConnectivityProbe`, `DeepProbe`, `Tcp16Test` | ✅ | ✅ | обычные сокеты |
+| `Zapret.WinDivertInterop`, `Own.OwnEngine` | ❌ | ❌ | **это WinDivert**, драйвер Windows |
+| `Zapret.WinwsSupervisor` | ❌ | ❌ | запускает `.exe` |
+| `App.AppHost`, `MainForm`, `TrayController` | ❌ | ❌ | WinForms |
+| `Core.SystemDns`, `BrowserDoh`, `AutoStartManager` | ❌ | ❌ | `netsh`, реестр, планировщик задач |
+| `Diag.SystemChecks` | ⚠️ | ⚠️ | половина проверок Windows-специфична (`sc query`, `netsh`) |
+
+Оценка: **переносится ~45% кода, и это самая ценная часть** (модель, списки, статистика,
+пробы). Всё, что касается перехвата пакетов и оболочки, — своё на каждой платформе.
+
+#### 2. Структура решения: три проекта вместо одного
+
+```
+src/AutoZapret.Core/      net9.0              — всё переносимое, БЕЗ Windows API
+src/AutoZapret.Windows/   net9.0-windows      — WinForms + WebView2 + WinDivert + winws
+src/AutoZapret.Linux/     net9.0              — Avalonia/GTK + nfqws
+src/AutoZapret.Cli/       net9.0              — общий CLI поверх Core (+ платформенные адаптеры)
+```
+
+Правило, которое убережёт от расползания: **`Core` не ссылается ни на что платформенное**.
+Как только в Core появляется `using System.Windows.Forms` или `[DllImport("WinDivert")]` —
+переезд на Linux становится переписыванием с нуля. Это дешевле соблюсти сразу.
+
+Платформенное прячется за интерфейсами:
+
+```csharp
+interface IPacketEngine { Task<string> StartAsync(Strategy s); Task StopAsync(); }
+interface IDnsConfigurator { Task<string> EnableAsync(); Task<string> RestoreAsync(); }
+interface IPrivilegeCheck { bool IsElevated { get; } Task<bool> RequestAsync(); }
+```
+
+Windows-реализация = `WinwsSupervisor` + `WinDivert`, Linux = `nfqws`, Android = `VpnService`.
+
+#### 3. Linux: движок из bol-van
+
+- `zapret` от bol-van — **исходники на C**, сборка `make`, зависит от `libnetfilter_queue`,
+  `nfnetlink`, `libcap`, `zlib`. Никаких готовых `.exe`: на Linux это `nfqws` (userspace)
+  + правила `nftables`/`iptables`, которые заворачивают трафик в NFQUEUE.
+- **Автокомпиляция при первом запуске** (идея заказчика) — реально, но требует
+  `build-essential`, `libnetfilter-queue-dev`, `libnfnetlink-dev`. Значит:
+  * сначала проверяем, есть ли `nfqws` в PATH / в комплекте;
+  * если нет — предлагаем `apt install` / `pacman -S` (не запускаем `sudo` молча);
+  * собираем в `~/.local/share/autozapret/engine/` из исходников, скачанных с GitHub;
+  * **если сборка не удалась — внятная ошибка с пакетами**, а не «не работает».
+- Альтернатива, которую надо держать в голове: **не собирать, а поставлять готовый
+  статический `nfqws`** под x86_64/aarch64. Сборка на машине пользователя — это
+  компилятор, зависимости и 30 секунд ожидания; статический бинарь — 200 КБ и ноль проблем.
+  Решение по лицензии: zapret — MIT, статическая сборка разрешена.
+- Права: `CAP_NET_ADMIN` вместо UAC. Пакетом — `pkexec` или systemd-юнит, не `sudo` из GUI.
+- Конфиги: те же `strategies.json`, но `--wf-tcp` → `--filter-tcp`, пути `/etc/...` → наши.
+
+#### 4. CLI: один бинарь, режимы вместо отдельных программ
+
+```
+autozapret                      # GUI (если есть дисплей)
+autozapret --cli status         # состояние
+autozapret --cli start [--strategy id]
+autozapret --cli probe          # что заблокировано
+autozapret --cli test 5         # подбор
+autozapret --cli lists update
+autozapret --cli selftest
+```
+
+У нас уже есть почти весь CLI (`--selftest`, `--probe`, `--test-all`, `--diag-zip`,
+`--stages`, `--sysdns`, `--flushdns`, `--own`). Не хватает: единой точки входа с
+подкомандами, `--json` для машинного вывода (пригодится для скриптов и Zapret Manager-подобных
+обёрток) и кодов возврата по смыслу, а не «0/1».
+
+#### 5. GUI: чем заменить WinForms/WebView2
+
+| Вариант | Плюсы | Минусы |
+|---|---|---|
+| **Avalonia** (.NET, MIT) | настоящий кросс-платформенный XAML, зрелый, нативный вид | вёрстку `web/` придётся переписать в XAML — **это главный минус**, у нас 40 КБ HTML |
+| **Photino / WebView2-аналог** | HTML остаётся как есть | на Linux тянет `libwebkit2gtk`, на Android не работает |
+| **Blazor Hybrid (MAUI)** | HTML+JS переиспользуется | MAUI на Linux не поддерживается официально (только community) |
+| **Отдельный webview + локальный HTTP** | HTML один на все платформы, включая Android | нужен свой сервер, CSP, безопасность моста руками |
+
+**Рекомендация:** держать UI как HTML (он уже написан и переносим на Android по P12) и
+менять только «хост»: Windows — WebView2 (как сейчас), Linux — WebKitGTK через Photino
+или свой минимальный хост, Android — `android.webkit.WebView`. Тогда `web/` — единственный
+источник интерфейса, а не три копии.
+
+**Цена:** мост `chrome.webview.postMessage` на Linux/Android другой. Значит, `send()`/`onMessage()`
+в `app.js` уже сейчас надо держать в двух функциях (так и сделано, AGENTS.md п.4) и добавить
+вторую реализацию транспорта, а не переписывать экраны.
+
+#### 6. Порядок работ (если браться)
+
+1. **Вынести `Core` без Windows-зависимостей** — 3–5 дней. Полезно уже сейчас: тестируемость,
+   и это фундамент всех платформ. Риск нулевой, Windows-версия продолжает работать.
+2. **CLI с подкомандами и `--json`** — 2–3 дня. Даёт скриптуемость и «как Zapret Manager».
+3. **Linux-хост + nfqws** — 2–3 недели. Сначала ручная сборка движка, потом автокомпиляция.
+4. **Android** — см. P12, это отдельные 2–3 месяца и отдельный продукт.
+
+#### 7. Риски и решения
+
+- **Ядро «поедет» и разъедется.** Держать один `Core` и три тонких хоста; общие данные
+  (`strategies.json`, списки, `scores.json`) — один формат на всех.
+- **Собственный движок (P10) на WinDivert не переносится.** На Linux аналог — NFQUEUE,
+  на Android — tun. Это **три разные реализации**; общим остаётся только разбор пакетов
+  (`TcpPacket`) и логика техник, её и надо держать платформенно-нейтральной.
+- **Разные права.** Windows — UAC/админ, Linux — `CAP_NET_ADMIN`/pkexec, Android — диалог
+  `VpnService`. Один интерфейс `IPrivilegeCheck`, три реализации.
+- **Сборка на машине пользователя — источник боли.** Предпочитать готовые статические
+  бинари; автокомпиляцию оставить как fallback с внятными сообщениями о пакетах.
+- **Не распыляться.** Windows-версия — основной продукт. Linux/Android — отдельные ветки
+  работы, которые не должны тормозить P10/P11.
+
+---
+
 ## 7. Бэклог идей из `refs/` (что взять, что нет)
 
 ### 7.1 Берём
@@ -1079,11 +1210,17 @@ P0 Фундамент ──► P1 Движок v1 ──► P2 UI v1 ──► 
                                                      ├──► P9 Полировка
                                                      ├──► P10 ⭐ свой движок
                                                      ├──► P11 ⭐ Mihomo / Xray (комбайн)
-                                                     └──► P12 ⭐ Android-версия (самое последнее)
+                                                     ├──► P12 ⭐ Android-версия (самое последнее)
+                                                     └──► P13 ⭐ Linux + CLI + GUI для всех
 ```
 
 **Минимально полезный релиз (MVP) = P0 + P1 + P2 + P4.** Дальше — по одной фиче.
-P10, P11 и P12 — только когда всё остальное работает и живёт своей жизнью.
+P10, P11, P12 и P13 — только когда всё остальное работает и живёт своей жизнью.
+
+**P13 идёт раньше P12, если браться.** Причина простая: `Core` без Windows-зависимостей
+и CLI — это 5–7 дней работы, которая полезна уже на Windows (тестируемость, скриптуемость,
+«как Zapret Manager»), и она же фундамент и для Linux, и для Android. Android без этого
+всё равно упрётся в «ядро срослось с WinForms».
 
 ---
 
