@@ -487,10 +487,18 @@ namespace AutoZapret.App
             bridge.Register("hosts.apply", msg =>
             {
                 bool verify = Json.GetBool(msg, "verify", true);
+
+                // hosts лежит в System32 — запись требует прав администратора
+                if (!EnsureElevation()) return;
+
                 RunInBackground("hosts-apply", () => ApplyHostsUi(verify));
             });
             bridge.Register("hosts.check", msg => RunInBackground("hosts-check", CheckHostsUi));
-            bridge.Register("hosts.restore", msg => RunInBackground("hosts-restore", RestoreHostsUi));
+            bridge.Register("hosts.restore", msg =>
+            {
+                if (!EnsureElevation()) return;
+                RunInBackground("hosts-restore", RestoreHostsUi);
+            });
 
             // ---- автопилот
             bridge.Register("auto.state", msg => SendAutoState());
@@ -1486,6 +1494,16 @@ namespace AutoZapret.App
 
         private void RunTestUi(int count)
         {
+            // Подбор стратегий запускает winws для каждой стратегии — без прав
+            // это падало сырым Win32Exception, и выглядело как «подбор сломан».
+            if (!EnsureElevation())
+            {
+                _form.Bridge.Send(WebBridge.Msg("error",
+                    "message", "Для подбора стратегий нужны права администратора",
+                    "action", "test"));
+                return;
+            }
+
             Baseline.Snapshot baseline = Baseline.Load();
             if (baseline == null || baseline.Blocked.Count == 0)
             {
@@ -1537,6 +1555,39 @@ namespace AutoZapret.App
 
         // --------------------------------------------------------------- control
 
+        /// <summary>
+        /// Единая точка «нужны права на запуск движка».
+        ///
+        /// Раньше проверка была только в кнопке питания: подбор стратегий и
+        /// автопилот просто пытались стартовать winws и получали сырое
+        /// «Запрошенная операция требует повышения» в лог. Пользователь видел
+        /// «подбор не работает» и не понимал причины.
+        ///
+        /// Возвращает true, если права есть. Если нет — спрашивает и
+        /// перезапускается, а вызывающий просто прекращает работу.
+        /// </summary>
+        private bool EnsureElevation()
+        {
+            if (Elevation.IsElevated) return true;
+
+            DialogResult answer = MessageBox.Show(
+                Elevation.ExplainWhy(), AppInfo.Name,
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+
+            if (answer == DialogResult.Yes)
+            {
+                if (Elevation.RestartElevated()) RequestExit();
+                else _tray.Notify(AppInfo.Name, "Права администратора не получены.", ToolTipIcon.Warning);
+            }
+            else
+            {
+                _tray.Notify(AppInfo.Name,
+                    "Без прав администратора обход не запустится.", ToolTipIcon.Warning);
+            }
+
+            return false;
+        }
+
         /// <summary>Включить/выключить обход. Выполняется в фоне: старт winws не быстрый.</summary>
         private void ToggleProtection()
         {
@@ -1549,19 +1600,7 @@ namespace AutoZapret.App
             }
 
             // Включение требует прав администратора: winws.exe и WinDivert без них не стартуют.
-            if (state != ProtectionState.Running && !Elevation.IsElevated)
-            {
-                DialogResult answer = MessageBox.Show(
-                    Elevation.ExplainWhy(), AppInfo.Name,
-                    MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-
-                if (answer == DialogResult.Yes)
-                {
-                    if (Elevation.RestartElevated()) RequestExit();
-                    else _tray.Notify(AppInfo.Name, "Права администратора не получены.", ToolTipIcon.Warning);
-                }
-                return;
-            }
+            if (state != ProtectionState.Running && !EnsureElevation()) return;
 
             ThreadPool.QueueUserWorkItem(delegate
             {

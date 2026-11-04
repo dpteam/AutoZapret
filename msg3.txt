@@ -1,0 +1,41 @@
+fix: elevation for every engine start, real elevated restart, logs on open
+
+The reported "strategy picking failed" was not the strategies. The log
+showed Win32Exception 740 from winws.exe: the app tried to start an
+executable with a requireAdministrator manifest without admin rights.
+
+Three separate defects behind that single message:
+
+1. Only the power button checked elevation. Strategy testing, hosts
+   writing and autopilot just called Start() and got the raw .NET text
+   "the requested operation requires elevation" into the log.
+   EnsureElevation() is now the one entry point for every engine or
+   System32 write, and it offers the restart instead of just failing.
+   WinwsSupervisor also catches 740 specifically and writes a sentence a
+   human can act on.
+
+2. Elevated restart did not start anything. The new process acquired the
+   single-instance mutex, found the old process still alive (it lives a
+   few hundred milliseconds after starting its replacement), signalled it
+   and quit. The app simply never appeared. Now RestartElevated passes
+   --restarted and TryAcquire waits up to 8 s for the mutex.
+
+3. The Logs screen opened empty until "Refresh" was pressed - showScreen
+   requested lists and proxy but never logs.
+
+Also from the same report:
+- Hosts and "Lists from the internet" were hidden in simple mode, because
+  the whole cards were marked data-advanced. Updating hosts is a normal
+  feature, not an advanced one. Unhidden, and the button is now called
+  "Update" instead of "Apply" - it downloads sources, merges and writes.
+- Every diagnostics step now states roughly how long it takes: ~10 s for
+  the 12 checks, ~20-40 s for the baseline probe, 2-5 min for strategy
+  picking. A button that says nothing looks hung after 30 seconds.
+- ROADMAP records the owner's decision on engines: the built-in engine
+  will be a third option, winws/winws2 stay forever as fallback, engine
+  choice is exposed in the UI, and autopilot/presets must be able to
+  switch between engines, not only between strategies.
+
+selftest, CI and the encoding check are green; the UI was verified in the
+browser (Hosts visible in simple mode, time estimates render, button
+renamed).

@@ -88,11 +88,19 @@ namespace AutoZapret.App
 
             using (SingleInstance single = new SingleInstance())
             {
-                if (!single.TryAcquire())
+                // --restarted: нас запустил предыдущий экземпляр, чтобы мы получили
+                // права администратора. Он ещё несколько сотен миллисекунд держит
+                // мьютекс, поэтому ждём его выхода, а не выходим сами.
+                bool restarted = HasFlag(args, "--restarted");
+                int waitMs = restarted ? 8000 : 0;
+
+                if (!single.TryAcquire(waitMs))
                 {
                     Log.Info("APP", "уже запущен другой экземпляр - показал его и выхожу");
                     return 0;
                 }
+
+                if (restarted) Log.Info("APP", "экземпляр перезапущен с повышением прав");
 
                 using (AppHost host = new AppHost())
                 {

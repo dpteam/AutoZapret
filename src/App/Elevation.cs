@@ -40,18 +40,26 @@ namespace AutoZapret.App
         /// <summary>
         /// Перезапустить себя с правами администратора.
         /// Возвращает true, если новый процесс стартовал (текущий должен выйти).
+        ///
+        /// К аргументам добавляется --restarted: новый экземпляр должен знать,
+        /// что его запустили на замену, и подождать, пока освободится мьютекс
+        /// единственного экземпляра. Без этого новый процесс видит живой старый,
+        /// «активирует» его и выходит — приложение молча не запускается.
         /// </summary>
         public static bool RestartElevated(string extraArgs = null)
         {
             try
             {
+                string arguments = "--restarted";
+                if (!string.IsNullOrEmpty(extraArgs)) arguments += " " + extraArgs;
+
                 ProcessStartInfo psi = new ProcessStartInfo
                 {
                     FileName = Application_ExecutablePath(),
                     UseShellExecute = true,
                     Verb = "runas",                 // именно это вызывает UAC
                     WorkingDirectory = Paths.BaseDir,
-                    Arguments = string.IsNullOrEmpty(extraArgs) ? "" : extraArgs
+                    Arguments = arguments
                 };
 
                 Process.Start(psi);

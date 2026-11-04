@@ -159,12 +159,35 @@ namespace AutoZapret.Zapret
                 Log.Info("WINWS", "winws запущен, pid=" + proc.Id + ", стратегия=" + strategy.Name);
                 return null;
             }
+            catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == ErrorElevationRequired)
+            {
+                // winws.exe имеет манифест requireAdministrator. Без прав Windows
+                // отказывает ДО запуска, и пользователь видел сырой текст
+                // «Запрошенная операция требует повышения» без единого намёка,
+                // что делать. Это не ошибка движка, а нехватка прав.
+                string message = "нужны права администратора: без них winws.exe не запускается. " +
+                                 "Перезапустите AutoZapret от имени администратора.";
+
+                Log.Warn("WINWS", "старт отклонён: " + message);
+                SetState(ProtectionState.Error, message);
+                return message;
+            }
             catch (Exception ex)
             {
                 Log.Exception("WINWS", "старт", ex);
                 SetState(ProtectionState.Error, ex.Message);
                 return ex.Message;
             }
+        }
+
+        /// <summary>Код Windows «требуется повышение прав».</summary>
+        public const int ErrorElevationRequired = 740;
+
+        /// <summary>Требует ли ошибка повышения прав. Нужно UI, чтобы предложить перезапуск.</summary>
+        public static bool IsElevationError(string error)
+        {
+            if (string.IsNullOrEmpty(error)) return false;
+            return error.IndexOf("прав администратора", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         // ---------------------------------------------------------------- stop

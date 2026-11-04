@@ -33,8 +33,30 @@ namespace AutoZapret.Core
         /// Пытается стать единственным экземпляром.
         /// true  - мы первые, можно работать;
         /// false - уже кто-то есть, мы дёрнули его и должны выйти.
+        ///
+        /// waitMs &gt; 0 — подождать, пока мьютекс освободится. Нужно при перезапуске
+        /// с повышением прав: старый процесс живёт ещё несколько сотен миллисекунд
+        /// после старта нового, и без ожидания новый экземпляр молча выходит.
         /// </summary>
-        public bool TryAcquire()
+        public bool TryAcquire(int waitMs = 0)
+        {
+            DateTime deadline = DateTime.UtcNow.AddMilliseconds(Math.Max(0, waitMs));
+
+            while (true)
+            {
+                if (TryAcquireOnce()) return true;
+
+                if (DateTime.UtcNow >= deadline)
+                {
+                    SignalActivate();
+                    return false;
+                }
+
+                System.Threading.Thread.Sleep(120);
+            }
+        }
+
+        private bool TryAcquireOnce()
         {
             try
             {
@@ -42,10 +64,8 @@ namespace AutoZapret.Core
                 _mutex = new Mutex(true, MutexName, out createdNew);
                 if (!createdNew)
                 {
-                    // кто-то уже держит - просим показаться и уходим
                     _mutex.Dispose();
                     _mutex = null;
-                    SignalActivate();
                     return false;
                 }
 

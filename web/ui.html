@@ -144,7 +144,7 @@
         <div class="row">
           <div>
             <div class="row-label">12 проверок системы</div>
-            <div class="row-hint">BFE, драйвер, timestamps, конфликтующие обходчики, VPN, антивирус…</div>
+            <div class="row-hint">BFE, драйвер, timestamps, конфликтующие обходчики, VPN, антивирус… <span class="dim">· ~10 s</span></div>
           </div>
           <button class="btn primary" id="btn-diag-sys">Проверить всё</button>
         </div>
@@ -154,7 +154,7 @@
           <div>
             <div class="row-label">Архив для поддержки</div>
             <div class="row-hint">
-              Логи, настройки, версии и проверки в одном ZIP. Секрет прокси вырезан
+              Логи, настройки, версии и проверки в одном ZIP. Секрет прокси вырезан <span class="dim">· ~2 s</span>
             </div>
           </div>
           <div style="display:flex;gap:8px;align-items:center">
@@ -170,7 +170,7 @@
         <div class="row">
           <div>
             <div class="row-label">Проверить сеть без обхода</div>
-            <div class="row-hint">Обход должен быть выключен — иначе замер врёт</div>
+            <div class="row-hint">Обход должен быть выключен — иначе замер врёт <span class="dim">· ~20–40 s</span></div>
           </div>
           <button class="btn primary" id="btn-diag-probe">Проверить</button>
         </div>
@@ -187,7 +187,7 @@
         <div class="row">
           <div>
             <div class="row-label">Определить тип блокировки</div>
-            <div class="row-hint">RST, подмена TLS, тишина, DNS — от этого зависит выбор стратегии</div>
+            <div class="row-hint">RST, подмена TLS, тишина, DNS — от этого зависит выбор стратегии <span class="dim">· ~15–30 s</span></div>
           </div>
           <button class="btn" id="btn-diag-deep">Определить</button>
         </div>
@@ -203,7 +203,7 @@
           <div>
             <div class="row-label">Проверить обрыв на 16-20 КБ</div>
             <div class="row-hint">
-              Сайт открывается и висит? Провайдер рвёт поток после ~16 КБ. Лечится seqovl-стратегиями
+              Сайт открывается и висит? Провайдер рвёт поток после ~16 КБ. Лечится seqovl-стратегиями <span class="dim">· ~20–30 s</span>
             </div>
           </div>
           <div style="display:flex;gap:8px;align-items:center">
@@ -226,7 +226,7 @@
         <div class="row">
           <div>
             <div class="row-label">Перебрать стратегии</div>
-            <div class="row-hint">Проверяются только заблокированные цели. Займёт несколько минут</div>
+            <div class="row-hint">Проверяются только заблокированные цели <span class="dim">· 2–5 min</span></div>
           </div>
           <div style="display:flex;gap:8px;align-items:center">
             <select id="diag-test-count">
@@ -350,7 +350,7 @@
         </div>
       </div>
 
-      <div class="card" data-advanced>
+      <div class="card">
         <div class="card-title">Списки из интернета</div>
 
         <div class="row">
@@ -380,19 +380,22 @@
         <div id="list-update-status" class="row-hint" style="margin-top:10px"></div>
       </div>
 
-      <div class="card" data-advanced>
+      <div class="card">
         <div class="card-title">Hosts</div>
 
         <div class="row">
           <div>
-            <div class="row-label">Объединить источники</div>
-            <div class="row-hint">Flowseal + dns.malw.link. Ваши записи не трогаются, дубликаты схлопываются</div>
+            <div class="row-label">Обновить hosts</div>
+            <div class="row-hint">
+              Скачать источники, объединить и записать в hosts. Ваши записи не трогаются,
+              дубликаты схлопываются <span class="dim">· ~10–30 s</span>
+            </div>
           </div>
           <div style="display:flex;gap:8px;align-items:center">
             <label class="check-inline" title="Проверить IP по TCP и выбрать живые">
               <input type="checkbox" id="hosts-verify" checked> проверять IP
             </label>
-            <button class="btn primary" id="btn-hosts-apply">Применить</button>
+            <button class="btn primary" id="btn-hosts-apply">Обновить</button>
           </div>
         </div>
 
