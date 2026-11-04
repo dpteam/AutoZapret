@@ -415,6 +415,15 @@
             send("diag.deep");
         });
 
+        var tcp16 = document.getElementById("btn-diag-tcp16");
+        if (tcp16) tcp16.addEventListener("click", function () {
+            var count = parseInt(document.getElementById("diag-tcp16-count").value, 10) || 8;
+            tcp16.disabled = true;
+            tcp16.textContent = "Проверяю…";
+            document.getElementById("diag-tcp16-result").style.display = "none";
+            send("diag.tcp16", { count: count });
+        });
+
         var test = document.getElementById("btn-diag-test");
         if (test) test.addEventListener("click", function () {
             var count = parseInt(document.getElementById("diag-test-count").value, 10) || 5;
@@ -500,6 +509,38 @@
         });
 
         document.getElementById("diag-probe-summary").innerHTML = msg.summary || "";
+        box.style.display = "";
+    }
+
+    function renderTcp16(msg) {
+        var btn = document.getElementById("btn-diag-tcp16");
+        if (btn) { btn.disabled = false; btn.textContent = "Проверить"; }
+
+        var box = document.getElementById("diag-tcp16-result");
+        var list = document.getElementById("diag-tcp16-list");
+        var verdict = document.getElementById("diag-tcp16-verdict");
+        if (!box || !list) return;
+
+        list.innerHTML = "";
+
+        (msg.items || []).forEach(function (r) {
+            var cls = r.survived ? "ok" : (r.blocked ? "bad" : "warn");
+            var text = r.survived
+                ? "пережило " + Math.round(r.bytes / 1024) + " КБ"
+                : (r.blocked ? "ОБРЫВ на " + Math.round(r.bytes / 1024) + " КБ" : (r.detail || "—"));
+
+            var div = document.createElement("div");
+            div.className = "diag-row";
+            div.innerHTML =
+                '<span class="badge ' + cls + '">' + (r.survived ? "OK" : "!") + '</span>' +
+                '<span class="name">' + r.provider + '</span>' +
+                '<span class="verdict">' + text + '</span>' +
+                '<span class="detail">' + r.ip + ":" + r.port + '</span>';
+            list.appendChild(div);
+        });
+
+        if (verdict) verdict.innerHTML = msg.verdict || "";
+
         box.style.display = "";
     }
 
@@ -952,6 +993,10 @@
 
             case "diag.deep":
                 renderDeepResult(msg);
+                break;
+
+            case "diag.tcp16":
+                renderTcp16(msg);
                 break;
 
             case "diag.progress":

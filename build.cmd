@@ -85,6 +85,17 @@ if exist "%ROOT%engine\bin\winws.exe" (
   echo        powershell -ExecutionPolicy Bypass -File tools\fetch-engine.ps1
 )
 
+rem Assets: иконка, стратегии, фейки, данные диагностики.
+rem Без них приложение работает, но пустое: нет стратегий и фейков.
+if exist "%ROOT%assets" (
+  robocopy "%ROOT%assets" "%OUT%\assets" /E /XO /NJH /NJS /NDL /NFL /NP /R:1 /W:1 >nul 2>&1
+  if errorlevel 8 (
+    echo [WARN] assets copy failed
+  ) else (
+    echo       assets -^> %OUT%\assets
+  )
+)
+
 echo.
 echo  Done.
 echo    exe      : %OUT%\AutoZapret.exe

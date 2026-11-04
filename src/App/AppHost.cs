@@ -276,6 +276,11 @@ namespace AutoZapret.App
             // ---- диагностика
             bridge.Register("diag.system", msg => RunInBackground("system", RunSystemChecksUi));
             bridge.Register("diag.probe", msg => RunInBackground("probe", RunProbeUi));
+            bridge.Register("diag.tcp16", msg =>
+            {
+                int count = Json.GetInt(msg, "count", 8);
+                RunInBackground("tcp16", () => RunTcp16Ui(count));
+            });
             bridge.Register("diag.deep", msg => RunInBackground("deep", RunDeepUi));
             bridge.Register("diag.test", msg =>
             {
@@ -896,6 +901,51 @@ namespace AutoZapret.App
                 summary += " · zapret'ом не лечится: " + string.Join(", ", proxyOnly.ToArray());
 
             _form.Bridge.Send(WebBridge.Msg("diag.probe", "items", items, "summary", summary));
+        }
+
+        private void RunTcp16Ui(int count)
+        {
+            string path = System.IO.Path.Combine(Paths.BaseDir, "assets", "diag", "tcp16.json");
+            List<Tcp16Target> targets = Tcp16Test.LoadTargets(path);
+
+            string source = "assets\\diag\\tcp16.json";
+            if (targets.Count == 0)
+            {
+                targets = Tcp16Test.BuiltinTargets();
+                source = "встроенный список";
+            }
+
+            // разные провайдеры, а не первые N подряд
+            List<Tcp16Target> picked = new List<Tcp16Target>();
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (Tcp16Target t in targets)
+            {
+                if (!seen.Add(t.Provider)) continue;
+                picked.Add(t);
+                if (picked.Count >= Math.Max(1, count)) break;
+            }
+
+            List<Tcp16Result> results = Tcp16Test.ProbeAll(picked, 6000, 4);
+
+            List<object> items = new List<object>();
+            foreach (Tcp16Result r in results)
+            {
+                items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    { "provider", r.Provider },
+                    { "ip", r.Ip },
+                    { "port", (long)r.Port },
+                    { "bytes", (long)r.BytesSent },
+                    { "survived", r.Survived },
+                    { "blocked", r.LooksBlocked },
+                    { "detail", r.Detail ?? "" }
+                });
+            }
+
+            _form.Bridge.Send(WebBridge.Msg("diag.tcp16",
+                "items", items,
+                "verdict", Tcp16Test.Verdict(results) + " · источник: " + source));
         }
 
         private void RunDeepUi()

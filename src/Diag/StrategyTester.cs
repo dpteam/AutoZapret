@@ -226,6 +226,83 @@ namespace AutoZapret.Diag
             return 0;
         }
 
+        /// <summary>
+        /// --tcp16 [count]: тест обрыва по объёму (16-20 КБ).
+        /// Самый частый тип блокировки в РФ: handshake проходит, поток рвётся.
+        /// </summary>
+        public static int RunTcp16(string[] args)
+        {
+            int count = 8;
+            for (int i = 0; i < args.Length; i++)
+                if (string.Equals(args[i], "--tcp16", StringComparison.OrdinalIgnoreCase) &&
+                    i + 1 < args.Length && !args[i + 1].StartsWith("--"))
+                    int.TryParse(args[i + 1], out count);
+
+            Console.WriteLine("== тест обрыва по объёму (TCP 16-20 КБ) ==");
+
+            string path = System.IO.Path.Combine(Paths.BaseDir, "assets", "diag", "tcp16.json");
+            List<Tcp16Target> targets = Tcp16Test.LoadTargets(path);
+
+            string source = "assets\\diag\\tcp16.json";
+            if (targets.Count == 0)
+            {
+                targets = Tcp16Test.BuiltinTargets();
+                source = "встроенный список";
+            }
+
+            Console.WriteLine("источник: " + source + " (" + targets.Count + " целей)");
+
+            // берём разные провайдеры, а не первые N подряд
+            List<Tcp16Target> picked = PickDiverse(targets, Math.Max(1, count));
+
+            Console.WriteLine("проверяю " + picked.Count + " разных провайдеров, по " +
+                              Tcp16Test.TargetBytes / 1024 + " КБ на соединение");
+            Console.WriteLine();
+
+            List<Tcp16Result> results = Tcp16Test.ProbeAll(picked, 6000, 4);
+
+            foreach (Tcp16Result r in results)
+                Console.WriteLine("  " + r.ToLine());
+
+            Console.WriteLine();
+            Console.WriteLine(Tcp16Test.Verdict(results));
+
+            int blocked = 0;
+            foreach (Tcp16Result r in results) if (r.LooksBlocked) blocked++;
+
+            return blocked == 0 ? 0 : 2;
+        }
+
+        /// <summary>Берёт цели от разных провайдеров, чтобы выборка была осмысленной.</summary>
+        private static List<Tcp16Target> PickDiverse(List<Tcp16Target> targets, int count)
+        {
+            List<Tcp16Target> result = new List<Tcp16Target>();
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (Tcp16Target t in targets)
+            {
+                string key = t.Provider;
+                if (seen.Contains(key)) continue;
+
+                seen.Add(key);
+                result.Add(t);
+                if (result.Count >= count) break;
+            }
+
+            // если провайдеров меньше, чем нужно, добираем остальными
+            if (result.Count < count)
+            {
+                foreach (Tcp16Target t in targets)
+                {
+                    if (result.Contains(t)) continue;
+                    result.Add(t);
+                    if (result.Count >= count) break;
+                }
+            }
+
+            return result;
+        }
+
         /// <summary>--diagnose: 12 проверок окружения (почему не работает).</summary>
         public static int RunDiagnose(string[] args)
         {

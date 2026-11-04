@@ -99,6 +99,9 @@ namespace AutoZapret.App
 
                 Section("проверки окружения");
                 TestSystemChecks();
+
+                Section("тест TCP 16-20 КБ");
+                TestTcp16();
             }
             catch (Exception ex)
             {
@@ -1144,8 +1147,130 @@ namespace AutoZapret.App
             }
         }
 
-        private static void TestSystemChecks()
+        private static void TestTcp16()
         {
+            // ---- загрузка списка целей
+            string path = System.IO.Path.Combine(Paths.BaseDir, "assets", "diag", "tcp16.json");
+            List<AutoZapret.Diag.Tcp16Target> targets = AutoZapret.Diag.Tcp16Test.LoadTargets(path);
+
+            if (System.IO.File.Exists(path))
+            {
+                Check("tcp16.json загружен", targets.Count > 50, targets.Count + " целей");
+                Check("у целей есть IP",
+                    targets.TrueForAll(t => t.Ip.Length > 0), "ok");
+                Check("у целей есть провайдер",
+                    targets.TrueForAll(t => t.Provider.Length > 0), "ok");
+            }
+            else
+            {
+                Skip("tcp16.json", "файла нет");
+            }
+
+            // встроенный список должен быть непустым — это резерв
+            List<AutoZapret.Diag.Tcp16Target> builtin = AutoZapret.Diag.Tcp16Test.BuiltinTargets();
+            Check("встроенный список непуст", builtin.Count >= 5, builtin.Count + " целей");
+
+            // ---- вердикт на синтетических данных
+            List<AutoZapret.Diag.Tcp16Result> blocked = new List<AutoZapret.Diag.Tcp16Result>
+            {
+                new AutoZapret.Diag.Tcp16Result { Provider = "A", BytesSent = 18000, LooksBlocked = true },
+                new AutoZapret.Diag.Tcp16Result { Provider = "B", BytesSent = 20000, LooksBlocked = true },
+                new AutoZapret.Diag.Tcp16Result { Provider = "C", BytesSent = 40960, Survived = true }
+            };
+            string blockedVerdict = AutoZapret.Diag.Tcp16Test.Verdict(blocked);
+            Check("вердикт: обрыв обнаружен",
+                blockedVerdict.IndexOf("ОБНАРУЖЕН", StringComparison.Ordinal) >= 0, blockedVerdict);
+            Check("вердикт: называет seqovl",
+                blockedVerdict.IndexOf("seqovl", StringComparison.OrdinalIgnoreCase) >= 0, "ok");
+
+            List<AutoZapret.Diag.Tcp16Result> clean = new List<AutoZapret.Diag.Tcp16Result>
+            {
+                new AutoZapret.Diag.Tcp16Result { Provider = "A", BytesSent = 40960, Survived = true },
+                new AutoZapret.Diag.Tcp16Result { Provider = "B", BytesSent = 40960, Survived = true }
+            };
+            string cleanVerdict = AutoZapret.Diag.Tcp16Test.Verdict(clean);
+            Check("вердикт: обрыва нет",
+                cleanVerdict.IndexOf("не обнаружено", StringComparison.Ordinal) >= 0, cleanVerdict);
+
+            // ---- реальная проверка против ЛОКАЛЬНОГО сервера:
+            //      он читает всё, поэтому обрыва быть не должно
+            TestTcp16Local();
+        }
+
+        /// <summary>
+        /// Поднимает локальный TCP-сервер, который читает всё, и проверяет,
+        /// что Probe() видит «пережило». Это ловит ошибки в логике подсчёта
+        /// байт и в определении обрыва, не завися от интернета.
+        /// </summary>
+        private static bool TestTcp16Local()
+        {
+            System.Net.Sockets.TcpListener listener = null;
+            System.Threading.Thread server = null;
+            int port;
+
+            try
+            {
+                listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+                listener.Start();
+                port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+
+                server = new System.Threading.Thread(() =>
+                {
+                    try
+                    {
+                        using (System.Net.Sockets.TcpClient client = listener.AcceptTcpClient())
+                        using (System.Net.Sockets.NetworkStream stream = client.GetStream())
+                        {
+                            byte[] sink = new byte[8192];
+                            DateTime until = DateTime.UtcNow.AddSeconds(10);
+
+                            // читаем всё, что пришлют
+                            while (DateTime.UtcNow < until)
+                            {
+                                if (!stream.DataAvailable) { System.Threading.Thread.Sleep(10); continue; }
+                                int n = stream.Read(sink, 0, sink.Length);
+                                if (n <= 0) break;
+                            }
+                        }
+                    }
+                    catch { }
+                })
+                { IsBackground = true, Name = "selftest-tcp16" };
+
+                server.Start();
+
+                AutoZapret.Diag.Tcp16Target target = new AutoZapret.Diag.Tcp16Target
+                {
+                    Id = "local",
+                    Provider = "local",
+                    Ip = "127.0.0.1",
+                    Port = port
+                };
+
+                AutoZapret.Diag.Tcp16Result result = AutoZapret.Diag.Tcp16Test.Probe(target, 5000);
+
+                Check("TCP16: локальный сервер -> пережило",
+                    result.Survived && result.BytesSent >= AutoZapret.Diag.Tcp16Test.TargetBytes,
+                    result.BytesSent + " байт, " + result.Detail);
+
+                Check("TCP16: не помечено как обрыв",
+                    !result.LooksBlocked, result.LooksBlocked.ToString());
+
+                return result.Survived;
+            }
+            catch (Exception ex)
+            {
+                Check("TCP16: локальный сервер", false, ex.Message);
+                return false;
+            }
+            finally
+            {
+                try { if (listener != null) listener.Stop(); } catch { }
+                try { if (server != null) server.Join(1000); } catch { }
+            }
+        }
+
+        private static void TestSystemChecks()        {
             // ---- chcp 437: без него netsh/sc отвечают на языке системы
             string output = AutoZapret.Diag.SystemChecks.Cmd("echo chcp-test");
             Check("Cmd() возвращает вывод", output.IndexOf("chcp-test", StringComparison.Ordinal) >= 0,

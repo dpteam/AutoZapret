@@ -42,6 +42,7 @@ namespace AutoZapret.App
             if (HasFlag(args, "--auto-once")) return Diag.DiagCommand.RunAutoOnce(args);
             if (HasFlag(args, "--import-fakes")) return Diag.DiagCommand.RunImportFakes(args);
             if (HasFlag(args, "--diagnose")) return Diag.DiagCommand.RunDiagnose(args);
+            if (HasFlag(args, "--tcp16")) return Diag.DiagCommand.RunTcp16(args);
             if (HasFlag(args, "--scores-reset")) return Diag.DiagCommand.RunScoresReset(args);
             if (HasFlag(args, "--hosts-restore")) return Diag.DiagCommand.RunHostsRestore(args);
             if (HasFlag(args, "--update-engine")) return Diag.DiagCommand.RunUpdateEngine(args);

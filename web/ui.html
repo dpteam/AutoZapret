@@ -170,6 +170,30 @@
       </div>
 
       <div class="card">
+        <div class="card-title">Шаг 2б — обрыв по объёму (16-20 КБ)</div>
+        <div class="row">
+          <div>
+            <div class="row-label">Проверить обрыв на 16-20 КБ</div>
+            <div class="row-hint">
+              Сайт открывается и висит? Провайдер рвёт поток после ~16 КБ. Лечится seqovl-стратегиями
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select id="diag-tcp16-count">
+              <option value="6">6 провайдеров</option>
+              <option value="8" selected>8 провайдеров</option>
+              <option value="12">12 провайдеров</option>
+            </select>
+            <button class="btn" id="btn-diag-tcp16">Проверить</button>
+          </div>
+        </div>
+        <div id="diag-tcp16-result" style="display:none;margin-top:12px">
+          <div class="diag-list" id="diag-tcp16-list"></div>
+          <div id="diag-tcp16-verdict" class="advice" style="margin-top:12px"></div>
+        </div>
+      </div>
+
+      <div class="card">
         <div class="card-title">Шаг 3 — подобрать стратегию</div>
         <div class="row">
           <div>
