@@ -1565,7 +1565,8 @@ namespace AutoZapret.Diag
                 }
                 else
                 {
-                    foreach (Strategy s in svc.Strategies.All)
+                    // только стратегии текущего движка: у v2 свой exe и lua
+                    foreach (Strategy s in svc.Strategies.ByEngine(Settings.Current.EngineKind))
                     {
                         ids.Add(s.Id);
                         if (ids.Count >= limit) break;

@@ -222,13 +222,24 @@ namespace AutoZapret.Zapret
             return _supervisor.Stop();
         }
 
-        /// <summary>Список стратегий для UI (плоский, без аргументов).</summary>
-        public List<Dictionary<string, object>> DescribeStrategies()
+        /// <summary>
+        /// Список стратегий для UI (плоский, без аргументов).
+        ///
+        /// engine фильтрует по движку: у v1 и v2 названия стратегий совпадают
+        /// («general (ALT12)» есть в обоих), и общий список превращался в кашу
+        /// из 44 почти одинаковых строк. Хуже: можно было выбрать стратегию
+        /// чужого движка — она запускала не тот exe.
+        /// </summary>
+        public List<Dictionary<string, object>> DescribeStrategies(string engine = null)
         {
             EnsureStrategies();
 
+            IEnumerable<Strategy> source = string.IsNullOrEmpty(engine)
+                ? _store.All
+                : _store.ByEngine(engine);
+
             List<Dictionary<string, object>> result = new List<Dictionary<string, object>>();
-            foreach (Strategy s in _store.All)
+            foreach (Strategy s in source)
             {
                 List<object> targets = new List<object>();
                 foreach (string t in s.Targets) targets.Add(t);

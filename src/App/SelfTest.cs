@@ -138,6 +138,9 @@ namespace AutoZapret.App
 
                 Section("разбор пакетов (свой движок)");
                 TestPacketParser();
+
+                Section("стратегии по движкам");
+                TestStrategiesByEngine();
             }
             catch (Exception ex)
             {
@@ -1188,6 +1191,63 @@ namespace AutoZapret.App
         /// и что SNI реально читается из байтов: «выглядит как TLS» проверяется
         /// разбором, а не на глаз.
         /// </summary>
+        /// <summary>
+        /// Стратегии обязаны делиться по движкам, и id не должны пересекаться.
+        ///
+        /// Названия пересекаются («general (ALT12)» есть и там, и там), поэтому
+        /// общий список из 44 строк выглядел как дубликаты, и можно было выбрать
+        /// стратегию чужого движка — она запускала не тот exe.
+        /// </summary>
+        private static void TestStrategiesByEngine()
+        {
+            AutoZapret.Zapret.StrategyStore store;
+
+            using (AutoZapret.Zapret.ZapretService svc = new AutoZapret.Zapret.ZapretService())
+            {
+                svc.EnsureStrategies();
+                store = svc.Strategies;
+            }
+
+            List<AutoZapret.Zapret.Strategy> v1 = store.ByEngine("v1");
+            List<AutoZapret.Zapret.Strategy> v2 = store.ByEngine("v2");
+
+            Check("стратегии: v1 найдены", v1.Count >= 20, v1.Count + " шт.");
+            Check("стратегии: v2 найдены", v2.Count >= 20, v2.Count + " шт.");
+
+            bool v1IdsOk = v1.TrueForAll(s => s.Id.StartsWith("flowseal.", StringComparison.Ordinal));
+            bool v2IdsOk = v2.TrueForAll(s => s.Id.StartsWith("zapret2.", StringComparison.Ordinal));
+
+            Check("стратегии: id v1 с префиксом flowseal", v1IdsOk, "ok");
+            Check("стратегии: id v2 с префиксом zapret2", v2IdsOk, "ok");
+
+            // пересечение id означало бы, что выбор стратегии неоднозначен
+            HashSet<string> v1Set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (AutoZapret.Zapret.Strategy s in v1) v1Set.Add(s.Id);
+
+            int overlap = 0;
+            foreach (AutoZapret.Zapret.Strategy s in v2)
+                if (v1Set.Contains(s.Id)) overlap++;
+
+            Check("стратегии: id не пересекаются", overlap == 0, overlap + " пересечений");
+
+            // названия при этом совпадают — именно поэтому фильтр по движку обязателен
+            HashSet<string> v1Names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (AutoZapret.Zapret.Strategy s in v1) v1Names.Add(s.Name);
+
+            int sameNames = 0;
+            foreach (AutoZapret.Zapret.Strategy s in v2)
+                if (v1Names.Contains(s.Name)) sameNames++;
+
+            Check("стратегии: названия совпадают (нужен фильтр по движку)",
+                sameNames > 0, sameNames + " совпадающих названий");
+
+            // v2 требует lua: это и есть причина «не находит blobs.lua»
+            bool v2HasLua = v2.Exists(s => s.Profiles.Count > 0 &&
+                                           s.Profiles[0].Args.Exists(a => a.IndexOf("lua", StringComparison.OrdinalIgnoreCase) >= 0));
+
+            Check("стратегии: v2 использует lua", v2HasLua, v2HasLua ? "ok" : "не найдено ни одной");
+        }
+
         /// <summary>
         /// Разбор пакетов для своего движка. Проверяем синтетикой: настоящий
         /// сниффер требует прав администратора, а арифметику смещений надо

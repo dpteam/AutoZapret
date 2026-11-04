@@ -61,6 +61,14 @@ if (Test-Path (Join-Path $root 'tools\check-ui-ids.js')) {
     Write-Host "[skip] check-ui-ids.js не найден"
 }
 
+# переводы: нет сирот, нет непереведённых, нет строк без ключа
+if (Test-Path (Join-Path $root 'tools\add-i18n-keys.js')) {
+    & node (Join-Path $root 'tools\add-i18n-keys.js') | Write-Host
+    if ($LASTEXITCODE -ne 0) { Fail "словарь переводов неполный" } else { Ok "словарь переводов полный" }
+} else {
+    Write-Host "[skip] add-i18n-keys.js не найден"
+}
+
 # ------------------------------------------------------------------- 2. скрипты
 Section "PowerShell-скрипты"
 $scripts = Get-ChildItem (Join-Path $root 'tools') -Filter '*.ps1'

@@ -496,6 +496,56 @@ namespace AutoZapret.Lists
         }
 
         /// <summary>Восстанавливает hosts из резервной копии. null = успех.</summary>
+        /// <summary>
+        /// Пересоздать hosts с нуля: только стандартные записи localhost.
+        ///
+        /// Это крайняя мера — всё остальное содержимое файла пропадает. Нужна,
+        /// когда файл уже испорчен прошлыми правками и проще начать заново.
+        /// Бэкап делается один раз при первом изменении хоть чего-то, поэтому
+        /// «Восстановить» остаётся доступной страховкой.
+        /// </summary>
+        public static string ResetToDefault()
+        {
+            try
+            {
+                // бэкап до перезаписи: без него «Восстановить» станет бесполезной
+                if (!File.Exists(BackupPath))
+                {
+                    try
+                    {
+                        if (File.Exists(SystemPath)) File.Copy(SystemPath, BackupPath, false);
+                        else File.WriteAllText(BackupPath, "", new UTF8Encoding(false));
+
+                        Log.Info("HOSTS", "резервная копия перед сбросом: " + BackupPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warn("HOSTS", "не удалось сделать резервную копию: " + ex.Message);
+                    }
+                }
+
+                StringBuilder clean = new StringBuilder();
+                clean.AppendLine("# hosts — пересоздан AutoZapret");
+                clean.AppendLine("# Восстановить прежнее: Списки → Hosts → Восстановить");
+                clean.AppendLine("127.0.0.1 localhost");
+                clean.AppendLine("::1 localhost");
+
+                AtomicFile.WriteAllText(SystemPath, clean.ToString(), new UTF8Encoding(false));
+
+                Log.Info("HOSTS", "hosts пересоздан с нуля");
+                return null;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return "Нет прав на запись hosts. Запустите AutoZapret от имени администратора.";
+            }
+            catch (Exception ex)
+            {
+                Log.Exception("HOSTS", "пересоздание hosts", ex);
+                return ex.Message;
+            }
+        }
+
         public static string Restore()
         {
             try

@@ -496,6 +496,28 @@ namespace AutoZapret.App
 
                 RunInBackground("hosts-apply", () => ApplyHostsUi(verify));
             });
+            bridge.Register("hosts.reset", msg =>
+            {
+                if (!EnsureElevation()) return;
+
+                RunInBackground("hosts-reset", () =>
+                {
+                    string error = HostsFile.ResetToDefault();
+
+                    if (error != null)
+                    {
+                        SendHosts(false, true, "Не получилось: " + error, null);
+                        _tray.Notify(AppInfo.Name, "hosts: " + error, ToolTipIcon.Error);
+                        return;
+                    }
+
+                    Log.Info("HOSTS", "hosts пересоздан с нуля");
+                    SendHosts(true, false,
+                        "hosts пересоздан: только localhost. Прежнее — через «Восстановить»", null);
+                    _tray.Notify(AppInfo.Name, "hosts пересоздан с нуля", ToolTipIcon.Info);
+                });
+            });
+
             bridge.Register("hosts.check", msg => RunInBackground("hosts-check", CheckHostsUi));
             bridge.Register("hosts.restore", msg =>
             {
@@ -1596,19 +1618,50 @@ namespace AutoZapret.App
             }
 
             Baseline.Snapshot baseline = Baseline.Load();
+
+            // Замера нет или он пуст — не отфутболиваем человека «сначала нажмите
+            // Проверить сеть», а замеряем сами. Пустой бывает и после hosts-правок:
+            // сайт «открывается» через захардкоженный IP, значит «ничего не
+            // заблокировано», и подбор отменялся ни с того ни с сего.
             if (baseline == null || baseline.Blocked.Count == 0)
             {
-                AbortTest("сначала выполните «Проверить сеть» в шаге 1");
+                // При включённом обходе замер бессмысленен — глушим движок
+                if (_zapret.State == ProtectionState.Running)
+                {
+                    _form.Bridge.Send(WebBridge.Msg("diag.progress",
+                        "line", "останавливаю обход для замера…", "done", false));
+
+                    _zapret.Stop();
+                    Thread.Sleep(1200);
+                }
+
+                _form.Bridge.Send(WebBridge.Msg("diag.progress",
+                    "line", "замеряю, что заблокировано (это ~20–40 с)…", "done", false));
+
+                baseline = Baseline.Measure(new ConnectivityProbe(), 10, true);
+            }
+
+            if (baseline == null || baseline.Blocked.Count == 0)
+            {
+                AbortTest("ничего не заблокировано — похоже, обход не нужен или уже работает");
                 return;
             }
 
             _zapret.EnsureStrategies();
 
+            // Перебираем стратегии ТЕКУЩЕГО движка: у v2 другой exe и lua,
+            // стратегии v1 под ним просто не запустятся.
             List<string> ids = new List<string>();
-            foreach (Strategy s in _zapret.Strategies.All)
+            foreach (Strategy s in _zapret.Strategies.ByEngine(_settings.EngineKind))
             {
                 ids.Add(s.Id);
                 if (ids.Count >= count) break;
+            }
+
+            if (ids.Count == 0)
+            {
+                AbortTest("для движка " + _settings.EngineKind + " нет стратегий");
+                return;
             }
 
             StrategyTester tester = new StrategyTester(_zapret, new ConnectivityProbe());
@@ -1792,6 +1845,27 @@ namespace AutoZapret.App
 
             Log.Info("WINWS", "смена движка на " + kind + (wasRunning ? " (обход был включён)" : ""));
 
+            // Проверяем, что движок вообще установлен. Раньше переключение
+            // проходило молча, настройка сохранялась, и только потом выяснялось,
+            // что нет lua или exe — уже в виде непонятной ошибки стратегии.
+            EngineKind wanted = string.Equals(kind, "v2", StringComparison.OrdinalIgnoreCase)
+                ? EngineKind.V2
+                : EngineKind.V1;
+
+            try { _zapret.Engine.Refresh(); } catch { }
+
+            if (!_zapret.Engine.IsAvailable(wanted))
+            {
+                string reason = _zapret.Engine.UnavailableReason(wanted);
+
+                Log.Warn("WINWS", "движок " + kind + " недоступен: " + reason);
+                _tray.Notify(AppInfo.Name, "Движок не переключён: " + reason, ToolTipIcon.Warning);
+
+                PushState();
+                PushStrategies();
+                return;
+            }
+
             if (wasRunning)
             {
                 _zapret.Stop();
@@ -1890,7 +1964,7 @@ namespace AutoZapret.App
             List<Dictionary<string, object>> list;
             try
             {
-                list = _zapret.DescribeStrategies();
+                list = _zapret.DescribeStrategies(_settings.EngineKind);
             }
             catch (Exception ex)
             {

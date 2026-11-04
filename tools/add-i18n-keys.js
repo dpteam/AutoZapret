@@ -38,8 +38,18 @@ const orphans = Object.keys(dict).filter(
 
 const cyrillic = Object.keys(dict).filter((k) => !k.startsWith("_") && /[\u0400-\u04FF]/.test(dict[k]));
 
+// Тексты в разметке, для которых нет перевода: ищем текстовые узлы с кириллицей
+// и сверяем с ключами. Так ловится «добавил строку в UI, словарь забыл».
+const rawHtml = fs.readFileSync(path.join(root, "web", "ui.html"), "utf8");
+const textNodes = [...rawHtml.matchAll(/>([^<>]*[\u0400-\u04FF][^<>]*)</g)]
+  .map((m) => m[1].replace(/\s+/g, " ").trim())
+  .filter((t) => t.length > 0);
+
+const missing = [...new Set(textNodes)].filter((t) => !dict[t]);
+
 console.log("keys: " + Object.keys(dict).length + ", added: " + added);
 console.log("orphans: " + orphans.length + (orphans.length ? " " + JSON.stringify(orphans) : ""));
 console.log("untranslated: " + cyrillic.length + (cyrillic.length ? " " + JSON.stringify(cyrillic) : ""));
+console.log("missing: " + missing.length + (missing.length ? " " + JSON.stringify(missing) : ""));
 
-process.exit(orphans.length === 0 && cyrillic.length === 0 ? 0 : 1);
+process.exit(orphans.length === 0 && cyrillic.length === 0 && missing.length === 0 ? 0 : 1);

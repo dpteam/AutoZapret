@@ -1404,6 +1404,19 @@
             clean.textContent = "Чищу…";
             send("hosts.clean");
         });
+
+        // полный сброс: остаётся только localhost
+        var reset = document.getElementById("btn-hosts-reset");
+        if (reset) reset.addEventListener("click", function () {
+            if (!window.confirm(
+                "hosts будет ПЕРЕСОЗДАН: останется только 127.0.0.1 localhost.\n\n" +
+                "Все остальные записи пропадут. Резервная копия сохранится,\n" +
+                "вернуть прежнее можно кнопкой «Восстановить». Продолжить?")) return;
+
+            reset.disabled = true;
+            reset.textContent = "Пересоздаю…";
+            send("hosts.reset");
+        });
     }
 
     function renderHosts(msg) {
