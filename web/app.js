@@ -1757,10 +1757,14 @@
             var sel = document.getElementById("hosts-fix-select");
             if (!sel || !sel.value) return;
 
-            send("hosts.fix.apply", {
-                id: sel.value,
-                text: document.getElementById("hosts-raw-input").value
-            });
+            var text = document.getElementById("hosts-raw-input").value;
+            var remote = sel.options[sel.selectedIndex].getAttribute("data-remote") === "1";
+
+            fixApply.disabled = true;
+            fixApply.textContent = remote ? "Скачиваю…" : "Применяю…";
+
+            if (remote) send("hosts.source.apply", { id: sel.value, text: text });
+            else send("hosts.fix.apply", { id: sel.value, text: text });
         });
     }
 
@@ -1873,12 +1877,18 @@
         items.forEach(function (f) {
             var opt = document.createElement("option");
             opt.value = f.id;
-            opt.textContent = f.name + " (" + f.count + ")";
+            // у скачиваемых источников нет фиксированного числа записей:
+            // показывать «(0)» было бы враньём, поэтому помечаем словом
+            opt.textContent = f.name + (f.remote ? " · из сети" : " (" + f.count + ")");
+            opt.setAttribute("data-remote", f.remote ? "1" : "0");
             if (f.note) opt.title = f.note;
             sel.appendChild(opt);
         });
 
         if (current) sel.value = current;
+
+        var apply = document.getElementById("btn-hosts-fix-apply");
+        if (apply) { apply.disabled = false; apply.textContent = "Применить"; }
     }
 
     function renderHosts(msg) {

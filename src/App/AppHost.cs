@@ -761,6 +761,68 @@ namespace AutoZapret.App
 
             bridge.Register("hosts.fixes", msg => SendHostsFixes());
 
+            // Скачиваемый источник: забираем в момент применения, чтобы список
+            // был свежим. Дубли не плодим — только то, чего ещё нет.
+            bridge.Register("hosts.source.apply", msg =>
+            {
+                string id = Json.GetString(msg, "id", "");
+                string text = Json.GetString(msg, "text", "");
+
+                HostsSource source = HostsFixes.FindSource(id);
+
+                if (source == null)
+                {
+                    bridge.Send(WebBridge.Msg("hosts.edited", "text", text,
+                        "summary", "источник не найден: " + id));
+                    return;
+                }
+
+                RunInBackground("hosts-source", () =>
+                {
+                    string error;
+                    string downloaded = HostsFixes.Download(source, out error);
+
+                    if (downloaded == null)
+                    {
+                        Log.Warn("HOSTS", "источник " + source.Name + " не скачался: " + error);
+
+                        bridge.Send(WebBridge.Msg("hosts.edited", "text", text,
+                            "summary", "«" + source.Name + "» не скачался: " + error));
+                        return;
+                    }
+
+                    // Разбираем скачанное тем же парсером, что и обычные записи:
+                    // один набор правил на всё, иначе источники и ручной ввод
+                    // начнут расходиться в поведении.
+                    HostsReport report = new HostsReport();
+                    List<HostsRow> rows = HostsEditor.Parse(downloaded, report);
+
+                    List<KeyValuePair<string, string>> entries = new List<KeyValuePair<string, string>>();
+
+                    foreach (HostsRow row in rows)
+                        foreach (string host in row.Hosts)
+                            entries.Add(new KeyValuePair<string, string>(row.Ip, host));
+
+                    if (entries.Count == 0)
+                    {
+                        bridge.Send(WebBridge.Msg("hosts.edited", "text", text,
+                            "summary", "«" + source.Name + "» скачан, но записей в нём нет"));
+                        return;
+                    }
+
+                    string updated = HostsEditor.AddEntries(text, source.Name, entries);
+
+                    HostsReport before = HostsEditor.Analyze(text);
+                    HostsReport after = HostsEditor.Analyze(updated);
+
+                    bridge.Send(WebBridge.Msg("hosts.edited",
+                        "text", updated,
+                        "summary", "«" + source.Name + "»: записей в источнике " + entries.Count +
+                                   ", имён было " + before.UniqueHosts + " → стало " + after.UniqueHosts +
+                                   " · не забудьте «Сохранить»"));
+                });
+            });
+
             bridge.Register("hosts.fix.apply", msg =>
             {
                 string id = Json.GetString(msg, "id", "");
@@ -1642,7 +1704,7 @@ namespace AutoZapret.App
             return result;
         }
 
-        /// <summary>Список готовых фиксов для hosts.</summary>
+        /// <summary>Список готовых фиксов и скачиваемых источников для hosts.</summary>
         private void SendHostsFixes()
         {
             List<object> items = new List<object>();
@@ -1654,7 +1716,21 @@ namespace AutoZapret.App
                     { "id", fix.Id },
                     { "name", fix.Name },
                     { "note", fix.Note ?? "" },
-                    { "count", (long)fix.Count }
+                    { "count", (long)fix.Count },
+                    { "remote", false }
+                });
+            }
+
+            foreach (HostsSource source in HostsFixes.Sources())
+            {
+                items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    { "id", source.Id },
+                    { "name", source.Name },
+                    { "note", source.Note ?? "" },
+                    { "count", 0L },
+                    { "remote", true },
+                    { "url", source.Url }
                 });
             }
 

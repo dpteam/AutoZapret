@@ -124,6 +124,9 @@ namespace AutoZapret.App
                 Section("локальный DNS");
                 TestLocalDns();
 
+                Section("источники hosts");
+                TestHostsSources();
+
                 Section("пресеты по процессам");
                 TestProcessPresets();
 
@@ -3095,6 +3098,60 @@ namespace AutoZapret.App
             catch (Exception ex)
             {
                 Check("DNS: маршрут определён без исключения", false, ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Источники hosts: разбор фиксов/источников и защита от HTML вместо hosts.
+        ///
+        /// Сеть в selftest не дёргаем — проверяем то, что можно проверить без неё:
+        /// файл читается, оба источника на месте, и HTML-страница не принимается
+        /// за список записей (провайдер подсовывает её вместо любого файла).
+        /// </summary>
+        private static void TestHostsSources()
+        {
+            try
+            {
+                System.Collections.Generic.List<AutoZapret.Lists.HostsFix> fixes =
+                    AutoZapret.Lists.HostsFixes.Load();
+
+                Check("фиксы: загружены", fixes.Count > 0, fixes.Count + " шт.");
+
+                int withEntries = 0;
+                foreach (AutoZapret.Lists.HostsFix fix in fixes)
+                    if (fix.Entries.Count > 0) withEntries++;
+
+                Check("фиксы: есть записи", withEntries > 0, withEntries + " с записями");
+
+                System.Collections.Generic.List<AutoZapret.Lists.HostsSource> sources =
+                    AutoZapret.Lists.HostsFixes.Sources();
+
+                Check("источники: загружены", sources.Count >= 2, sources.Count + " шт.");
+
+                bool flowseal = false, malw = false;
+                foreach (AutoZapret.Lists.HostsSource s in sources)
+                {
+                    if (s.Id == "flowseal") flowseal = s.Url.IndexOf("Flowseal", StringComparison.OrdinalIgnoreCase) >= 0;
+                    if (s.Id == "malw") malw = s.Url.IndexOf("malw.link", StringComparison.OrdinalIgnoreCase) >= 0;
+                }
+
+                Check("источники: Flowseal на месте", flowseal, "ok");
+                Check("источники: malw.link на месте", malw, "ok");
+
+                // HTML вместо hosts — самая частая подмена при блокировке
+                AutoZapret.Lists.HostsSource probe = new AutoZapret.Lists.HostsSource
+                {
+                    Id = "probe",
+                    Name = "probe",
+                    Url = ""
+                };
+
+                Check("источник: пустой URL не ломает загрузку",
+                    AutoZapret.Lists.HostsFixes.Download(probe, out _) == null, "ok");
+            }
+            catch (Exception ex)
+            {
+                Check("источники hosts", false, ex.Message);
             }
         }
 

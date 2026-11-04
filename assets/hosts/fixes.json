@@ -1,5 +1,5 @@
 {
-  "_comment": "Готовые записи для hosts. Формат: id, name, note, entries[{ip, host}]. Правьте руками — программа только читает.",
+  "_comment": "Готовые записи для hosts. Правьте руками — программа только читает. fixes: статичные записи, sources: скачиваемые списки (обновляются при каждом применении).",
   "fixes": [
     {
       "id": "xbox",
@@ -11,6 +11,22 @@
         { "ip": "143.20.64.55", "host": "xgpuwebf2p.gssv-play-prod.xboxlive.com" },
         { "ip": "143.20.64.55", "host": "xgpuweb.gssv-play-prod.xboxlive.com" }
       ]
+    }
+  ],
+  "sources": [
+    {
+      "id": "flowseal",
+      "name": "Flowseal (обновляемый)",
+      "url": "https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/main/.service/hosts",
+      "note": "Тот же hosts, что в сборке Flowseal: выверен под их стратегии — github, raw.githubusercontent и прочее, чтобы zapret мог сам обновляться. Скачивается заново при каждом применении.",
+      "cache": "flowseal-hosts.txt"
+    },
+    {
+      "id": "malw",
+      "name": "dns.malw.link (обновляемый)",
+      "url": "https://info.dns.malw.link/hosts",
+      "note": "Большой список заблокированных ресурсов от dns.malw.link. Много записей: применяется только то, чего у вас ещё нет.",
+      "cache": "malw-hosts.txt"
     }
   ]
 }
