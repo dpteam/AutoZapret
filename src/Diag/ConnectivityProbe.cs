@@ -236,8 +236,10 @@ namespace AutoZapret.Diag
                     // все проверки падают, хотя браузер открывает сайт.
                     // errormsg + код возврата: «none соединения» не говорит ничего,
                     // а «DNS» / «таймаут» / «TLS» сразу ведут к причине.
-                    Arguments = "-4 -s -o NUL --noproxy \"*\" --max-time " + timeoutSec +
-                                " -w \"%{http_code}|%{time_total}|%{errormsg}\" \"" + target.Url + "\"",
+                    // --resolve + --noproxy: адрес берём из DoH, а не из системного
+                    // DNS (его могут подменять), и не идём в случайный прокси из
+                    // переменных окружения. Проверяем DPI, а не чужую заглушку.
+                    Arguments = CurlArguments(target, timeoutSec),
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardOutput = true,
@@ -281,6 +283,37 @@ namespace AutoZapret.Diag
                 result.Error = ex.Message;
                 return result;
             }
+        }
+
+        /// <summary>
+        /// Аргументы curl. Адрес берём из нашего резолвера (DoH), а не из системного
+        /// DNS: если провайдер подменяет DNS, curl придёт на заглушку и «0/4»
+        /// будет означать подмену, а не сломанный обход. `--resolve` подставляет
+        /// адрес, оставляя правильный SNI и Host.
+        /// </summary>
+        private static string CurlArguments(ProbeTarget target, int timeoutSec)
+        {
+            string common = "-4 -s -o NUL --noproxy \"*\" --max-time " + timeoutSec +
+                            " -w \"%{http_code}|%{time_total}|%{errormsg}\"";
+
+            string host;
+            try { host = new Uri(target.Url).Host; }
+            catch { host = ""; }
+
+            if (host.Length > 0)
+            {
+                try
+                {
+                    Resolver.Result resolved = Resolver.Resolve(host);
+
+                    if (resolved.Ok && resolved.Primary != null)
+                        return common + " --resolve \"" + host + ":443:" + resolved.Primary + "\" \"" +
+                               target.Url + "\"";
+                }
+                catch { }
+            }
+
+            return common + " \"" + target.Url + "\"";
         }
 
         /// <summary>

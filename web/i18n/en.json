@@ -219,8 +219,8 @@
   "Сниффер WinDivert": "WinDivert sniffer",
   "Слушает TCP/443 и показывает, что реально проходит мимо DPI. Если здесь пусто — стратегии не помогут": "Listens on TCP/443 and shows what actually goes past the DPI. If this stays empty, strategies will not help",
   "Слушать 8 с": "Listen 8 s",
-  "13 проверок системы": "13 system checks",
   "Объяснить выбранную": "Explain selected",
   "«Объяснить» запускает одну стратегию с отладочным выводом winws и показывает, что он сделал с соединениями. Полезно, когда все стратегии дают нули": "\"Explain\" runs one strategy with winws debug output and shows what it did with the connections. Useful when every strategy scores zero",
-  "Запускаю с отладкой…": "Starting with debug…"
+  "Запускаю с отладкой…": "Starting with debug…",
+  "14 проверок системы": "14 system checks"
 }

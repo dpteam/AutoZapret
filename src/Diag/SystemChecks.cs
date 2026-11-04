@@ -67,6 +67,7 @@ namespace AutoZapret.Diag
             results.Add(Safe("Свободное место", CheckDiskSpace, progress));
             results.Add(Safe("Время системы", CheckSystemTime, progress));
             results.Add(Safe("Маршрут в интернет", CheckDefaultRoute, progress));
+            results.Add(Safe("DNS-ответы", CheckDns, progress));
 
             return results;
         }
@@ -407,8 +408,8 @@ namespace AutoZapret.Diag
 
             if (fakeIp.Length > 0)
             {
-                r.Status = CheckStatus.Fail;
-                r.Detail = "трафик в туннеле: DNS отдаёт fake-IP";
+                r.Status = CheckStatus.Warn;
+                r.Detail = "системный DNS отдаёт заглушку (подмена или fake-IP)";
                 r.Advice = fakeIp;
                 return r;
             }
@@ -719,6 +720,47 @@ namespace AutoZapret.Diag
                 r.Detail = ex.Message;
             }
 
+            return r;
+        }
+
+        /// <summary>
+        /// DNS: кто отвечает и подменяют ли ответ.
+        ///
+        /// Провайдер перехватывает порт 53 целиком, поэтому «пропиши 8.8.8.8»
+        /// не помогает: ответ приходит от перехватчика, а не от Google. Отличить
+        /// подмену можно только сравнив с независимым каналом — DoH по IP.
+        /// Если системный отдаёт 198.18.x, а DoH настоящий адрес, то движок тут
+        /// ни при чём: до DPI просто не доходит трафик.
+        /// </summary>
+        private static CheckResult CheckDns()
+        {
+            CheckResult r = new CheckResult { Name = "DNS-ответы" };
+
+            string servers = Resolver.DnsServers();
+            Resolver.Result resolved = Resolver.Resolve("www.youtube.com");
+
+            if (!resolved.Ok)
+            {
+                r.Status = CheckStatus.Fail;
+                r.Detail = "ни DoH, ни системный DNS не ответили (серверы: " + servers + ")";
+                r.Advice = "Проверьте интернет и попробуйте другой DNS. DoH: 1.1.1.1, 8.8.8.8.";
+                return r;
+            }
+
+            if (resolved.SystemLooksHijacked)
+            {
+                r.Status = CheckStatus.Warn;
+                r.Detail = "системный DNS подменяется: " + resolved.SystemAnswer +
+                           ", DoH даёт " + resolved.Text();
+                r.Advice = "Провайдер перехватывает DNS. AutoZapret проверяет и тестирует через DoH " +
+                           "(1.1.1.1/8.8.8.8), поэтому обход измеряется по-настоящему. " +
+                           "В браузере включите «Secure DNS» на 1.1.1.1 — иначе он будет ходить " +
+                           "на заглушку. Серверы в системе: " + servers;
+                return r;
+            }
+
+            r.Status = CheckStatus.Ok;
+            r.Detail = resolved.Text() + " (" + resolved.Source + "), серверы: " + servers;
             return r;
         }
 

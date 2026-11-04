@@ -1103,7 +1103,8 @@
                     '<span class="name">' + s.name + '</span>' +
                     '<span class="verdict ' + (s.tlsOk ? "diag-ok" : "diag-bad") + '">' + s.verdict + '</span>' +
                     '<span class="detail">DNS: ' + (s.dns || "?") +
-                        ' · TCP: ' + (s.tcp || "?") + ' · TLS: ' + (s.tls || "?") + '</span>';
+                        ' · TCP: ' + (s.tcp || "?") + ' · TLS: ' + (s.tls || "?") +
+                        (s.note ? '<br>! ' + s.note : "") + '</span>';
 
                 stages.appendChild(div);
             });

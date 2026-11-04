@@ -34,18 +34,21 @@ namespace AutoZapret.Diag
         /// <summary>Где именно всё встало — одной строкой.</summary>
         public string Verdict()
         {
-            if (!DnsOk) return "DNS не отвечает";
+            if (!DnsOk) return "DNS не отвечает ни через DoH, ни через систему";
 
             // fake-IP: подключение к 198.18.x «успешно» за 1 мс, потому что это
-            // локальный туннель VPN, а не сайт. Без этой ветки вывод врал:
+            // локальная заглушка, а не сайт. Без этой ветки вывод врал:
             // «TCP есть, TLS рвётся — лечится desync», хотя desync тут бессилен.
             if (FakeIp.Length > 0)
-                return "DNS отдаёт fake-IP " + FakeIp + " — трафик в туннеле VPN, обход его не видит";
+                return "DNS отдаёт заглушку " + FakeIp + " — трафик не доходит до DPI, обходу нечего исправлять";
 
             if (!TcpOk) return "TCP не соединяется — похоже на блокировку по IP, desync тут не поможет";
             if (!TlsOk) return "TCP есть, TLS рвётся — DPI, лечится desync";
             return "открывается";
         }
+
+        /// <summary>Подмена системного DNS, если она есть: показываем отдельно от вердикта.</summary>
+        public string SubstitutionNote = "";
 
         public string ToLine()
         {
@@ -86,31 +89,31 @@ namespace AutoZapret.Diag
 
         private static void Stage(TargetStage stage, int timeoutMs, CancellationToken cancel)
         {
-            // ---- 1. DNS
+            // ---- 1. DNS: сначала DoH по IP, системный — только как заплатка и
+            //         как улика подмены. Провайдер перехватывает порт 53 целиком,
+            //         поэтому «свой DNS 8.8.8.8» ничего не меняет.
+            Resolver.Result resolved = Resolver.Resolve(stage.Host);
+
             List<IPAddress> v4 = new List<IPAddress>();
-            List<IPAddress> v6 = new List<IPAddress>();
 
-            try
+            foreach (IPAddress ip in resolved.Addresses)
+                if (ip.AddressFamily == AddressFamily.InterNetwork) v4.Add(ip);
+
+            stage.DnsOk = v4.Count > 0;
+            stage.Dns = stage.DnsOk
+                ? Resolver.Join(v4) + (resolved.Source.Length > 0 ? " (" + resolved.Source + ")" : "")
+                : "пусто";
+
+            // Заглушка, только если мы действительно будем к ней подключаться
+            stage.FakeIp = DnsGuard.FakeAddress(v4);
+
+            if (resolved.SystemLooksHijacked)
             {
-                foreach (IPAddress ip in Dns.GetHostAddresses(stage.Host))
-                {
-                    if (ip.AddressFamily == AddressFamily.InterNetwork) v4.Add(ip);
-                    else if (ip.AddressFamily == AddressFamily.InterNetworkV6) v6.Add(ip);
-                }
+                stage.SubstitutionNote = "системный DNS отдаёт " + resolved.SystemAnswer +
+                                         ", DoH — " + Resolver.Join(v4) + ": DNS подменяется провайдером";
 
-                stage.DnsOk = v4.Count > 0 || v6.Count > 0;
-
-                List<string> text = new List<string>();
-                foreach (IPAddress ip in v4) text.Add(ip.ToString());
-                foreach (IPAddress ip in v6) text.Add(ip.ToString() + " (v6)");
-
-                stage.Dns = stage.DnsOk ? string.Join(", ", text.ToArray()) : "пусто";
-                stage.FakeIp = DnsGuard.FakeAddress(v4);
-            }
-            catch (Exception ex)
-            {
-                stage.Dns = ex.GetType().Name + ": " + ex.Message;
-                return;
+                Log.Warn("DIAG", "DNS подменяется: " + stage.Host + " — системный " +
+                                 resolved.SystemAnswer + ", DoH " + Resolver.Join(v4));
             }
 
             if (!stage.DnsOk) return;
@@ -134,22 +137,15 @@ namespace AutoZapret.Diag
                 if (tcpError.Length == 0) tcpError = error + " (" + ip + ")";
             }
 
-            if (v4.Count == 0 && v6.Count > 0)
-            {
-                // IPv4 нет вовсе — говорим честно, а не «таймаут»
-                stage.Tcp = "нет IPv4-адреса";
-                return;
-            }
-
             if (!stage.TcpOk)
             {
                 stage.Tcp = tcpError.Length > 0 ? tcpError : "таймаут";
                 return;
             }
 
-            // ---- 3. TLS с настоящим SNI
+            // ---- 3. TLS с настоящим SNI, но по уже проверенному IP
             string tlsError;
-            stage.TlsOk = TryTls(stage.Host, timeoutMs, out tlsError);
+            stage.TlsOk = TryTls(stage.Host, v4[0], timeoutMs, out tlsError);
             stage.Tls = stage.TlsOk ? "ok" : tlsError;
         }
 
@@ -193,7 +189,7 @@ namespace AutoZapret.Diag
             }
         }
 
-        private static bool TryTls(string host, int timeoutMs, out string error)
+        private static bool TryTls(string host, IPAddress ip, int timeoutMs, out string error)
         {
             error = "";
 
@@ -201,7 +197,9 @@ namespace AutoZapret.Diag
             {
                 using (TcpClient client = new TcpClient())
                 {
-                    IAsyncResult ar = client.BeginConnect(host, 443, null, null);
+                    // подключаемся к адресу из DoH, а имя оставляем настоящим:
+                    // так проверяется DPI, а не подменённый DNS
+                    IAsyncResult ar = client.BeginConnect(ip, 443, null, null);
                     if (!ar.AsyncWaitHandle.WaitOne(timeoutMs))
                     {
                         error = "таймаут TCP";

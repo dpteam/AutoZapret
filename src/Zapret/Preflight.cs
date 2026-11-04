@@ -85,7 +85,7 @@ namespace AutoZapret.Zapret
             if (fakeDns.Length > 0)
             {
                 problems.Add(Warning("dns-fake-ip",
-                    "DNS отдаёт адреса туннеля VPN — обход не увидит трафик", fakeDns));
+                    "системный DNS подменяется — проверки идут через DoH", fakeDns));
             }
 
             if (!engine.IsAvailable(kind))

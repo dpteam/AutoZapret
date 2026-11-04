@@ -2225,7 +2225,8 @@ namespace AutoZapret.App
                     { "verdict", s.Verdict() },
                     { "dnsOk", s.DnsOk },
                     { "tcpOk", s.TcpOk },
-                    { "tlsOk", s.TlsOk }
+                    { "tlsOk", s.TlsOk },
+                    { "note", s.SubstitutionNote ?? "" }
                 });
             }
 

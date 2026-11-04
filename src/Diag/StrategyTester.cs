@@ -702,6 +702,10 @@ namespace AutoZapret.Diag
                 Console.WriteLine("  TCP: " + s.Tcp);
                 Console.WriteLine("  TLS: " + s.Tls);
                 Console.WriteLine("  итог: " + s.Verdict());
+
+                if (!string.IsNullOrEmpty(s.SubstitutionNote))
+                    Console.WriteLine("  ! " + s.SubstitutionNote);
+
                 Console.WriteLine();
             }
 

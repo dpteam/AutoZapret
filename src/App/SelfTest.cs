@@ -3046,7 +3046,7 @@ namespace AutoZapret.App
                             t.StartsWith("[skip]", StringComparison.Ordinal)) marks++;
                         if (t.StartsWith("[ok]", StringComparison.Ordinal)) okMarks++;
                     }
-                    Check("diagnostics: 13 строк-результатов", marks == 13, marks + " строк");
+                    Check("diagnostics: 14 строк-результатов", marks == 14, marks + " строк");
                     Check("diagnostics: есть хотя бы один [ok]", okMarks > 0, okMarks + " ok");
 
                     // ---- README обязан предупредить про пути
@@ -3238,7 +3238,7 @@ namespace AutoZapret.App
             // ---- все 13 проверок выполняются и не бросают
             List<AutoZapret.Diag.CheckResult> results = AutoZapret.Diag.SystemChecks.RunAll();
 
-            Check("проверок 13", results.Count == 13, results.Count.ToString());
+            Check("проверок 14", results.Count == 14, results.Count.ToString());
 
             int noName = 0;
             int noDetail = 0;

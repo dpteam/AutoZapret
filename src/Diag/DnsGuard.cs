@@ -69,33 +69,33 @@ namespace AutoZapret.Diag
 
         private static string DetectCore()
         {
-            string[] hosts = { "www.youtube.com", "discord.com", "www.google.com" };
-
-            foreach (string host in hosts)
+            try
             {
-                try
-                {
-                    IPAddress[] addresses = Dns.GetHostAddresses(host);
-                    string fake = FakeAddress(addresses);
+                Resolver.Result resolved = Resolver.Resolve("www.youtube.com");
 
-                    if (fake.Length == 0) continue;
+                if (!resolved.Ok) return "";
+                if (!resolved.SystemLooksHijacked) return "";
 
-                    Log.Warn("DIAG", "DNS отдаёт fake-IP " + fake + " для " + host +
-                                     " — трафик уходит в туннель VPN");
+                Log.Warn("DIAG", "системный DNS подменяется: " + resolved.SystemAnswer +
+                                 ", DoH даёт " + resolved.Text());
 
-                    return "DNS отдаёт " + fake + " для " + host +
-                           ". Это fake-IP режим VPN-клиента (Hiddify/sing-box/Clash): " +
-                           "трафик уходит в туннель и до провайдера не доходит, " +
-                           "поэтому обходу нечего исправлять. Отключите VPN/туннель " +
-                           "и проверьте снова.";
-                }
-                catch (Exception ex)
-                {
-                    Log.Debug("DIAG", "DNS " + host + ": " + ex.Message);
-                }
+                // Раньше здесь было «это точно VPN-туннель». Но точно так же
+                // выглядит и подмена DNS провайдером (РКН перехватывает порт 53):
+                // ответ 198.18.x приходит с любого «своего» DNS-сервера. Разница
+                // важна: в первом случае виноват клиент на машине, во втором —
+                // провайдер, и лечится это по-разному.
+                return "системный DNS отдаёт " + resolved.SystemAnswer +
+                       " (заглушка), а DoH — " + resolved.Text() + ". Так выглядит либо " +
+                       "fake-IP режим VPN-клиента, либо подмена DNS провайдером. " +
+                       "Проверки AutoZapret идут через DoH и видят настоящие адреса, " +
+                       "поэтому обход измеряется по-настоящему. Браузеру включите " +
+                       "Secure DNS (DoH) на 1.1.1.1 — иначе он ходит на заглушку.";
             }
-
-            return "";
+            catch (Exception ex)
+            {
+                Log.Debug("DIAG", "проверка DNS: " + ex.Message);
+                return "";
+            }
         }
     }
 }

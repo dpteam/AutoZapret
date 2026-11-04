@@ -185,6 +185,9 @@ namespace AutoZapret.Diag
                 lines.Add("    TCP: " + stage.Tcp);
                 lines.Add("    TLS: " + stage.Tls);
                 lines.Add("    итог: " + stage.Verdict());
+
+                if (!string.IsNullOrEmpty(stage.SubstitutionNote))
+                    lines.Add("    ! " + stage.SubstitutionNote);
             }
         }
     }
