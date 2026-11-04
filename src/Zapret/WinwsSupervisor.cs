@@ -391,10 +391,28 @@ namespace AutoZapret.Zapret
             }
         }
 
-        /// <summary>Есть ли хоть один живой winws/winws2.</summary>
+        /// <summary>
+        /// Есть ли ЛЮБОЙ winws/winws2 — включая наш собственный.
+        ///
+        /// Не через DetectForeignWinws: тот отфильтровывает наши PID-ы, и на
+        /// вопросе «работает ли движок вообще» дал бы ложное «нет». Именно на
+        /// этой путанице счёт стратегии терял все 20 баллов за процесс.
+        /// </summary>
         public static bool AnyWinwsRunning()
         {
-            return DetectForeignWinws() != null;
+            try
+            {
+                foreach (string name in new[] { "winws", "winws2" })
+                {
+                    Process[] all = Process.GetProcessesByName(name);
+                    bool any = all.Length > 0;
+                    foreach (Process p in all) { try { p.Dispose(); } catch { } }
+                    if (any) return true;
+                }
+            }
+            catch { }
+
+            return false;
         }
 
         private void SetState(ProtectionState state, string error)

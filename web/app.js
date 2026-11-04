@@ -1396,6 +1396,14 @@
             restore.textContent = "Восстанавливаю…";
             send("hosts.restore");
         });
+
+        // мягкая чистка: убрать только наш блок, не трогая чужие записи
+        var clean = document.getElementById("btn-hosts-clean");
+        if (clean) clean.addEventListener("click", function () {
+            clean.disabled = true;
+            clean.textContent = "Чищу…";
+            send("hosts.clean");
+        });
     }
 
     function renderHosts(msg) {

@@ -388,11 +388,91 @@ namespace AutoZapret.Diag
                 return r;
             }
 
+            // Процесс запущен ≠ туннель поднят. Hiddify может висеть в трее и
+            // ничего не заворачивать — тогда он ничему не мешает. Проверяем
+            // адаптер именно ЭТОГО клиента, а не «любой VPN-интерфейс»:
+            // ZeroTier, Radmin и Hyper-V тоже подняты и давали ложное срабатывание.
+            if (!HasTunnelFor(running))
+            {
+                r.Status = CheckStatus.Ok;
+                r.Detail = "запущен, но не подключён: " + string.Join(", ", running.ToArray());
+                return r;
+            }
+
             r.Status = CheckStatus.Warn;
             r.Detail = "активны: " + string.Join(", ", running.ToArray());
             r.Advice = "VPN уже шифрует трафик, и DPI его не видит — обход не нужен. " +
                        "Одновременная работа может конфликтовать.";
             return r;
+        }
+
+        /// <summary>
+        /// Есть ли поднятый туннель именно у найденных VPN-клиентов.
+        ///
+        /// Сопоставление по маркерам в имени/описании адаптера. Общий признак
+        /// «тип Tunnel» использовать нельзя: на обычной машине одновременно
+        /// подняты Hyper-V, ZeroTier и Radmin VPN, и проверка всегда врала бы.
+        /// </summary>
+        private static bool HasTunnelFor(List<string> vpnProcesses)
+        {
+            if (vpnProcesses == null || vpnProcesses.Count == 0) return false;
+
+            try
+            {
+                List<string> adapters = new List<string>();
+
+                foreach (System.Net.NetworkInformation.NetworkInterface ni in
+                         System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (ni.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
+                    adapters.Add((ni.Name + " " + ni.Description).ToLowerInvariant());
+                }
+
+                foreach (string vpn in vpnProcesses)
+                {
+                    foreach (string marker in TunnelMarkers(vpn.ToLowerInvariant()))
+                    {
+                        foreach (string adapter in adapters)
+                            if (adapter.IndexOf(marker, StringComparison.Ordinal) >= 0) return true;
+                    }
+                }
+            }
+            catch { }
+
+            return false;
+        }
+
+        /// <summary>Какие имена адаптеров означают «этот клиент действительно поднял туннель».</summary>
+        private static string[] TunnelMarkers(string vpn)
+        {
+            if (vpn.IndexOf("hiddify", StringComparison.Ordinal) >= 0)
+                return new[] { "hiddify", "wintun", "sing" };
+
+            if (vpn.IndexOf("sing-box", StringComparison.Ordinal) >= 0 ||
+                vpn.IndexOf("singbox", StringComparison.Ordinal) >= 0)
+                return new[] { "sing", "wintun" };
+
+            if (vpn.IndexOf("mihomo", StringComparison.Ordinal) >= 0 ||
+                vpn.IndexOf("clash", StringComparison.Ordinal) >= 0)
+                return new[] { "mihomo", "clash", "wintun" };
+
+            if (vpn.IndexOf("xray", StringComparison.Ordinal) >= 0)
+                return new[] { "xray", "wintun" };
+
+            if (vpn.IndexOf("wireguard", StringComparison.Ordinal) >= 0)
+                return new[] { "wireguard" };
+
+            if (vpn.IndexOf("openvpn", StringComparison.Ordinal) >= 0 ||
+                vpn.IndexOf("tap-windows", StringComparison.Ordinal) >= 0)
+                return new[] { "tap-windows", "openvpn" };
+
+            if (vpn.IndexOf("warp", StringComparison.Ordinal) >= 0)
+                return new[] { "cloudflarewarp", "warp" };
+
+            if (vpn.IndexOf("tailscale", StringComparison.Ordinal) >= 0)
+                return new[] { "tailscale" };
+
+            return new string[0];
         }
 
         /// <summary>

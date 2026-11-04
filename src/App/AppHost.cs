@@ -244,27 +244,16 @@ namespace AutoZapret.App
                 string kind = Json.GetString(msg, "kind", _settings.EngineKind);
                 if (kind != "v1" && kind != "v2") return;
 
-                if (_zapret.State == ProtectionState.Running)
+                if (string.Equals(kind, _settings.EngineKind, StringComparison.OrdinalIgnoreCase))
                 {
-                    Log.Warn("WINWS", "нельзя сменить движок при работающем обходе");
                     PushState();
                     return;
                 }
 
-                _settings.EngineKind = kind;
-
-                // стратегия другого движка не подойдёт — сбрасываем на первую из нового
-                Strategy current = _zapret.Strategies.Find(_settings.StrategyId);
-                if (current == null || !string.Equals(current.Engine, kind, StringComparison.OrdinalIgnoreCase))
-                {
-                    List<Strategy> pool = _zapret.Strategies.ByEngine(kind);
-                    if (pool.Count > 0) _settings.StrategyId = pool[0].Id;
-                }
-
-                _settings.Save();
-                Log.Info("WINWS", "движок: " + kind);
-                PushState();
-                PushStrategies();
+                // Раньше при включённом обходе смена движка просто отказывала, и
+                // человек не понимал, почему zapret 2 «не выбирается».
+                // Теперь переключаем по-настоящему: остановить, сменить, запустить.
+                RunInBackground("engine-switch", () => SwitchEngine(kind));
             });
 
             bridge.Register("logs.get", msg =>
@@ -512,6 +501,30 @@ namespace AutoZapret.App
             {
                 if (!EnsureElevation()) return;
                 RunInBackground("hosts-restore", RestoreHostsUi);
+            });
+
+            // Убрать только наш блок, сохранив записи пользователя. Это то, что
+            // нужно, когда hosts после «Обновить» ломает именно обход: бэкап
+            // может быть старее, а чужие записи трогать нельзя.
+            bridge.Register("hosts.clean", msg =>
+            {
+                if (!EnsureElevation()) return;
+
+                RunInBackground("hosts-clean", () =>
+                {
+                    string error = HostsFile.RemoveBlock();
+
+                    if (error != null)
+                    {
+                        SendHosts(false, true, "Не получилось: " + error, null);
+                        _tray.Notify(AppInfo.Name, "hosts: " + error, ToolTipIcon.Error);
+                        return;
+                    }
+
+                    Log.Info("HOSTS", "блок AutoZapret убран");
+                    SendHosts(true, false, "Блок AutoZapret убран, ваши записи на месте", null);
+                    _tray.Notify(AppInfo.Name, "hosts очищен от записей AutoZapret", ToolTipIcon.Info);
+                });
             });
 
             // ---- автопилот
@@ -1763,6 +1776,56 @@ namespace AutoZapret.App
         }
 
         // ------------------------------------------------------------------ state
+
+        /// <summary>
+        /// Смена движка, в том числе на ходу.
+        ///
+        /// Человек выбирает zapret 2 и ожидает, что он включится, а не «нельзя:
+        /// обход работает». Поэтому при включённом обходе честно останавливаем,
+        /// меняем движок и поднимаем заново с первой стратегией нового движка.
+        /// Стратегии разных движков несовместимы: у v2 другие аргументы и lua.
+        /// </summary>
+        private void SwitchEngine(string kind)
+        {
+            bool wasRunning = _zapret.State == ProtectionState.Running ||
+                              _zapret.State == ProtectionState.Starting;
+
+            Log.Info("WINWS", "смена движка на " + kind + (wasRunning ? " (обход был включён)" : ""));
+
+            if (wasRunning)
+            {
+                _zapret.Stop();
+                Thread.Sleep(1500);     // WinDivert должен выгрузиться
+            }
+
+            _settings.EngineKind = kind;
+
+            Strategy current = _zapret.Strategies.Find(_settings.StrategyId);
+            if (current == null || !string.Equals(current.Engine, kind, StringComparison.OrdinalIgnoreCase))
+            {
+                List<Strategy> pool = _zapret.Strategies.ByEngine(kind);
+                if (pool.Count > 0) _settings.StrategyId = pool[0].Id;
+            }
+
+            _settings.Save();
+
+            if (wasRunning)
+            {
+                string error = _zapret.Start(_settings.StrategyId);
+                if (error != null)
+                {
+                    Log.Error("WINWS", "движок " + kind + " не запустился: " + error);
+                    _tray.Notify(AppInfo.Name, "Движок " + kind + ": " + error, ToolTipIcon.Error);
+                }
+                else
+                {
+                    _tray.Notify(AppInfo.Name, "Движок переключён: " + kind, ToolTipIcon.Info);
+                }
+            }
+
+            PushState();
+            PushStrategies();
+        }
 
         private void PushState()
         {
