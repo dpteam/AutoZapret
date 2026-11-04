@@ -80,6 +80,14 @@
 
         <div class="row">
           <div>
+            <div class="row-label">Движок</div>
+            <div class="row-hint">zapret 1 (winws) или zapret 2 (winws2)</div>
+          </div>
+          <span class="tag mono" id="home-engine">—</span>
+        </div>
+
+        <div class="row">
+          <div>
             <div class="row-label">Стратегия</div>
             <div class="row-hint">Набор правил обхода для вашего провайдера</div>
           </div>
@@ -240,7 +248,9 @@
           </div>
         </div>
         <div id="diag-test-progress" style="display:none;margin-top:12px">
+          <div class="progress-bar"><div class="progress-fill" id="diag-test-fill" style="width:0%"></div></div>
           <div class="progress-line" id="diag-test-status">…</div>
+          <div class="mini-log" id="diag-test-log"></div>
         </div>
         <div id="diag-test-result" style="display:none;margin-top:12px">
           <table class="rank">
@@ -479,7 +489,7 @@
       <div class="card">
         <div class="card-title">Обход</div>
 
-        <div class="row" data-advanced>
+        <div class="row">
           <div>
             <div class="row-label">Движок</div>
             <div class="row-hint" id="engine-hint">zapret 1 — проверенный, совместимый</div>

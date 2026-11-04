@@ -178,18 +178,29 @@ namespace AutoZapret.Zapret
                     continue;
                 }
 
-                // списки доменов и IP: без них winws ругается и не фильтрует
-                if (option.StartsWith("--hostlist", StringComparison.OrdinalIgnoreCase) ||
-                    option.StartsWith("--ipset", StringComparison.OrdinalIgnoreCase))
+                // списки доменов и IP: без них winws ругается и не фильтрует.
+                //
+                // ВАЖНО: только точные имена опций. `--hostlist-domains=discord.media`
+                // — это ДОМЕН в аргументе, а не путь к файлу. Проверка по префиксу
+                // ловила его и блокировала ALT12 у всех подряд.
+                bool isListFile =
+                    option == "--hostlist" ||
+                    option == "--hostlist-exclude" ||
+                    option == "--ipset" ||
+                    option == "--ipset-exclude";
+
+                if (isListFile)
                 {
                     if (File.Exists(value)) continue;
 
                     // пустой ipset-файл — не блокер, hostlist — блокер
-                    bool hostlist = option.StartsWith("--hostlist", StringComparison.OrdinalIgnoreCase);
+                    bool hostlist = option.StartsWith("--hostlist", StringComparison.Ordinal);
 
                     problems.Add(hostlist
                         ? Blocker("hostlist-missing", "нет файла списка доменов", Path.GetFileName(value))
                         : Warning("ipset-missing", "нет файла списка IP", Path.GetFileName(value)));
+
+                    continue;
                 }
 
                 // lua для zapret2

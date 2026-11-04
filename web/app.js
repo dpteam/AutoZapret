@@ -384,6 +384,15 @@
         text("game-filter", GAME_FILTER_LABEL[s.gameFilter] || s.gameFilter);
         text("proxy-state", t(s.proxyEnabled ? "включён" : "выключен"));
 
+        // какой движок работает — видно сразу на главной, без захода в настройки
+        var engineLabel = s.engineKind === "v2"
+            ? "zapret 2 (winws2)"
+            : "zapret 1 (winws)";
+
+        if (s.engineVersion) engineLabel += " · " + s.engineVersion;
+        if (!s.engineReady) engineLabel += " · " + t("не установлен");
+        text("home-engine", engineLabel);
+
         // настройки
         setSelect("set-engine", s.engineKind);
         var engHint = document.getElementById("engine-hint");
@@ -949,9 +958,43 @@
         box.style.display = "";
     }
 
+    /// <summary>
+    /// Прогресс подбора стратегий: полоса, «N из M», прошедшее время и мини-лог.
+    /// Раньше здесь висела одна строка текста, и отличить «работает» от «повисло»
+    /// было нельзя — а подбор идёт минутами.
+    /// </summary>
     function renderTestProgress(msg) {
-        var el = document.getElementById("diag-test-status");
-        if (el) el.textContent = msg.line || "";
+        var box = document.getElementById("diag-test-progress");
+        if (box) box.style.display = "";
+
+        var status = document.getElementById("diag-test-status");
+        if (status) {
+            var parts = [];
+            if (msg.index && msg.total) parts.push(msg.index + " / " + msg.total);
+            if (msg.line) parts.push(msg.line);
+            if (typeof msg.elapsedSec === "number" && msg.elapsedSec > 0) {
+                parts.push("(" + fmtUptime(msg.elapsedSec) + ")");
+            }
+            status.textContent = parts.join(" · ");
+        }
+
+        var fill = document.getElementById("diag-test-fill");
+        if (fill && msg.index && msg.total) {
+            fill.style.width = Math.min(100, Math.round(msg.index * 100 / msg.total)) + "%";
+        } else if (fill && msg.done) {
+            fill.style.width = "100%";
+        }
+
+        // мини-лог: держим последние строки, чтобы видеть движение
+        var log = document.getElementById("diag-test-log");
+        if (log && msg.line) {
+            var line = document.createElement("div");
+            line.textContent = msg.line;
+            log.appendChild(line);
+
+            while (log.childNodes.length > 8) log.removeChild(log.firstChild);
+            log.scrollTop = log.scrollHeight;
+        }
     }
 
     function renderTestResult(msg) {

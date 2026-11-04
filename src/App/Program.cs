@@ -49,6 +49,7 @@ namespace AutoZapret.App
             if (HasFlag(args, "--sha256")) return Diag.DiagCommand.RunSha256(args);
             if (HasFlag(args, "--gen-fake")) return Diag.DiagCommand.RunGenFake(args);
             if (HasFlag(args, "--install-engine")) return Diag.DiagCommand.RunInstallEngine(args);
+            if (HasFlag(args, "--preflight")) return Diag.DiagCommand.RunPreflight(args);
             if (HasFlag(args, "--scores-reset")) return Diag.DiagCommand.RunScoresReset(args);
             if (HasFlag(args, "--hosts-restore")) return Diag.DiagCommand.RunHostsRestore(args);
             if (HasFlag(args, "--update-engine")) return Diag.DiagCommand.RunUpdateEngine(args);

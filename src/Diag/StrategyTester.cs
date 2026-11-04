@@ -87,6 +87,13 @@ namespace AutoZapret.Diag
 
         public event Action<string> Progress;
 
+        /// <summary>
+        /// Началась очередная стратегия: (номер с 1, всего, имя).
+        /// Отдельное событие, потому что Progress — это свободный текст для лога,
+        /// а тут нужны числа: по ним UI рисует полосу и «сколько осталось».
+        /// </summary>
+        public event Action<int, int, string> StrategyStarted;
+
         public List<StrategyScore> Run(IEnumerable<string> strategyIds, Baseline.Snapshot baseline,
                                        int holdSeconds, int timeoutSec)
         {
@@ -98,11 +105,18 @@ namespace AutoZapret.Diag
 
             Log.Info("DIAG", "перебор стратегий: " + ids.Count + ", целей: " + targets.Count);
 
+            int position = 0;
+
             foreach (string id in ids)
             {
                 StrategyScore score = new StrategyScore { Id = id };
                 Strategy strategy = _zapret.Strategies.Find(id);
                 score.Name = strategy != null ? strategy.Name : id;
+
+                position++;
+
+                Action<int, int, string> started = StrategyStarted;
+                if (started != null) { try { started(position, ids.Count, score.Name); } catch { } }
 
                 Report("проверяю " + score.Name);
 
@@ -559,6 +573,47 @@ namespace AutoZapret.Diag
             }
 
             return 0;
+        }
+
+        /// <summary>
+        /// --preflight [стратегия]: проверить готовность перед запуском.
+        /// Без аргумента проверяется окружение без привязки к стратегии.
+        /// </summary>
+        public static int RunPreflight(string[] args)
+        {
+            string strategyId = null;
+
+            for (int i = 0; i < args.Length; i++)
+                if (string.Equals(args[i], "--preflight", StringComparison.OrdinalIgnoreCase) &&
+                    i + 1 < args.Length && !args[i + 1].StartsWith("--"))
+                    strategyId = args[i + 1];
+
+            Console.WriteLine("== проверка готовности ==");
+            Console.WriteLine();
+
+            using (ZapretService svc = new ZapretService())
+            {
+                svc.EnsureStrategies();
+
+                List<PreflightProblem> problems = Preflight.Run(
+                    svc.Engine, svc.Strategies, strategyId, Settings.Current.GameFilter);
+
+                if (problems.Count == 0)
+                {
+                    Console.WriteLine("проблем нет — можно запускать");
+                    return 0;
+                }
+
+                foreach (PreflightProblem p in problems)
+                {
+                    Console.WriteLine((p.Level == PreflightLevel.Blocker ? "[БЛОК] " : "[warn] ") + p.Text());
+                }
+
+                Console.WriteLine();
+                Console.WriteLine(Preflight.Summary(problems));
+
+                return Preflight.HasBlockers(problems) ? 1 : 0;
+            }
         }
 
         /// <summary>

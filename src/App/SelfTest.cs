@@ -1261,6 +1261,32 @@ namespace AutoZapret.App
                 else
                     Check("preflight: без админа жалуется на права", hasElevationProblem,
                         hasElevationProblem ? "ok" : "нет проблемы elevation");
+
+                // ---- регресс: `--hostlist-domains=discord.media` — это домен,
+                //      а не файл. Проверка по префиксу ловила его и блокировала
+                //      ALT12 у всех подряд. Гоняем ВСЕ стратегии.
+                if (store != null && Directory.Exists(Paths.EngineListsDir))
+                {
+                    int falsePositives = 0;
+                    string firstBad = "";
+
+                    foreach (AutoZapret.Zapret.Strategy s in store.All)
+                    {
+                        List<AutoZapret.Zapret.PreflightProblem> each =
+                            AutoZapret.Zapret.Preflight.Run(engine, store, s.Id, "off");
+
+                        foreach (AutoZapret.Zapret.PreflightProblem p in each)
+                        {
+                            if (p.Code != "hostlist-missing") continue;
+                            falsePositives++;
+                            if (firstBad.Length == 0) firstBad = s.Id + ": " + p.Hint;
+                        }
+                    }
+
+                    Check("preflight: --hostlist-domains не считается файлом",
+                        falsePositives == 0,
+                        falsePositives == 0 ? store.Count + " стратегий ok" : falsePositives + ", первая: " + firstBad);
+                }
             }
 
             // ---- логика сводки

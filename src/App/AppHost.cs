@@ -1539,9 +1539,28 @@ namespace AutoZapret.App
             }
 
             StrategyTester tester = new StrategyTester(_zapret, new ConnectivityProbe());
-            tester.Progress += line => _form.Bridge.Send(WebBridge.Msg("diag.progress", "line", line));
+
+            // Прогресс с числами: человек должен видеть, что идёт 3 из 12 и сколько
+            // уже прошло, а не «крутится что-то непонятное пять минут».
+            System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+
+            tester.StrategyStarted += (index, total, name) =>
+                _form.Bridge.Send(WebBridge.Msg("diag.progress",
+                    "line", "проверяю " + name,
+                    "index", (long)index,
+                    "total", (long)total,
+                    "elapsedSec", (long)watch.Elapsed.TotalSeconds,
+                    "done", false));
+
+            tester.Progress += line => _form.Bridge.Send(WebBridge.Msg("diag.progress",
+                "line", line,
+                "elapsedSec", (long)watch.Elapsed.TotalSeconds,
+                "done", false));
 
             List<StrategyScore> scores = tester.Run(ids, baseline, 5, 8);
+
+            _form.Bridge.Send(WebBridge.Msg("diag.progress",
+                "line", "готово", "elapsedSec", (long)watch.Elapsed.TotalSeconds, "done", true));
 
             List<object> items = new List<object>();
             foreach (StrategyScore s in scores)
