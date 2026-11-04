@@ -31,6 +31,8 @@ namespace AutoZapret.App
         private readonly ProcessPresetWatcher _presets;
         private bool _disposed;
         private bool _exiting;
+        private bool _startedMinimized;
+        private bool _autoStartTried;
 
         public AppHost()
         {
@@ -61,6 +63,7 @@ namespace AutoZapret.App
 
         public void Run(bool startMinimized)
         {
+            _startedMinimized = startMinimized || _settings.StartMinimized;
             _form.VisibilityChanged += visible =>
                 Log.Debug("APP", visible ? "окно показано" : "окно свёрнуто в трей");
 
@@ -213,6 +216,8 @@ namespace AutoZapret.App
                 PushState();
                 PushStrategies();
                 PushPresets();
+                PushAutoStart();
+                TryAutoStartProtection();
             });
 
             bridge.Register("state", msg => PushState());
@@ -310,6 +315,10 @@ namespace AutoZapret.App
                 int count = Json.GetInt(msg, "count", 5);
                 RunInBackground("test", () => RunTestUi(count));
             });
+
+            // ---- автозапуск
+            bridge.Register("autostart.get", msg => PushAutoStart());
+            bridge.Register("autostart.set", msg => SetAutoStart(Json.GetBool(msg, "enabled", false)));
 
             // ---- пресеты по процессам
             bridge.Register("presets.get", msg => PushPresets());
@@ -931,6 +940,131 @@ namespace AutoZapret.App
                 "folder", DiagnosticBundle.DefaultDirectory()));
         }
 
+        /// <summary>
+        /// Настройка «включать обход при старте» (settings.zapret.autoStart).
+        ///
+        /// Осторожность здесь важнее функции:
+        ///   * без прав администратора обход включить нельзя — но показывать UAC
+        ///     при каждом входе в систему unacceptable, поэтому просто пишем в лог;
+        ///   * уведомление в трей — только если приложение стартовало свёрнутым
+        ///     (то есть из автозапуска), иначе это шум при каждом обычном запуске;
+        ///   * пробуем один раз за сессию, чтобы не бороться с пользователем,
+        ///     который только что выключил обход вручную.
+        /// </summary>
+        private void TryAutoStartProtection()
+        {
+            if (_autoStartTried) return;
+            _autoStartTried = true;
+
+            if (!_settings.AutoStart) return;
+            if (_zapret.State != ProtectionState.Stopped) return;
+
+            if (!Elevation.IsElevated)
+            {
+                Log.Info("WINWS", "автозапуск обхода пропущен: нет прав администратора");
+
+                if (_startedMinimized)
+                    _tray.Notify(AppInfo.Name,
+                        "Обход не включён автоматически: нужны права администратора. " +
+                        "Включите его вручную.",
+                        ToolTipIcon.Warning);
+
+                return;
+            }
+
+            Log.Info("WINWS", "автозапуск обхода: " + _settings.StrategyId);
+
+            RunInBackground("autostart-protection", () =>
+            {
+                string error = _zapret.Start(_settings.StrategyId);
+                if (error != null)
+                {
+                    Log.Error("WINWS", "автозапуск обхода не удался: " + error);
+                    _tray.Notify(AppInfo.Name, error, ToolTipIcon.Error);
+                }
+            });
+        }
+
+        private void PushAutoStart()
+        {
+            AutoStartStatus status = AutoStartManager.Query();
+
+            _form.Bridge.Send(WebBridge.Msg("autostart",
+                "enabled", status.Enabled,
+                "method", status.Method.ToString(),
+                "where", status.Where ?? "",
+                "target", status.Target ?? "",
+                "stale", status.Stale,
+                "problem", status.Problem ?? "",
+                "text", status.Text(),
+                "exe", AutoStartManager.ExePath,
+                // «включать обход при старте» — отдельная настройка, не путать с автозапуском
+                "protectAtStart", _settings.AutoStart));
+        }
+
+        /// <summary>
+        /// Включение/выключение автозапуска.
+        ///
+        /// Задача планировщика требует прав, а GUI работает asInvoker (AGENTS.md:
+        /// повышение — только на операцию). Поэтому создание задачи идёт отдельным
+        /// короткоживущим процессом, а сам интерфейс права не получает.
+        /// </summary>
+        private void SetAutoStart(bool want)
+        {
+            AutoStartResult result = want
+                ? AutoStartManager.Enable(true)
+                : AutoStartManager.Disable();
+
+            if (result.NeedsElevation && !Elevation.IsElevated)
+            {
+                string question = want
+                    ? "Автозапуск без запроса UAC возможен только через планировщик заданий, " +
+                      "а для его создания нужны права администратора.\r\n\r\n" +
+                      "Повысить права на эту операцию?\r\n\r\n" +
+                      "«Нет» — автозапуск через реестр: без прав, но Windows будет " +
+                      "спрашивать UAC при каждом включении обхода."
+                    : "Чтобы убрать задачу планировщика, нужны права администратора.\r\n\r\n" +
+                      "Повысить права на эту операцию?";
+
+                DialogResult answer = MessageBox.Show(question, AppInfo.Name,
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+
+                if (answer == DialogResult.Yes)
+                {
+                    int code = Elevation.RunElevatedOperation(
+                        "--autostart " + (want ? "enable" : "disable"));
+
+                    result = new AutoStartResult
+                    {
+                        Ok = code == 0,
+                        Error = code == 0 ? "" : "повышенная операция: код " + code,
+                        Status = AutoStartManager.Query()
+                    };
+
+                    if (result.Ok) result.Status = AutoStartManager.Query();
+                }
+                else if (want)
+                {
+                    // отказ от прав — не отказ от автозапуска: ставим через реестр
+                    result = AutoStartManager.Enable(false);
+                }
+                else
+                {
+                    result = new AutoStartResult
+                    {
+                        Ok = false,
+                        Error = "без прав администратора задачу не удалить",
+                        Status = AutoStartManager.Query()
+                    };
+                }
+            }
+
+            if (result.Ok) Log.Info("APP", "автозапуск: " + result.Status.Text());
+            else Log.Warn("APP", "автозапуск не изменён: " + result.Text());
+
+            PushAutoStart();
+        }
+
         private void PushPresets()
         {
             List<object> items = new List<object>();
@@ -1327,6 +1461,7 @@ namespace AutoZapret.App
             _settings.SimpleMode = Json.GetBool(msg, "simpleMode", _settings.SimpleMode);
             _settings.MinimizeToTray = Json.GetBool(msg, "minimizeToTray", _settings.MinimizeToTray);
             _settings.StartMinimized = Json.GetBool(msg, "startMinimized", _settings.StartMinimized);
+            _settings.AutoStart = Json.GetBool(msg, "autoStart", _settings.AutoStart);
             _settings.UpdateEngine = Json.GetBool(msg, "updateEngine", _settings.UpdateEngine);
             _settings.UpdateApp = Json.GetBool(msg, "updateApp", _settings.UpdateApp);
             _settings.UpdateLists = Json.GetBool(msg, "updateLists", _settings.UpdateLists);

@@ -111,6 +111,9 @@ namespace AutoZapret.App
 
                 Section("пресеты по процессам");
                 TestProcessPresets();
+
+                Section("автозапуск");
+                TestAutoStart();
             }
             catch (Exception ex)
             {
@@ -1154,6 +1157,90 @@ namespace AutoZapret.App
 
                 try { System.IO.Directory.Delete(dir, true); } catch { }
             }
+        }
+
+        /// <summary>
+        /// Проверки автозапуска, которые НЕ трогают систему.
+        /// Включать и выключать автозапуск в selftest нельзя: тест не должен
+        /// менять настройки чужой машины. Проверяем разбор и инварианты.
+        /// </summary>
+        private static void TestAutoStart()
+        {
+            // ---- путь к текущему exe
+            string exe = AutoZapret.App.AutoStartManager.ExePath;
+            Check("путь к exe определён", exe.Length > 0, exe);
+            Check("exe существует", File.Exists(exe), exe);
+
+            // ---- разбор строки запуска из реестра
+            string quoted = AutoZapret.App.AutoStartManager.ExtractPath(
+                "\"C:\\Program Files\\AutoZapret\\AutoZapret.exe\" --minimized");
+            Check("ExtractPath: кавычки и аргументы",
+                quoted == "C:\\Program Files\\AutoZapret\\AutoZapret.exe", quoted);
+
+            string plain = AutoZapret.App.AutoStartManager.ExtractPath(
+                "C:\\Tools\\AutoZapret.exe --minimized");
+            Check("ExtractPath: без кавычек",
+                plain == "C:\\Tools\\AutoZapret.exe", plain);
+
+            string onlyPath = AutoZapret.App.AutoStartManager.ExtractPath(
+                "\"D:\\az\\AutoZapret.exe\"");
+            Check("ExtractPath: без аргументов",
+                onlyPath == "D:\\az\\AutoZapret.exe", onlyPath);
+
+            Check("ExtractPath: пустая строка",
+                AutoZapret.App.AutoStartManager.ExtractPath("") == "", "ok");
+
+            // ---- аргументы автозапуска должны стартовать в трей
+            Check("автозапуск стартует свёрнутым",
+                AutoZapret.App.AutoStartManager.StartArguments.IndexOf(
+                    "--minimized", StringComparison.OrdinalIgnoreCase) >= 0,
+                AutoZapret.App.AutoStartManager.StartArguments);
+
+            // ---- Query не бросает и не противоречит себе
+            AutoZapret.App.AutoStartStatus status = null;
+            bool threw = false;
+
+            try { status = AutoZapret.App.AutoStartManager.Query(); }
+            catch { threw = true; }
+
+            Check("Query() не бросает", !threw, threw ? "исключение" : "ok");
+
+            if (status != null)
+            {
+                Check("Query: Enabled согласован с Method",
+                    status.Enabled == (status.Method != AutoZapret.App.AutoStartMethod.None),
+                    status.Enabled + " / " + status.Method);
+
+                Check("Query: текст не пустой", status.Text().Length > 0, status.Text());
+
+                // состояние только читается — повторный вызов даёт то же самое
+                AutoZapret.App.AutoStartStatus again = AutoZapret.App.AutoStartManager.Query();
+                Check("Query: два вызова совпадают",
+                    again.Enabled == status.Enabled && again.Method == status.Method,
+                    again.Text());
+
+                if (status.Enabled)
+                {
+                    Check("Query: при включённом есть цель",
+                        status.Target.Length > 0, status.Target);
+
+                    // stale вычисляется сравнением с текущим exe — логика должна
+                    // согласовываться с тем, что мы видим
+                    bool shouldBeStale =
+                        status.Target.IndexOf(exe, StringComparison.OrdinalIgnoreCase) < 0;
+                    Check("Query: stale согласован с целью",
+                        status.Stale == shouldBeStale,
+                        "stale=" + status.Stale + ", ожидалось " + shouldBeStale);
+                }
+            }
+
+            // ---- CLI: статус читается без ошибок
+            //      (enable/disable здесь намеренно не вызываем)
+            Check("TaskName задан", AutoZapret.App.AutoStartManager.TaskName.Length > 0,
+                AutoZapret.App.AutoStartManager.TaskName);
+            Check("имя задачи без пробелов",
+                AutoZapret.App.AutoStartManager.TaskName.IndexOf(' ') < 0,
+                AutoZapret.App.AutoStartManager.TaskName);
         }
 
         private static void TestProcessPresets()

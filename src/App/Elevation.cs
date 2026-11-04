@@ -84,6 +84,59 @@ namespace AutoZapret.App
             catch { return Process.GetCurrentProcess().MainModule.FileName; }
         }
 
+        /// <summary>
+        /// Запустить ОДНУ операцию с правами администратора и дождаться её.
+        ///
+        /// Правило AGENTS.md: повышение прав — только на операцию, а не «весь GUI
+        /// теперь администратор». Поэтому тяжёлые действия (создание задачи
+        /// планировщика) идут отдельным короткоживущим процессом того же exe.
+        ///
+        /// Возвращает код возврата дочернего процесса или -1 при отказе в UAC.
+        /// </summary>
+        public static int RunElevatedOperation(string arguments, int timeoutMs = 60000)
+        {
+            try
+            {
+                ProcessStartInfo psi = new ProcessStartInfo
+                {
+                    FileName = Application_ExecutablePath(),
+                    UseShellExecute = true,
+                    Verb = "runas",
+                    WorkingDirectory = Paths.BaseDir,
+                    Arguments = arguments ?? "",
+                    WindowStyle = ProcessWindowStyle.Hidden
+                };
+
+                using (Process p = Process.Start(psi))
+                {
+                    if (p == null) return -1;
+
+                    if (!p.WaitForExit(Math.Max(1000, timeoutMs)))
+                    {
+                        Log.Warn("APP", "повышенная операция не завершилась за " + timeoutMs + " мс");
+                        return -1;
+                    }
+
+                    Log.Info("APP", "повышенная операция завершена, код " + p.ExitCode);
+                    return p.ExitCode;
+                }
+            }
+            catch (Win32Exception ex)
+            {
+                if (ex.NativeErrorCode == ErrorCancelled)
+                    Log.Warn("APP", "пользователь отменил запрос прав администратора");
+                else
+                    Log.Error("APP", "не удалось запустить повышенную операцию: " + ex.Message);
+
+                return -1;
+            }
+            catch (Exception ex)
+            {
+                Log.Exception("APP", "повышенная операция", ex);
+                return -1;
+            }
+        }
+
         /// <summary>Понятное объяснение, зачем нужны права.</summary>
         public static string ExplainWhy()
         {

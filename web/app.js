@@ -354,6 +354,14 @@
             send("presets.enable", { enabled: next });
         });
 
+        var autostart = document.getElementById("autostart-toggle");
+        if (autostart) autostart.addEventListener("click", function () {
+            var next = !autostart.classList.contains("on");
+            autostart.classList.toggle("on", next);
+            autostart.disabled = true;
+            send("autostart.set", { enabled: next });
+        });
+
         var presetsReload = document.getElementById("btn-presets-reload");
         if (presetsReload) presetsReload.addEventListener("click", function () { send("presets.reload"); });
 
@@ -381,6 +389,7 @@
         }
 
         bindSwitch("set-simple-mode", "simpleMode");
+        bindSwitch("set-auto-start", "autoStart");
         bindSwitch("set-minimize-to-tray", "minimizeToTray");
         bindSwitch("set-start-minimized", "startMinimized");
         bindSwitch("set-update-engine", "updateEngine");
@@ -487,6 +496,38 @@
             '</div>' +
             '<div class="row-hint" style="word-break:break-all">' + msg.path + '</div>';
         box.style.display = "";
+    }
+
+    function renderAutoStart(msg) {
+        var toggle = document.getElementById("autostart-toggle");
+        if (toggle) {
+            toggle.classList.toggle("on", !!msg.enabled);
+            toggle.disabled = false;
+        }
+
+        var hint = document.getElementById("autostart-hint");
+        if (hint) hint.textContent = msg.text || (msg.enabled ? "Включён" : "Выключен");
+
+        var note = document.getElementById("autostart-note");
+        if (note) {
+            if (msg.stale) {
+                note.style.display = "";
+                note.innerHTML =
+                    "<b>Автозапуск указывает не на этот файл.</b><br>" +
+                    "Прописан: " + (msg.target || "?") + "<br>" +
+                    "Сейчас: " + (msg.exe || "?") + "<br>" +
+                    "Выключите и включите автозапуск снова, чтобы исправить.";
+            } else if (msg.enabled && msg.method === "RunKey") {
+                note.style.display = "";
+                note.innerHTML =
+                    "Автозапуск через реестр: Windows будет спрашивать UAC при каждом " +
+                    "включении обхода. Через планировщик заданий запроса нет.";
+            } else {
+                note.style.display = "none";
+            }
+        }
+
+        setSwitch("set-auto-start", !!msg.protectAtStart);
     }
 
     function renderPresets(msg) {
@@ -1093,6 +1134,10 @@
 
             case "presets":
                 renderPresets(msg);
+                break;
+
+            case "autostart":
+                renderAutoStart(msg);
                 break;
 
             case "diag.deep":
