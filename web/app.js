@@ -171,6 +171,7 @@
             send("diag.state");
             send("browser.doh.get");
             send("sysdns.get");
+            send("own.state");
         }
 
         // скорость сети нужна только на главной: опрос раз в секунду
@@ -840,6 +841,34 @@
             send("sysdns.enable");
         });
 
+        // ---- свой движок
+        var ownStart = document.getElementById("btn-own-start");
+        if (ownStart) ownStart.addEventListener("click", function () {
+            ownStart.disabled = true;
+            ownStart.textContent = "Запускаю…";
+
+            send("own.start", {
+                tech: document.getElementById("own-tech").value,
+                position: parseInt(document.getElementById("own-position").value, 10) || 1,
+                repeats: parseInt(document.getElementById("own-repeats").value, 10) || 6,
+                overlap: parseInt(document.getElementById("own-overlap").value, 10) || 0,
+                seconds: parseInt(document.getElementById("own-seconds").value, 10) || 30,
+                dry: document.getElementById("own-dry").classList.contains("on")
+            });
+        });
+
+        var ownStop = document.getElementById("btn-own-stop");
+        if (ownStop) ownStop.addEventListener("click", function () {
+            ownStop.disabled = true;
+            ownStop.textContent = "Останавливаю…";
+            send("own.stop");
+        });
+
+        var ownDry = document.getElementById("own-dry");
+        if (ownDry) ownDry.addEventListener("click", function () {
+            ownDry.classList.toggle("on");
+        });
+
         var sysOff = document.getElementById("btn-sysdns-off");
         if (sysOff) sysOff.addEventListener("click", function () {
             sysOff.disabled = true;
@@ -866,8 +895,34 @@
         status.className = "row-hint " + (msg.ok ? "diag-ok" : "diag-bad");
     }
 
+    /// Состояние своего движка: кнопки и строка со счётчиками.
+    function renderOwnState(msg) {
+        var start = document.getElementById("btn-own-start");
+        if (start) {
+            start.disabled = !!msg.running;
+            start.textContent = msg.running ? "Работает…" : "Запустить";
+        }
+
+        var stop = document.getElementById("btn-own-stop");
+        if (stop) {
+            stop.disabled = !msg.running;
+            stop.textContent = "Остановить";
+        }
+
+        var status = document.getElementById("own-status");
+        if (!status) return;
+
+        if (msg.error) {
+            status.textContent = msg.error + (msg.summary ? " · " + msg.summary : "");
+            status.className = "row-hint diag-bad";
+            return;
+        }
+
+        status.textContent = (msg.running ? "работает · " : "") + (msg.summary || "");
+        status.className = "row-hint " + (msg.running ? "diag-ok" : "");
+    }
+
     function renderSystemDns(msg) {
-        var on = document.getElementById("btn-sysdns-on");
         if (on) { on.disabled = false; on.textContent = "Включить"; }
 
         var off = document.getElementById("btn-sysdns-off");
@@ -2572,6 +2627,10 @@
 
             case "sysdns":
                 renderSystemDns(msg);
+                break;
+
+            case "own.state":
+                renderOwnState(msg);
                 break;
 
             case "dns.flushed":

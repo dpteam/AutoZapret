@@ -2943,6 +2943,102 @@ namespace AutoZapret.App
         }
 
         /// <summary>
+        /// ClientHello с НАСТОЯЩИМ расширением server_name.
+        ///
+        /// Нужен для hostfakesplit: там позиция разреза зависит от того, где
+        /// именно в пакете лежит имя хоста, и «просто случайные байты» этого
+        /// не проверяют. Собираем минимальный, но валидный hello по RFC 8446.
+        /// </summary>
+        private static byte[] SynthTlsPacketWithSni(int extraSize, uint seq, string sni)
+        {
+            byte[] name = System.Text.Encoding.ASCII.GetBytes(sni);
+
+            // server_name extension
+            int snListLen = 1 + 2 + name.Length;
+            int snExtLen = 2 + snListLen;
+            int extTotal = 4 + snExtLen;
+
+            // hello body: version(2) random(32) sid(1) ciphers(2+2) comp(1+1) ext(2+extTotal)
+            int helloBody = 2 + 32 + 1 + (2 + 2) + (1 + 1) + (2 + extTotal);
+
+            int payloadSize = 5 + 4 + helloBody + Math.Max(0, extraSize);
+
+            byte[] payload = new byte[payloadSize];
+            int p = 0;
+
+            payload[p++] = 0x16;               // handshake
+            payload[p++] = 0x03; payload[p++] = 0x01;
+            payload[p++] = (byte)((payloadSize - 5) >> 8);
+            payload[p++] = (byte)((payloadSize - 5) & 0xFF);
+
+            payload[p++] = 0x01;               // ClientHello
+            payload[p++] = (byte)((helloBody) >> 16);
+            payload[p++] = (byte)((helloBody) >> 8);
+            payload[p++] = (byte)(helloBody & 0xFF);
+
+            payload[p++] = 0x03; payload[p++] = 0x03;   // TLS 1.2 legacy version
+
+            for (int i = 0; i < 32; i++) payload[p++] = (byte)(i + 1);   // random
+
+            payload[p++] = 0x00;               // session id length
+
+            payload[p++] = 0x00; payload[p++] = 0x02;   // cipher suites length
+            payload[p++] = 0x13; payload[p++] = 0x01;   // TLS_AES_128_GCM_SHA256
+
+            payload[p++] = 0x01; payload[p++] = 0x00;   // compression: null
+
+            payload[p++] = (byte)(extTotal >> 8);
+            payload[p++] = (byte)(extTotal & 0xFF);
+
+            payload[p++] = 0x00; payload[p++] = 0x00;   // server_name
+            payload[p++] = (byte)(snExtLen >> 8);
+            payload[p++] = (byte)(snExtLen & 0xFF);
+            payload[p++] = (byte)(snListLen >> 8);
+            payload[p++] = (byte)(snListLen & 0xFF);
+            payload[p++] = 0x00;                        // host_name
+            payload[p++] = (byte)(name.Length >> 8);
+            payload[p++] = (byte)(name.Length & 0xFF);
+
+            System.Array.Copy(name, 0, payload, p, name.Length);
+            p += name.Length;
+
+            // добиваем до нужного размера: в реальном hello есть ещё расширения
+            for (int i = p; i < payloadSize; i++) payload[i] = (byte)(i * 3);
+
+            return SynthPacketFromPayload(payload, seq);
+        }
+
+        /// <summary>Обернуть произвольный payload в синтетический IPv4+TCP.</summary>
+        private static byte[] SynthPacketFromPayload(byte[] payload, uint seq)
+        {
+            int total = 40 + payload.Length;
+            byte[] p = new byte[total];
+
+            p[0] = 0x45;
+            p[2] = (byte)(total >> 8);
+            p[3] = (byte)(total & 0xFF);
+            p[8] = 64;
+            p[9] = 6;
+
+            p[12] = 192; p[13] = 168; p[14] = 1; p[15] = 11;
+            p[16] = 142; p[17] = 251; p[18] = 150; p[19] = 4;
+
+            int t = 20;
+            p[t] = 0xC0; p[t + 1] = 0x00;
+            p[t + 2] = 0x01; p[t + 3] = 0xBB;
+            p[t + 4] = (byte)(seq >> 24); p[t + 5] = (byte)(seq >> 16);
+            p[t + 6] = (byte)(seq >> 8); p[t + 7] = (byte)seq;
+            p[t + 12] = 0x50;
+            p[t + 13] = 0x18;
+
+            System.Array.Copy(payload, 0, p, 40, payload.Length);
+
+            AutoZapret.Zapret.Own.TcpPacket.RecomputeChecksums(p, total, 20, 20, total - 20);
+
+            return p;
+        }
+
+        /// <summary>
         /// Secure DNS в браузерах: только чтение состояния.
         ///
         /// Запись в реестр и user.js в selftest не проверяем сознательно: тест не
@@ -3525,6 +3621,105 @@ namespace AutoZapret.App
             Check("multisplit: данные не потеряны", sum == tcp.PayloadLength,
                 sum + " из " + tcp.PayloadLength);
             Check("multisplit: seq непрерывен", contiguous, contiguous ? "ok" : "разрыв");
+
+            // ---- multidisorder: те же куски, но порядок обратный
+            AutoZapret.Zapret.Own.TechniqueOptions disorder =
+                new AutoZapret.Zapret.Own.TechniqueOptions
+                {
+                    Kind = AutoZapret.Zapret.Own.Technique.MultiDisorder
+                };
+
+            disorder.Positions.Add(1);
+            disorder.Positions.Add(200);
+
+            System.Collections.Generic.List<AutoZapret.Zapret.Own.Desync.Outgoing> reversed =
+                AutoZapret.Zapret.Own.Desync.Build(tcp, disorder, out error);
+
+            Check("multidisorder: три куска", reversed.Count == 3, reversed.Count + " шт.");
+
+            if (reversed.Count == 3)
+            {
+                AutoZapret.Zapret.Own.TcpPacket firstOut =
+                    AutoZapret.Zapret.Own.TcpPacket.Parse(reversed[0].Data, reversed[0].Length);
+                AutoZapret.Zapret.Own.TcpPacket lastOut =
+                    AutoZapret.Zapret.Own.TcpPacket.Parse(reversed[2].Data, reversed[2].Length);
+
+                // Первым уходит ПОСЛЕДНИЙ по seq — в этом и смысл техники
+                Check("multidisorder: первым идёт хвост",
+                    firstOut != null && lastOut != null && firstOut.Seq > lastOut.Seq,
+                    firstOut == null || lastOut == null ? "?" : firstOut.Seq + " > " + lastOut.Seq);
+
+                int disorderSum = 0;
+                foreach (AutoZapret.Zapret.Own.Desync.Outgoing o in reversed)
+                {
+                    AutoZapret.Zapret.Own.TcpPacket piece =
+                        AutoZapret.Zapret.Own.TcpPacket.Parse(o.Data, o.Length);
+                    if (piece != null) disorderSum += piece.PayloadLength;
+                }
+
+                Check("multidisorder: данные не потеряны", disorderSum == tcp.PayloadLength,
+                    disorderSum + " из " + tcp.PayloadLength);
+            }
+
+            // ---- hostfakesplit: режем ровно перед именем в SNI
+            byte[] withSni = SynthTlsPacketWithSni(400, 0x55667788, "www.example.com");
+            AutoZapret.Zapret.Own.TcpPacket sniTcp =
+                AutoZapret.Zapret.Own.TcpPacket.Parse(withSni, withSni.Length);
+
+            int sniOffset = AutoZapret.Zapret.Own.Desync.FindSniOffset(sniTcp);
+
+            Check("hostfakesplit: смещение SNI найдено", sniOffset > 0, sniOffset.ToString());
+
+            if (sniTcp != null && sniOffset > 0)
+            {
+                AutoZapret.Zapret.Own.TechniqueOptions host =
+                    new AutoZapret.Zapret.Own.TechniqueOptions
+                    {
+                        Kind = AutoZapret.Zapret.Own.Technique.HostFakeSplit,
+                        Overlap = 40
+                    };
+
+                System.Collections.Generic.List<AutoZapret.Zapret.Own.Desync.Outgoing> hostParts =
+                    AutoZapret.Zapret.Own.Desync.Build(sniTcp, host, out error);
+
+                Check("hostfakesplit: два куска", hostParts.Count == 2, hostParts.Count + " шт.");
+
+                if (hostParts.Count == 2)
+                {
+                    AutoZapret.Zapret.Own.TcpPacket before =
+                        AutoZapret.Zapret.Own.TcpPacket.Parse(hostParts[0].Data, hostParts[0].Length);
+                    AutoZapret.Zapret.Own.TcpPacket after =
+                        AutoZapret.Zapret.Own.TcpPacket.Parse(hostParts[1].Data, hostParts[1].Length);
+
+                    Check("hostfakesplit: первый кусок кончается перед именем",
+                        before != null && before.PayloadLength == sniOffset,
+                        before == null ? "?" : before.PayloadLength + " vs " + sniOffset);
+
+                    // Второй кусок сдвинут назад на overlap: seq меньше ожидаемого
+                    Check("hostfakesplit: второй кусок перекрыт (seqovl)",
+                        before != null && after != null &&
+                        after.Seq == unchecked(before.Seq + (uint)sniOffset - 40),
+                        after == null || before == null ? "?" : (after.Seq - before.Seq).ToString());
+
+                    // Имя должно начинаться ровно в начале второго куска — это и значит
+                    // «резали перед SNI», а не «где-то рядом». Сравниваем байты
+                    // напрямую: второй кусок уже не самостоятельный ClientHello,
+                    // и FindSniOffset к нему неприменим.
+                    byte[] expected = System.Text.Encoding.ASCII.GetBytes("www.example.com");
+                    bool startsWithName = false;
+
+                    if (after != null && after.PayloadLength >= expected.Length)
+                    {
+                        startsWithName = true;
+
+                        for (int i = 0; i < expected.Length; i++)
+                            if (after.Buffer[after.PayloadOffset + i] != expected[i]) { startsWithName = false; break; }
+                    }
+
+                    Check("hostfakesplit: второй кусок начинается с имени", startsWithName,
+                        after == null ? "?" : after.PayloadLength + " байт");
+                }
+            }
 
             // ---- fake: подставной seq отличается, настоящий идёт последним
             AutoZapret.Zapret.Own.TechniqueOptions fake =

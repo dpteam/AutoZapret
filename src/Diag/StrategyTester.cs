@@ -748,11 +748,20 @@ namespace AutoZapret.Diag
                     string name = args[i + 1].Trim().ToLowerInvariant();
 
                     if (name == "multisplit") options.Technique.Kind = AutoZapret.Zapret.Own.Technique.MultiSplit;
+                    else if (name == "multidisorder") options.Technique.Kind = AutoZapret.Zapret.Own.Technique.MultiDisorder;
+                    else if (name == "hostfakesplit") options.Technique.Kind = AutoZapret.Zapret.Own.Technique.HostFakeSplit;
                     else if (name == "fake") options.Technique.Kind = AutoZapret.Zapret.Own.Technique.Fake;
                     else if (name == "fakedsplit") options.Technique.Kind = AutoZapret.Zapret.Own.Technique.FakeSplit;
                     else if (name == "off") options.Technique.Kind = AutoZapret.Zapret.Own.Technique.Off;
                     else options.Technique.Kind = AutoZapret.Zapret.Own.Technique.Split;
 
+                    continue;
+                }
+
+                // --overlap N — перекрытие кусков для hostfakesplit (seqovl)
+                if (string.Equals(a, "--overlap", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    int.TryParse(args[i + 1], out options.Technique.Overlap);
                     continue;
                 }
 

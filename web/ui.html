@@ -371,6 +371,60 @@
           </div>
         </div>
       </div>
+
+      <div class="card" data-advanced>
+        <div class="card-title">Свой движок (эксперимент)</div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Техника desync</div>
+            <div class="row-hint">
+              Перехват TCP/443 своим кодом, без winws. Выключите обход выше —
+              два перехватчика одновременно не работают
+            </div>
+          </div>
+          <select id="own-tech">
+            <option value="split">split — разрезать</option>
+            <option value="multisplit">multisplit — разрезать в нескольких местах</option>
+            <option value="multidisorder">multidisorder — куски в обратном порядке</option>
+            <option value="hostfakesplit">hostfakesplit — резать перед именем сайта</option>
+            <option value="fake">fake — подставной ClientHello</option>
+            <option value="fakedsplit">fakedsplit — подставной + разрезанный</option>
+          </select>
+        </div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Параметры</div>
+            <div class="row-hint">Позиция разреза, повторы фейка, перекрытие (seqovl), секунды работы</div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <input type="number" id="own-position" value="1" min="1" style="width:70px" title="позиция разреза">
+            <input type="number" id="own-repeats" value="6" min="1" max="16" style="width:60px" title="повторы фейка">
+            <input type="number" id="own-overlap" value="0" min="0" style="width:70px" title="перекрытие">
+            <input type="number" id="own-seconds" value="30" min="5" style="width:70px" title="секунды">
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Только показать</div>
+            <div class="row-hint">Ничего не отправлять: увидеть, что было бы сделано</div>
+          </div>
+          <div class="switch" id="own-dry"></div>
+        </div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Запуск</div>
+            <div class="row-hint" id="own-status">не запускался</div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn primary" id="btn-own-start">Запустить</button>
+            <button class="btn" id="btn-own-stop">Остановить</button>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- ============================================================ ПРОКСИ -->

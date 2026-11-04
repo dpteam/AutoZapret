@@ -21,7 +21,13 @@ namespace AutoZapret.Zapret.Own
         Fake = 3,
 
         /// <summary>Подставной ClientHello, затем настоящий разрезанный.</summary>
-        FakeSplit = 4
+        FakeSplit = 4,
+
+        /// <summary>Разрезать и отправить куски В ОБРАТНОМ порядке (сбивает сборку).</summary>
+        MultiDisorder = 5,
+
+        /// <summary>Разрезать ровно перед именем в SNI, чтобы DPI не прочитал хост.</summary>
+        HostFakeSplit = 6
     }
 
     /// <summary>
@@ -51,6 +57,13 @@ namespace AutoZapret.Zapret.Own
         /// <summary>Испортить сумму у фейка (fooling badsum): DPI его не тронет.</summary>
         public bool BadSum;
 
+        /// <summary>
+        /// Насколько перекрыть куски (seqovl). Второй кусок уходит с seq,
+        /// сдвинутым назад: получатель считает это повтором, а DPI видит
+        /// перемешанный поток. 0 — без перекрытия.
+        /// </summary>
+        public int Overlap;
+
         /// <summary>Файл фейка (.bin). Пусто — генерируем сами.</summary>
         public string FakeFile = "";
 
@@ -63,6 +76,8 @@ namespace AutoZapret.Zapret.Own
             {
                 case Technique.Split: return "split pos=" + Position;
                 case Technique.MultiSplit: return "multisplit pos=" + string.Join(",", Positions.ToArray());
+                case Technique.MultiDisorder: return "multidisorder pos=" + string.Join(",", Positions.ToArray());
+                case Technique.HostFakeSplit: return "hostfakesplit overlap=" + Overlap;
                 case Technique.Fake: return "fake seq=" + FakeSeqOffset + (BadSum ? " badsum" : "") + " x" + Repeats;
                 case Technique.FakeSplit: return "fakedsplit pos=" + Position + " seq=" + FakeSeqOffset;
                 default: return "выключено";
@@ -159,23 +174,48 @@ namespace AutoZapret.Zapret.Own
 
                 case Technique.MultiSplit:
                 {
-                    List<int> positions = new List<int>();
-
-                    if (options.Positions != null && options.Positions.Count > 0)
-                    {
-                        foreach (int p in options.Positions)
-                        {
-                            int clamped = Clamp(p, tcp.PayloadLength);
-                            if (!positions.Contains(clamped)) positions.Add(clamped);
-                        }
-                    }
-                    else
-                    {
-                        positions.Add(Clamp(options.Position, tcp.PayloadLength));
-                    }
-
+                    List<int> positions = NormalizePositions(tcp, options);
                     positions.Sort();
                     SplitInto(tcp, result, positions);
+                    break;
+                }
+
+                case Technique.MultiDisorder:
+                {
+                    // Те же куски, что у multisplit, но отправляем с конца.
+                    // Получатель соберёт поток по seq, а DPI, который смотрит
+                    // по порядку прихода, увидит середину раньше начала.
+                    List<int> positions = NormalizePositions(tcp, options);
+                    positions.Sort();
+
+                    List<Outgoing> ordered = new List<Outgoing>();
+                    SplitInto(tcp, ordered, positions);
+
+                    for (int i = ordered.Count - 1; i >= 0; i--) result.Add(ordered[i]);
+                    break;
+                }
+
+                case Technique.HostFakeSplit:
+                {
+                    // Режем ровно перед именем в SNI: DPI, который ищет хост
+                    // в одном сегменте, его не найдёт. Если имя найти не удалось
+                    // (не ClientHello с SNI) — режем как обычный split, иначе
+                    // техника молча ничего бы не делала.
+                    int sniOffset = FindSniOffset(tcp);
+
+                    if (sniOffset <= 0 || sniOffset >= tcp.PayloadLength)
+                    {
+                        sniOffset = Clamp(options.Position, tcp.PayloadLength);
+                    }
+
+                    int overlap = Math.Max(0, Math.Min(1400, options.Overlap));
+
+                    result.Add(Segment(tcp, 0, sniOffset, 0, "до SNI"));
+
+                    // Второй кусок сдвинут назад на overlap: получатель считает
+                    // это повтором уже принятого, DPI видит перекрытие.
+                    result.Add(Segment(tcp, sniOffset, tcp.PayloadLength, sniOffset - overlap,
+                                      "SNI и далее" + (overlap > 0 ? " (seqovl " + overlap + ")" : "")));
                     break;
                 }
 
@@ -264,8 +304,93 @@ namespace AutoZapret.Zapret.Own
             return new Outgoing { Data = data, Length = length, Note = note };
         }
 
+        /// <summary>Позиции для multisplit/multidisorder: свои или одна по умолчанию.</summary>
+        private static List<int> NormalizePositions(TcpPacket tcp, TechniqueOptions options)
+        {
+            List<int> positions = new List<int>();
+
+            if (options.Positions != null && options.Positions.Count > 0)
+            {
+                foreach (int p in options.Positions)
+                {
+                    int clamped = Clamp(p, tcp.PayloadLength);
+                    if (!positions.Contains(clamped)) positions.Add(clamped);
+                }
+            }
+            else
+            {
+                positions.Add(Clamp(options.Position, tcp.PayloadLength));
+            }
+
+            return positions;
+        }
+
         /// <summary>
-        /// Позиция разреза внутри payload. 0 и весь payload бессмысленны:
+        /// Смещение имени хоста внутри payload, если это ClientHello с SNI.
+        ///
+        /// Нужно для hostfakesplit: резать надо именно перед именем, а не «где-то
+        /// в начале». Разбор повторяет тот же путь, что PayloadValidator.ExtractSni,
+        /// но возвращает не строку, а позицию — иначе некуда резать.
+        /// </summary>
+        public static int FindSniOffset(TcpPacket tcp)
+        {
+            if (tcp == null || !tcp.HasPayload) return -1;
+
+            byte[] data = tcp.Buffer;
+            int start = tcp.PayloadOffset;
+            int length = tcp.PayloadLength;
+
+            if (data == null || length < 43) return -1;
+
+            try
+            {
+                int pos = start + 5 + 4;              // record header + handshake header
+                pos += 2 + 32;                        // version + random
+
+                int sessionLen = data[pos];
+                pos += 1 + sessionLen;
+
+                int cipherLen = (data[pos] << 8) | data[pos + 1];
+                pos += 2 + cipherLen;
+
+                int compLen = data[pos];
+                pos += 1 + compLen;
+
+                int extTotal = (data[pos] << 8) | data[pos + 1];
+                pos += 2;
+
+                int end = Math.Min(pos + extTotal, start + length);
+
+                while (pos + 4 <= end)
+                {
+                    int extType = (data[pos] << 8) | data[pos + 1];
+                    int extLen = (data[pos + 2] << 8) | data[pos + 3];
+                    pos += 4;
+
+                    if (extType == 0x0000 && pos + extLen <= start + length)
+                    {
+                        int p = pos + 2;
+                        if (p + 3 > start + length) return -1;
+
+                        int nameLen = (data[p + 1] << 8) | data[p + 2];
+                        p += 3;
+
+                        if (p + nameLen > start + length) return -1;
+
+                        // позиция относительно начала payload — именно её
+                        // понимает BuildSegment
+                        return p - start;
+                    }
+
+                    pos += extLen;
+                }
+            }
+            catch { }
+
+            return -1;
+        }
+
+        /// <summary>Позиция разреза внутри payload. 0 и весь payload бессмысленны:
         /// первый даёт пустой сегмент, второй — «ничего не разрезали».
         /// </summary>
         private static int Clamp(int position, int payloadLength)

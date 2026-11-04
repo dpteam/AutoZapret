@@ -27,6 +27,13 @@ namespace AutoZapret.App
         private readonly ZapretService _zapret;
         private readonly TgProxyServer _proxy;
         private readonly Core.LocalDns _localDns = new Core.LocalDns();
+
+        // Свой движок (P10): один экземпляр, запускается и останавливается
+        // по кнопке. Отдельный от winws — это другой механизм перехвата.
+        private readonly object _ownGate = new object();
+        private Zapret.Own.OwnEngine _ownEngine;
+        private System.Threading.CancellationTokenSource _ownCancel;
+        private Zapret.Own.OwnEngineStats _ownLastStats;
         private readonly AutoPilot _autoPilot;
         private readonly ScoreStore _scores;
         private readonly ProcessPresetWatcher _presets;
@@ -378,6 +385,29 @@ namespace AutoZapret.App
 
             bridge.Register("diag.cancel", msg => CancelDiag());
             bridge.Register("diag.state", msg => SendDiagState());
+
+            // ---- свой движок (P10): техники desync по кнопке
+            //
+            // Отдельно от winws: другой механизм перехвата, и мешать их в одном
+            // месте нельзя — одновременно они не работают (оба держат WinDivert).
+            bridge.Register("own.state", msg => SendOwnState());
+
+            bridge.Register("own.start", msg =>
+            {
+                if (!EnsureElevation()) return;
+
+                if (_zapret.State == ProtectionState.Running || _zapret.State == ProtectionState.Starting)
+                {
+                    _form.Bridge.Send(WebBridge.Msg("own.state",
+                        "running", false,
+                        "error", "сначала выключите обход на zapret: два перехватчика не работают вместе"));
+                    return;
+                }
+
+                RunInBackground("own-start", () => StartOwnEngine(msg));
+            });
+
+            bridge.Register("own.stop", msg => StopOwnEngine());
 
             // ---- Secure DNS (DoH) в браузерах
             //
@@ -2198,6 +2228,146 @@ namespace AutoZapret.App
             _settings.Save();
 
             SendSystemDns();
+        }
+
+        /// <summary>Состояние своего движка для интерфейса.</summary>
+        private void SendOwnState()
+        {
+            Zapret.Own.OwnEngineStats stats;
+            bool running;
+
+            lock (_ownGate)
+            {
+                running = _ownEngine != null;
+                stats = _ownLastStats;
+            }
+
+            _form.Bridge.Send(WebBridge.Msg("own.state",
+                "running", running,
+                "summary", stats == null ? "ещё не запускался" : stats.Summary()));
+        }
+
+        /// <summary>
+        /// Запуск своего движка с выбранной техникой.
+        ///
+        /// Работает в фоне и живёт до Stop, конца времени или выхода из
+        /// приложения. Статистика обновляется по таймеру в интерфейсе —
+        /// опрашивать счётчики чаще раза в секунду смысла нет.
+        /// </summary>
+        private void StartOwnEngine(Dictionary<string, object> msg)
+        {
+            Zapret.Own.TechniqueOptions technique = new Zapret.Own.TechniqueOptions();
+
+            string kind = Json.GetString(msg, "tech", "split");
+
+            if (kind == "multisplit") technique.Kind = Zapret.Own.Technique.MultiSplit;
+            else if (kind == "multidisorder") technique.Kind = Zapret.Own.Technique.MultiDisorder;
+            else if (kind == "hostfakesplit") technique.Kind = Zapret.Own.Technique.HostFakeSplit;
+            else if (kind == "fake") technique.Kind = Zapret.Own.Technique.Fake;
+            else if (kind == "fakedsplit") technique.Kind = Zapret.Own.Technique.FakeSplit;
+            else technique.Kind = Zapret.Own.Technique.Split;
+
+            technique.Position = Math.Max(1, Json.GetInt(msg, "position", 1));
+            technique.Repeats = Math.Max(1, Math.Min(16, Json.GetInt(msg, "repeats", 6)));
+            technique.Overlap = Math.Max(0, Math.Min(1400, Json.GetInt(msg, "overlap", 0)));
+            technique.BadSum = Json.GetBool(msg, "badsum", false);
+
+            string positions = Json.GetString(msg, "positions", "");
+            if (positions.Length > 0)
+            {
+                foreach (string part in positions.Split(','))
+                {
+                    int p;
+                    if (int.TryParse(part.Trim(), out p) && p > 0) technique.Positions.Add(p);
+                }
+            }
+
+            int seconds = Json.GetInt(msg, "seconds", 30);
+
+            Zapret.Own.OwnEngineOptions options = new Zapret.Own.OwnEngineOptions
+            {
+                Technique = technique,
+                Seconds = seconds,
+                DryRun = Json.GetBool(msg, "dry", false)
+            };
+
+            System.Threading.CancellationTokenSource cancel;
+
+            lock (_ownGate)
+            {
+                if (_ownEngine != null)
+                {
+                    _form.Bridge.Send(WebBridge.Msg("own.state",
+                        "running", true,
+                        "error", "уже запущен — сначала остановите"));
+                    return;
+                }
+
+                _ownCancel = new System.Threading.CancellationTokenSource();
+                cancel = _ownCancel;
+            }
+
+            Zapret.Own.OwnEngine engine = new Zapret.Own.OwnEngine(options);
+
+            lock (_ownGate) _ownEngine = engine;
+
+            try
+            {
+                string error = engine.Run(cancel.Token);
+
+                lock (_ownGate)
+                {
+                    _ownLastStats = engine.Stats;
+                    _ownEngine = null;
+                    _ownCancel = null;
+                }
+
+                if (error != null)
+                {
+                    Log.Warn("OWN", "движок не запустился: " + error);
+
+                    _form.Bridge.Send(WebBridge.Msg("own.state",
+                        "running", false,
+                        "error", error,
+                        "summary", engine.Stats.Summary()));
+                    return;
+                }
+
+                Log.Info("OWN", "движок остановлен: " + engine.Stats.Summary());
+                SendOwnState();
+            }
+            catch (Exception ex)
+            {
+                Log.Exception("OWN", "движок", ex);
+
+                lock (_ownGate)
+                {
+                    _ownEngine = null;
+                    _ownCancel = null;
+                }
+
+                _form.Bridge.Send(WebBridge.Msg("own.state",
+                    "running", false,
+                    "error", ex.Message));
+            }
+        }
+
+        private void StopOwnEngine()
+        {
+            System.Threading.CancellationTokenSource cancel;
+
+            lock (_ownGate) cancel = _ownCancel;
+
+            if (cancel == null)
+            {
+                SendOwnState();
+                return;
+            }
+
+            Log.Info("OWN", "остановка своего движка по кнопке");
+
+            try { cancel.Cancel(); }
+            catch (Exception ex) { Log.Exception("OWN", "отмена", ex); }
         }
 
         private void SendSystemDns()
