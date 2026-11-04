@@ -774,14 +774,26 @@ WinDivert + модификация пакетов. Вся «магия» — н�
 
 #### Этапы
 
-- [ ] **P10.1 — WinDivert-слой на C#.** P/Invoke над `WinDivert.dll`:
-      `WinDivertOpen(filter, layer, priority, flags)`, `WinDivertRecv`, `WinDivertSend`,
-      `WinDivertHelperParsePacket`, `WinDivertHelperCalcChecksums`.
-      Свой слой `NETWORK`/`NETWORK_FORWARD`, очередь пакетов, реинжект.
-      Цель: перехватить TCP/443 и вернуть пакет без изменений — байт-в-байт.
-- [ ] **P10.2 — Разбор пакетов.** IPv4/IPv6, TCP (seq/ack/flags/options/timestamps),
-      UDP, определение L7 по первым байтам (`tls_client_hello`, `http_req`, `quic_initial`,
-      `stun`, `discord_ip_discovery`). Аналог `--payload=` из winws2.
+- [~] **P10.1 — WinDivert-слой на C#.**
+      Сделано (фундамент, без риска для сети):
+      `WinDivertInterop` — P/Invoke `Open/Recv/Send/Close/SetParam`, флаги
+      `SNIFF/DROP/RECV_ONLY/…`, `WINDIVERT_ADDRESS` читается по смещениям
+      (битовые поля в C#-структуре дают мусор молча). Резолвер DLL: `WinDivert.dll`
+      лежит в `engine\bin`, обычный поиск её не находит, а рядом с ней драйвер.
+      `--netcap [сек]` — сниффер TCP/443 **в режиме SNIFF**: пакеты копируются,
+      но не задерживаются, поэтому первый слой в принципе не может сломать сеть.
+      Считает пакеты, разбирает IPv4/IPv6+TCP/UDP и достаёт SNI из ClientHello.
+      selftest: 14 проверок разбора на синтетических пакетах (смещения, порты,
+      IPv6, UDP, мусор) — и они сразу поймали ошибку в моём же построителе
+      IPv4-заголовка.
+      Осталось: реинжект через `WinDivertSend` и `WinDivertHelperCalcChecksums`,
+      затем очередь и модификация. Цель этапа — «перехватить TCP/443 и вернуть
+      байт-в-байт» — пока не достигнута.
+- [~] **P10.2 — Разбор пакетов.** IPv4/IPv6, TCP/UDP, смещения и полезная
+      нагрузка уже есть (`PacketParser`), определение L7 по первым байтам —
+      частично: TLS ClientHello распознаётся и SNI извлекается. Не сделано:
+      seq/ack/flags/options/timestamps, `http_req`, `quic_initial`, `stun`,
+      `discord_ip_discovery`.
 - [ ] **P10.3 — Desync-техники, порт с lua.** По одной, с тестом на каждом шаге:
       `fake` (подмена пейлоада + свои seq/ack/ts), `fakedsplit`, `multisplit` (с `seqovl`),
       `multidisorder`, `hostfakesplit`, `syndata`, `oob`, `udplen`, `wsize`.

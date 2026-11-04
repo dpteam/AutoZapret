@@ -135,6 +135,9 @@ namespace AutoZapret.App
 
                 Section("проверка готовности");
                 TestPreflight();
+
+                Section("разбор пакетов (свой движок)");
+                TestPacketParser();
             }
             catch (Exception ex)
             {
@@ -1185,6 +1188,205 @@ namespace AutoZapret.App
         /// и что SNI реально читается из байтов: «выглядит как TLS» проверяется
         /// разбором, а не на глаз.
         /// </summary>
+        /// <summary>
+        /// Разбор пакетов для своего движка. Проверяем синтетикой: настоящий
+        /// сниффер требует прав администратора, а арифметику смещений надо
+        /// проверять всегда — ошибка на байт даёт мусор вместо портов и молчит.
+        /// </summary>
+        private static void TestPacketParser()
+        {
+            // ---- IPv4 + TCP с TLS ClientHello внутри
+            byte[] tls = BuildTlsHello("www.example.com");
+            byte[] ipv4 = BuildIPv4Tcp(443, tls);
+
+            AutoZapret.Zapret.PacketInfo info;
+            bool ok = AutoZapret.Zapret.PacketParser.TryParse(ipv4, ipv4.Length, false, out info);
+
+            Check("IPv4/TCP: разобран", ok, ok ? "ok" : "не разобран");
+            Check("IPv4/TCP: порт назначения 443", info.DstPort == 443, info.DstPort.ToString());
+            Check("IPv4/TCP: TCP распознан", info.IsTcp, info.IsTcp.ToString());
+            Check("IPv4/TCP: полезная нагрузка найдена", info.HasPayload, info.PayloadLength.ToString());
+
+            if (info.HasPayload)
+            {
+                byte[] payload = new byte[info.PayloadLength];
+                Array.Copy(ipv4, info.PayloadOffset, payload, 0, info.PayloadLength);
+
+                Check("IPv4/TCP: нагрузка начинается с TLS",
+                    payload.Length > 2 && payload[0] == 0x16 && payload[1] == 0x03, "ok");
+
+                string sni = AutoZapret.Payloads.PayloadValidator.ExtractSni(
+                    payload, AutoZapret.Payloads.PayloadKind.TlsClientHello);
+
+                Check("IPv4/TCP: SNI достаётся из пакета", sni == "www.example.com", sni);
+            }
+
+            // ---- IPv6 + TCP
+            byte[] ipv6 = BuildIPv6Tcp(443, tls);
+            ok = AutoZapret.Zapret.PacketParser.TryParse(ipv6, ipv6.Length, true, out info);
+
+            Check("IPv6/TCP: разобран", ok && info.IsTcp && info.DstPort == 443,
+                ok ? info.DstPort.ToString() : "не разобран");
+            Check("IPv6/TCP: адрес разобран", info.DstIp.IndexOf(':') >= 0, info.DstIp);
+
+            // ---- UDP: порты есть, полезная нагрузка после 8 байт
+            byte[] udp = BuildIPv4Udp(443, new byte[] { 1, 2, 3, 4 });
+            ok = AutoZapret.Zapret.PacketParser.TryParse(udp, udp.Length, false, out info);
+
+            Check("IPv4/UDP: разобран", ok && info.IsUdp, ok ? "ok" : "не разобран");
+            Check("IPv4/UDP: длина нагрузки", info.PayloadLength == 4, info.PayloadLength.ToString());
+
+            // ---- мусор не должен притворяться пакетом
+            byte[] garbage = new byte[] { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05 };
+            ok = AutoZapret.Zapret.PacketParser.TryParse(garbage, garbage.Length, false, out info);
+            Check("мусор отклонён", !ok, ok ? "принят за пакет" : "ok");
+
+            // ---- слишком короткий буфер
+            ok = AutoZapret.Zapret.PacketParser.TryParse(new byte[10], 10, false, out info);
+            Check("короткий пакет отклонён", !ok, "ok");
+
+            // ---- адрес WinDivert читается по правильным смещениям
+            byte[] address = new byte[AutoZapret.Zapret.WinDivertInterop.AddressSize];
+            BitConverter.GetBytes(0x00020000u).CopyTo(address, 8);   // Outbound = бит 17
+            AutoZapret.Zapret.WinDivertAddress addr = AutoZapret.Zapret.WinDivertAddress.FromBuffer(address);
+
+            Check("WinDivertAddress: outbound прочитан", addr.Outbound, addr.Outbound.ToString());
+            Check("WinDivertAddress: IPv6 выключен", !addr.IsIPv6, addr.IsIPv6.ToString());
+
+            BitConverter.GetBytes(0x00100000u).CopyTo(address, 8);   // IPv6 = бит 20
+            addr = AutoZapret.Zapret.WinDivertAddress.FromBuffer(address);
+            Check("WinDivertAddress: IPv6 прочитан", addr.IsIPv6, addr.IsIPv6.ToString());
+        }
+
+        /// <summary>Минимальный TLS ClientHello с SNI: достаточно для проверки смещений.</summary>
+        private static byte[] BuildTlsHello(string host)
+        {
+            byte[] name = Encoding.ASCII.GetBytes(host);
+
+            List<byte> body = new List<byte>();
+            body.AddRange(new byte[] { 0x03, 0x03 });           // client version
+            body.AddRange(new byte[32]);                        // random
+
+            body.Add(32);                                       // session id length
+            body.AddRange(new byte[32]);
+
+            body.AddRange(new byte[] { 0x00, 0x02, 0x13, 0x01 }); // один шифр
+            body.AddRange(new byte[] { 0x01, 0x00 });            // null compression
+
+            int extLength = 2 + 3 + 2 + 2 + name.Length;
+
+            body.Add((byte)(extLength >> 8));
+            body.Add((byte)(extLength & 0xFF));
+            body.AddRange(new byte[] { 0x00, 0x00 });            // server_name
+            body.Add((byte)((name.Length + 5) >> 8));
+            body.Add((byte)((name.Length + 5) & 0xFF));
+            body.Add((byte)((name.Length + 3) >> 8));
+            body.Add((byte)((name.Length + 3) & 0xFF));
+            body.Add(0);
+            body.Add((byte)(name.Length >> 8));
+            body.Add((byte)(name.Length & 0xFF));
+            body.AddRange(name);
+
+            List<byte> record = new List<byte>();
+            record.Add(0x16);
+            record.AddRange(new byte[] { 0x03, 0x01 });
+            int recordLength = body.Count + 4;
+            record.Add((byte)(recordLength >> 8));
+            record.Add((byte)(recordLength & 0xFF));
+            record.Add(0x01);
+            record.Add((byte)((body.Count >> 16) & 0xFF));
+            record.Add((byte)((body.Count >> 8) & 0xFF));
+            record.Add((byte)(body.Count & 0xFF));
+            record.AddRange(body);
+
+            return record.ToArray();
+        }
+
+        private static byte[] BuildIPv4Tcp(int dstPort, byte[] payload)
+        {
+            List<byte> packet = new List<byte>();
+
+            int totalLength = 20 + 20 + payload.Length;
+
+            packet.Add(0x45);                                        // IPv4, IHL 5
+            packet.Add(0x00);                                        // DSCP
+            packet.Add((byte)(totalLength >> 8));
+            packet.Add((byte)(totalLength & 0xFF));
+            packet.AddRange(new byte[] { 0, 0 });                    // identification
+            packet.AddRange(new byte[] { 0x40, 0x00 });              // flags + fragment
+            packet.Add(64);                                          // TTL
+            packet.Add(6);                                           // protocol TCP
+            packet.AddRange(new byte[] { 0, 0 });                    // checksum
+            packet.AddRange(new byte[] { 10, 0, 0, 1 });             // src
+            packet.AddRange(new byte[] { 93, 184, 216, 34 });        // dst
+
+            packet.AddRange(new byte[] { 0x04, 0xD2 });              // src port 1234
+            packet.Add((byte)(dstPort >> 8));
+            packet.Add((byte)(dstPort & 0xFF));
+            packet.AddRange(new byte[] { 0, 0, 0, 0, 0, 0, 0, 0 });  // seq, ack
+            packet.Add(0x50);                                        // data offset 5
+            packet.Add(0x18);                                        // flags
+            packet.AddRange(new byte[] { 0, 0, 0, 0 });              // window, checksum
+            packet.AddRange(new byte[] { 0, 0 });                    // urgent
+
+            packet.AddRange(payload);
+            return packet.ToArray();
+        }
+
+        private static byte[] BuildIPv6Tcp(int dstPort, byte[] payload)
+        {
+            List<byte> packet = new List<byte>();
+
+            packet.Add(0x60);
+            packet.AddRange(new byte[3]);
+            packet.Add((byte)((20 + payload.Length) >> 8));
+            packet.Add((byte)((20 + payload.Length) & 0xFF));
+            packet.Add(6);
+            packet.Add(64);
+            packet.AddRange(new byte[16]);                             // src ::1
+            packet.AddRange(new byte[] { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 });
+
+            packet.AddRange(new byte[] { 0x04, 0xD2 });
+            packet.Add((byte)(dstPort >> 8));
+            packet.Add((byte)(dstPort & 0xFF));
+            packet.AddRange(new byte[] { 0, 0, 0, 0, 0, 0, 0, 0 });
+            packet.Add(0x50);
+            packet.Add(0x18);
+            packet.AddRange(new byte[] { 0, 0, 0, 0, 0, 0 });
+
+            packet.AddRange(payload);
+            return packet.ToArray();
+        }
+
+        private static byte[] BuildIPv4Udp(int dstPort, byte[] payload)
+        {
+            List<byte> packet = new List<byte>();
+
+            int totalLength = 20 + 8 + payload.Length;
+
+            packet.Add(0x45);
+            packet.Add(0x00);
+            packet.Add((byte)(totalLength >> 8));
+            packet.Add((byte)(totalLength & 0xFF));
+            packet.AddRange(new byte[] { 0, 0 });                    // identification
+            packet.AddRange(new byte[] { 0x40, 0x00 });              // flags + fragment
+            packet.Add(64);                                          // TTL
+            packet.Add(17);                                          // protocol UDP
+            packet.AddRange(new byte[] { 0, 0 });                    // checksum
+            packet.AddRange(new byte[] { 10, 0, 0, 1 });             // src
+            packet.AddRange(new byte[] { 1, 1, 1, 1 });              // dst
+
+            packet.AddRange(new byte[] { 0x04, 0xD2 });              // src port
+            packet.Add((byte)(dstPort >> 8));
+            packet.Add((byte)(dstPort & 0xFF));
+            packet.Add((byte)((payload.Length + 8) >> 8));
+            packet.Add((byte)((payload.Length + 8) & 0xFF));
+            packet.AddRange(new byte[] { 0, 0 });                    // checksum
+
+            packet.AddRange(payload);
+            return packet.ToArray();
+        }
+
         /// <summary>
         /// Preflight: быстрая проверка «можно ли запускать». Тестируем на живом
         /// окружении, потому что смысл проверки — именно файлы на диске.

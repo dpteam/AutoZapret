@@ -576,6 +576,160 @@ namespace AutoZapret.Diag
         }
 
         /// <summary>
+        /// --netcap [секунды]: посмотреть, что реально идёт по TCP/443.
+        ///
+        /// Работает в режиме SNIFF: WinDivert отдаёт КОПИИ пакетов, не задерживая
+        /// трафик. Это принципиально: первый слой своего движка не должен уметь
+        /// ломать сеть. Перехват и модификация — следующий этап, когда видно,
+        /// что копирование работает.
+        /// </summary>
+        public static int RunNetCap(string[] args)
+        {
+            int seconds = 5;
+
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (!string.Equals(args[i], "--netcap", StringComparison.OrdinalIgnoreCase)) continue;
+                if (i + 1 < args.Length && !args[i + 1].StartsWith("--"))
+                    int.TryParse(args[i + 1], out seconds);
+            }
+
+            if (seconds <= 0) seconds = 5;
+
+            Console.WriteLine("== netcap: sniff TCP " + seconds + " с ==");
+
+            if (!WinDivertInterop.IsAvailable())
+            {
+                Console.WriteLine("WinDivert.dll не найден в " + Paths.EngineBinDir);
+                Console.WriteLine("Сначала установите движок: AutoZapret.exe --install-engine");
+                return 1;
+            }
+
+            IntPtr handle;
+
+            try
+            {
+                handle = WinDivertInterop.WinDivertOpen(
+                    "tcp.DstPort == 443 or tcp.SrcPort == 443",
+                    WinDivertInterop.LayerNetwork, 0, WinDivertInterop.FlagSniff);
+            }
+            catch (DllNotFoundException ex)
+            {
+                Console.WriteLine("WinDivert.dll не загрузилась: " + ex.Message);
+                Console.WriteLine("ожидалась здесь: " + System.IO.Path.Combine(Paths.EngineBinDir, "WinDivert.dll"));
+                return 1;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("не удалось открыть WinDivert: " + ex.GetType().Name + ": " + ex.Message);
+                return 1;
+            }
+
+            if (handle == IntPtr.Zero || handle == new IntPtr(-1))
+            {
+                int error = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+                Console.WriteLine("не удалось открыть WinDivert (код " + error + ")");
+                Console.WriteLine(error == 5
+                    ? "нужны права администратора"
+                    : "проверьте, что драйвер не занят (sc query WinDivert)");
+                return 1;
+            }
+
+            Console.WriteLine("сниффер открыт, ждём пакеты…");
+            Console.WriteLine();
+
+            byte[] packet = new byte[WinDivertInterop.MaxPacketSize];
+            byte[] address = new byte[WinDivertInterop.AddressSize];
+
+            IntPtr addressPtr = System.Runtime.InteropServices.Marshal.AllocHGlobal(WinDivertInterop.AddressSize);
+
+            int total = 0, outbound = 0, inbound = 0, tls = 0, withSni = 0;
+            DateTime until = DateTime.UtcNow.AddSeconds(seconds);
+
+            List<string> snis = new List<string>();
+
+            try
+            {
+                while (DateTime.UtcNow < until)
+                {
+                    uint recvLen;
+
+                    bool ok = WinDivertInterop.WinDivertRecv(
+                        handle, packet, (uint)packet.Length, out recvLen, addressPtr);
+
+                    if (!ok)
+                    {
+                        int error = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+
+                        // таймаут — норма: просто ждём дальше, пока не вышло время
+                        if (error == WinDivertInterop.ErrorTimeout || error == WinDivertInterop.ErrorNoData)
+                        {
+                            System.Threading.Thread.Sleep(50);
+                            continue;
+                        }
+
+                        Console.WriteLine("ошибка приёма: " + error);
+                        break;
+                    }
+
+                    total++;
+
+                    System.Runtime.InteropServices.Marshal.Copy(addressPtr, address, 0, WinDivertInterop.AddressSize);
+                    WinDivertAddress addr = WinDivertAddress.FromBuffer(address);
+
+                    if (addr.Outbound) outbound++; else inbound++;
+
+                    PacketInfo info;
+                    if (!PacketParser.TryParse(packet, (int)recvLen, addr.IsIPv6, out info)) continue;
+
+                    // TLS ClientHello начинается с 0x16 0x03
+                    if (info.HasPayload &&
+                        packet[info.PayloadOffset] == 0x16 &&
+                        info.PayloadLength >= 5 &&
+                        packet[info.PayloadOffset + 1] == 0x03)
+                    {
+                        tls++;
+
+                        byte[] payload = new byte[info.PayloadLength];
+                        Array.Copy(packet, info.PayloadOffset, payload, 0, info.PayloadLength);
+
+                        string sni = Payloads.PayloadValidator.ExtractSni(
+                            payload, Payloads.PayloadKind.TlsClientHello);
+
+                        if (sni.Length > 0)
+                        {
+                            withSni++;
+                            if (!snis.Contains(sni)) snis.Add(sni);
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                System.Runtime.InteropServices.Marshal.FreeHGlobal(addressPtr);
+                WinDivertInterop.WinDivertClose(handle);
+            }
+
+            Console.WriteLine("пакетов TCP/443: " + total +
+                              " (наружу " + outbound + ", внутрь " + inbound + ")");
+            Console.WriteLine("TLS ClientHello: " + tls + ", с SNI: " + withSni);
+
+            if (snis.Count > 0)
+            {
+                Console.WriteLine();
+                Console.WriteLine("домены в SNI:");
+                foreach (string sni in snis) Console.WriteLine("  " + sni);
+            }
+            else if (total == 0)
+            {
+                Console.WriteLine();
+                Console.WriteLine("пакетов не было — либо тишина в сети, либо фильтр не совпал");
+            }
+
+            return total > 0 ? 0 : 2;
+        }
+
+        /// <summary>
         /// --preflight [стратегия]: проверить готовность перед запуском.
         /// Без аргумента проверяется окружение без привязки к стратегии.
         /// </summary>
