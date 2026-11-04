@@ -861,6 +861,34 @@ namespace AutoZapret.App
 
         // ---------------------------------------------------------------- hosts
 
+        /// <summary>
+        /// Какие из «обходящихся» сайтов попали в hosts. Их перенаправление почти
+        /// всегда ломает именно то, что мы пытаемся чинить: браузер идёт на
+        /// захардкоженный IP мимо обхода, и получает чужой сертификат или таймаут.
+        /// </summary>
+        private static List<string> RiskyHostsRedirects(string hostsText)
+        {
+            List<string> found = new List<string>();
+
+            if (string.IsNullOrEmpty(hostsText)) return found;
+
+            string[] risky =
+            {
+                "youtube.com", "googlevideo.com", "ytimg.com",
+                "discord.com", "discordapp.com",
+                "telegram.org", "web.telegram.org", "t.me"
+            };
+
+            foreach (string site in risky)
+            {
+                if (hostsText.IndexOf(" " + site, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    hostsText.IndexOf("\t" + site, StringComparison.OrdinalIgnoreCase) >= 0)
+                    found.Add(site);
+            }
+
+            return found;
+        }
+
         private void ApplyHostsUi(bool verify)
         {
             HostsUpdateResult built = HostsUpdater.Build(true, true, verify,
@@ -881,6 +909,21 @@ namespace AutoZapret.App
             }
 
             string message = "Записано: " + built.Analysis.Summary();
+
+            // hosts, перенаправляющий сайты, которые и так обходит движок, —
+            // частая причина «обход включён, а браузер не открывает». Говорим
+            // это прямо в результате, а не только в лог.
+            List<string> redirected = RiskyHostsRedirects(built.Preview);
+
+            if (redirected.Count > 0)
+            {
+                message += " · ВНИМАНИЕ: hosts перенаправляет " + string.Join(", ", redirected.ToArray()) +
+                           " — если сайт не открывается, нажмите «Восстановить»";
+
+                Log.Warn("HOSTS", "перенаправлены сайты, которые обходит движок: " +
+                                  string.Join(", ", redirected.ToArray()));
+            }
+
             SendHosts(true, false, message, built.Analysis);
 
             _tray.Notify(AppInfo.Name, "hosts обновлён: " + built.Analysis.UniqueHosts + " имён",
@@ -1506,26 +1549,43 @@ namespace AutoZapret.App
             _form.Bridge.Send(WebBridge.Msg("diag.deep", "items", items, "advice", advice));
         }
 
+        /// <summary>
+        /// Завершить подбор стратегий с объяснением.
+        ///
+        /// Раньше при любом раннем выходе кнопка оставалась в состоянии «…»
+        /// навсегда: экран ждал `diag.test`, а его никто не отправлял. Пользователь
+        /// видел «не стартует» и не знал, что на самом деле сработала блокировка.
+        /// </summary>
+        private void AbortTest(string reason)
+        {
+            Log.Warn("DIAG", "подбор стратегий отменён: " + reason);
+
+            _form.Bridge.Send(WebBridge.Msg("diag.test",
+                "items", new List<object>(),
+                "summary", reason));
+        }
+
         private void RunTestUi(int count)
         {
             // Подбор стратегий запускает winws для каждой стратегии — без прав
             // это падало сырым Win32Exception, и выглядело как «подбор сломан».
             if (!EnsureElevation())
             {
-                _form.Bridge.Send(WebBridge.Msg("error",
-                    "message", "Для подбора стратегий нужны права администратора",
-                    "action", "test"));
+                AbortTest("нужны права администратора");
                 return;
             }
 
             // Окружение проверяем без привязки к стратегии: перебирать будем разные
-            if (!RunPreflight(null)) return;
+            if (!RunPreflight(null))
+            {
+                AbortTest("проверка готовности нашла проблемы — см. список на главной");
+                return;
+            }
 
             Baseline.Snapshot baseline = Baseline.Load();
             if (baseline == null || baseline.Blocked.Count == 0)
             {
-                _form.Bridge.Send(WebBridge.Msg("error",
-                    "message", "Сначала выполните «Проверить сеть»", "action", "test"));
+                AbortTest("сначала выполните «Проверить сеть» в шаге 1");
                 return;
             }
 

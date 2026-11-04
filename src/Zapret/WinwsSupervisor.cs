@@ -144,6 +144,9 @@ namespace AutoZapret.Zapret
                     _strategyName = strategy.Name;
                 }
 
+                // запоминаем как свой, чтобы проверки не принимали его за чужой
+                RememberOwn(proc.Id);
+
                 // winws умирает сразу, если аргументы неверные — даём ему шанс
                 if (proc.WaitForExit(700))
                 {
@@ -236,6 +239,8 @@ namespace AutoZapret.Zapret
             // даём драйверу выгрузиться
             Thread.Sleep(300);
 
+            foreach (int pid in pids) ForgetOwn(pid);
+
             lock (_gate)
             {
                 _process = null;
@@ -255,6 +260,8 @@ namespace AutoZapret.Zapret
         {
             Process proc = sender as Process;
             int code = SafeExitCode(proc);
+
+            try { if (proc != null) ForgetOwn(proc.Id); } catch { }
 
             lock (_gate)
             {
@@ -325,8 +332,34 @@ namespace AutoZapret.Zapret
         }
 
         /// <summary>
-        /// Ищет чужой запущенный winws/winws2. Возвращает описание или null.
+        /// Свои PID-ы, запущенные нами же. Нужно, чтобы «чужой winws» не находил
+        /// наш собственный: иначе проверка готовности блокирует подбор стратегий,
+        /// когда обход уже включён.
+        /// </summary>
+        private static readonly HashSet<int> OwnPids = new HashSet<int>();
+        private static readonly object OwnGate = new object();
+
+        private static void RememberOwn(int pid)
+        {
+            lock (OwnGate) OwnPids.Add(pid);
+        }
+
+        private static void ForgetOwn(int pid)
+        {
+            lock (OwnGate) OwnPids.Remove(pid);
+        }
+
+        private static bool IsOwn(int pid)
+        {
+            lock (OwnGate) return OwnPids.Contains(pid);
+        }
+
+        /// <summary>
+        /// Ищет ЧУЖОЙ запущенный winws/winws2. Возвращает описание или null.
         /// Нужно, чтобы не гадать, почему «не работает»: чаще всего виновата служба zapret.
+        ///
+        /// Свои процессы (которые мы сами запустили) не считаются чужими — иначе
+        /// при включённом обходе любая проверка пыталась бы его «остановить».
         /// </summary>
         public static string DetectForeignWinws()
         {
@@ -339,7 +372,12 @@ namespace AutoZapret.Zapret
                     Process[] all = Process.GetProcessesByName(name);
                     foreach (Process p in all)
                     {
-                        try { descr.Add(name + " pid " + p.Id); }
+                        try
+                        {
+                            int pid = p.Id;
+                            if (IsOwn(pid)) continue;
+                            descr.Add(name + " pid " + pid);
+                        }
                         catch { descr.Add(name + " pid ?"); }
                         finally { try { p.Dispose(); } catch { } }
                     }

@@ -39,8 +39,12 @@ lib/webview2/*.dll
 lib/webview2/*.xml
 
 # runtime state: settings, strategy scores, proxy secret, logs
-data/state/
-data/profiles/
+#
+# data/ целиком — это состояние конкретной машины: настройки, логи, счётчики,
+# бэкапы hosts, отчёты headless-прогонов. Продуктовые данные живут в assets/,
+# поэтому здесь нечего отслеживать. Правило целиком, а не по подпапкам: иначе
+# каждый новый каталог (как data/headless) тихо попадает в коммит.
+data/
 *.log
 logs/
 launcher.log
