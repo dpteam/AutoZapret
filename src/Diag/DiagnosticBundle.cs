@@ -10,7 +10,25 @@ using AutoZapret.Zapret;
 
 namespace AutoZapret.Diag
 {
-    /// <summary>Итог сборки бандла: путь, состав, ошибка (если была).</summary>
+    public sealed class DeepReportOptions
+{
+    /// <summary>Добавлять расширенные разделы: preflight, hosts, аргументы стратегий.</summary>
+    public bool Deep;
+
+    public Action<string> Progress;
+
+    public static DeepReportOptions Fast()
+    {
+        return new DeepReportOptions { Deep = false };
+    }
+
+    public static DeepReportOptions Extended(Action<string> progress)
+    {
+        return new DeepReportOptions { Deep = true, Progress = progress };
+    }
+}
+
+/// <summary>Итог сборки бандла: путь, состав, ошибка (если была).</summary>
     public sealed class BundleResult
     {
         public string Path = "";
@@ -57,7 +75,19 @@ namespace AutoZapret.Diag
         /// </summary>
         public static BundleResult Create(string targetDir, Settings settings, StrategyStore store)
         {
+            return Create(targetDir, settings, store, DeepReportOptions.Fast());
+        }
+
+        /// <summary>
+        /// Собирает архив. options.Deep добавляет разделы для разбора «почему не работает»:
+        /// preflight, состояние hosts, полные аргументы стратегий, снимок базовой линии.
+        /// </summary>
+        public static BundleResult Create(string targetDir, Settings settings, StrategyStore store,
+                                          DeepReportOptions options)
+        {
             BundleResult result = new BundleResult();
+
+            if (options == null) options = DeepReportOptions.Fast();
 
             try
             {
@@ -83,6 +113,21 @@ namespace AutoZapret.Diag
                     AddText(zip, "settings.json", RedactedSettings(settings), result);
                     AddText(zip, "engine.txt", EngineText(), result);
                     AddText(zip, "strategies.txt", StrategiesText(store), result);
+
+                    if (options.Deep)
+                    {
+                        Report(options, "проверяю готовность…");
+                        AddText(zip, "preflight.txt", PreflightText(settings, store), result);
+
+                        Report(options, "читаю hosts…");
+                        AddText(zip, "hosts.txt", HostsText(), result);
+
+                        Report(options, "собираю аргументы стратегий…");
+                        AddText(zip, "strategies-full.txt", StrategiesFullText(settings, store), result);
+
+                        AddText(zip, "network.txt", NetworkText(), result);
+                        AddText(zip, "engine-files.txt", EngineFilesText(), result);
+                    }
 
                     string logText = LogTail();
                     if (logText.Length > 0) AddText(zip, "app.log", logText, result);
@@ -417,6 +462,299 @@ namespace AutoZapret.Diag
         }
 
         // ------------------------------------------------------------- helpers
+
+        private static void Report(DeepReportOptions options, string message)
+        {
+            if (options == null || options.Progress == null) return;
+
+            try { options.Progress(message); } catch { }
+        }
+
+        /// <summary>
+        /// Preflight: что мешает запуску прямо сейчас, с кодами и подсказками.
+        /// Самый полезный раздел расширенного отчёта — здесь видно, чего не хватает,
+        /// а не «не работает».
+        /// </summary>
+        private static string PreflightText(Settings settings, StrategyStore store)
+        {
+            StringBuilder sb = new StringBuilder();
+
+            sb.AppendLine("Проверка готовности к запуску");
+            sb.AppendLine("=============================");
+            sb.AppendLine();
+
+            try
+            {
+                Zapret.EngineLocator engine = new Zapret.EngineLocator();
+                engine.Refresh();
+
+                List<Zapret.PreflightProblem> problems = Zapret.Preflight.Run(
+                    engine, store, settings == null ? null : settings.StrategyId,
+                    settings == null ? "off" : settings.GameFilter);
+
+                if (problems.Count == 0)
+                {
+                    sb.AppendLine("[ok] проблем не найдено — запускать можно");
+                }
+                else
+                {
+                    foreach (Zapret.PreflightProblem p in problems)
+                    {
+                        sb.AppendLine((p.Level == Zapret.PreflightLevel.Blocker ? "[БЛОК] " : "[warn] ") +
+                                      p.Title + " (код " + p.Code + ")");
+                        if (!string.IsNullOrEmpty(p.Hint)) sb.AppendLine("       -> " + p.Hint);
+                    }
+
+                    sb.AppendLine();
+                    sb.AppendLine(Zapret.Preflight.Summary(problems));
+                }
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine("не удалось выполнить проверку: " + ex.GetType().Name + ": " + ex.Message);
+            }
+
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// hosts: есть ли наш блок, сколько строк, и не перенаправлены ли сайты,
+        /// которые обходит движок. Именно это ломает обход чаще всего.
+        /// </summary>
+        private static string HostsText()
+        {
+            StringBuilder sb = new StringBuilder();
+
+            sb.AppendLine("Файл hosts");
+            sb.AppendLine("==========");
+            sb.AppendLine();
+
+            try
+            {
+                sb.AppendLine("путь: " + Lists.HostsFile.SystemPath);
+                sb.AppendLine("резервная копия: " + Lists.HostsFile.BackupPath +
+                              (System.IO.File.Exists(Lists.HostsFile.BackupPath) ? " (есть)" : " (нет)"));
+
+                string text = Lists.HostsFile.ReadSystem();
+
+                if (text == null)
+                {
+                    sb.AppendLine("не удалось прочитать (нужны права администратора)");
+                    return sb.ToString();
+                }
+
+                int blockLines;
+                bool hasBlock = Lists.HostsFile.HasBlock(text, out blockLines);
+
+                sb.AppendLine("наш блок: " + (hasBlock ? "есть, " + blockLines + " строк" : "нет"));
+                sb.AppendLine("всего строк: " + text.Split('\n').Length);
+                sb.AppendLine();
+
+                sb.AppendLine("Сайты, которые перенаправлены (это ломает обход):");
+
+                string[] risky =
+                {
+                    "youtube.com", "googlevideo.com", "ytimg.com",
+                    "discord.com", "discordapp.com",
+                    "telegram.org", "web.telegram.org", "t.me"
+                };
+
+                int found = 0;
+                foreach (string site in risky)
+                {
+                    if (text.IndexOf(" " + site, StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        sb.AppendLine("  " + site);
+                        found++;
+                    }
+                }
+
+                if (found == 0) sb.AppendLine("  нет");
+                else
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("Что делать: Списки -> Hosts -> «Почистить» (убрать наш блок)");
+                    sb.AppendLine("или «Пересоздать» (оставить только localhost).");
+                }
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine("ошибка: " + ex.Message);
+            }
+
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Полные аргументы каждой стратегии с раскрытыми плейсхолдерами.
+        /// Нужно, чтобы увидеть, на какой именно файл ссылается стратегия
+        /// и существует ли он.
+        /// </summary>
+        private static string StrategiesFullText(Settings settings, StrategyStore store)
+        {
+            StringBuilder sb = new StringBuilder();
+
+            sb.AppendLine("Стратегии: полные аргументы");
+            sb.AppendLine("===========================");
+            sb.AppendLine();
+
+            if (store == null)
+            {
+                sb.AppendLine("хранилище недоступно");
+                return sb.ToString();
+            }
+
+            Dictionary<string, string> placeholders = null;
+
+            try
+            {
+                Zapret.EngineLocator engine = new Zapret.EngineLocator();
+                placeholders = engine.BuildPlaceholders(settings == null ? "off" : settings.GameFilter);
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine("плейсхолдеры недоступны: " + ex.Message);
+                sb.AppendLine();
+            }
+
+            int filesChecked = 0, filesMissing = 0;
+
+            foreach (Strategy s in store.All)
+            {
+                sb.AppendLine("--- " + s.Id + " [" + s.Engine + "] " + s.Name +
+                              (s.Recommended ? " *рекомендуется" : ""));
+                if (!string.IsNullOrEmpty(s.Note)) sb.AppendLine("    " + s.Note);
+
+                foreach (StrategyProfile profile in s.Profiles)
+                {
+                    sb.AppendLine("  профиль '" + profile.Name + "' (" + profile.Args.Count + " аргументов):");
+
+                    foreach (string raw in profile.Args)
+                    {
+                        string arg = raw;
+
+                        try
+                        {
+                            if (placeholders != null)
+                                arg = Strategy.Substitute(raw, placeholders);
+                        }
+                        catch { }
+
+                        string marker = "";
+
+                        // ссылки на файлы: сразу видно, есть он или нет
+                        int eq = arg.IndexOf('=');
+                        if (eq > 0)
+                        {
+                            string value = arg.Substring(eq + 1);
+
+                            if (value.EndsWith(".bin", StringComparison.OrdinalIgnoreCase) ||
+                                value.EndsWith(".lua", StringComparison.OrdinalIgnoreCase) ||
+                                value.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))
+                            {
+                                filesChecked++;
+                                bool exists = false;
+                                try { exists = File.Exists(value); } catch { }
+
+                                if (!exists) { filesMissing++; marker = "   <-- НЕТ ФАЙЛА"; }
+                            }
+                        }
+
+                        sb.AppendLine("    " + arg + marker);
+                    }
+                }
+
+                sb.AppendLine();
+            }
+
+            sb.AppendLine("проверено ссылок на файлы: " + filesChecked + ", отсутствует: " + filesMissing);
+
+            return sb.ToString();
+        }
+
+        /// <summary>Снимок базовой линии: что было заблокировано на момент замера.</summary>
+        private static string NetworkText()
+        {
+            StringBuilder sb = new StringBuilder();
+
+            sb.AppendLine("Сеть: сохранённый замер");
+            sb.AppendLine("=======================");
+            sb.AppendLine();
+            sb.AppendLine("Живой замер не выполняется: он занимает до минуты и меняет сеть.");
+            sb.AppendLine("Свежие данные: экран «Диагностика» -> «Проверить сеть».");
+            sb.AppendLine();
+
+            try
+            {
+                Baseline.Snapshot snapshot = Baseline.Load();
+
+                if (snapshot == null)
+                {
+                    sb.AppendLine("замера нет");
+                    return sb.ToString();
+                }
+
+                sb.AppendLine("отпечаток сети: " + snapshot.Network);
+                sb.AppendLine("когда: " + snapshot.At.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture));
+                sb.AppendLine();
+                sb.AppendLine("доступно: " + string.Join(", ", snapshot.Working.ToArray()));
+                sb.AppendLine("заблокировано: " + string.Join(", ", snapshot.Blocked.ToArray()));
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine("ошибка чтения: " + ex.Message);
+            }
+
+            return sb.ToString();
+        }
+
+        /// <summary>Полный список файлов движка с размерами: видно недокачанные и лишние.</summary>
+        private static string EngineFilesText()
+        {
+            StringBuilder sb = new StringBuilder();
+
+            sb.AppendLine("Движок: все файлы");
+            sb.AppendLine("=================");
+            sb.AppendLine();
+
+            try
+            {
+                if (!Directory.Exists(Paths.EngineDir))
+                {
+                    sb.AppendLine("каталог движка отсутствует: " + Paths.EngineDir);
+                    return sb.ToString();
+                }
+
+                string[] files = Directory.GetFiles(Paths.EngineDir, "*", SearchOption.AllDirectories);
+                Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+
+                long total = 0;
+
+                foreach (string file in files)
+                {
+                    int slash = file.IndexOf("engine", StringComparison.OrdinalIgnoreCase);
+
+                    try
+                    {
+                        FileInfo info = new FileInfo(file);
+                        total += info.Length;
+
+                        sb.AppendLine(info.Length.ToString(CultureInfo.InvariantCulture).PadLeft(11) +
+                                      "  " + file.Substring(slash));
+                    }
+                    catch { }
+                }
+
+                sb.AppendLine();
+                sb.AppendLine("всего файлов: " + files.Length + ", размер: " + (total / (1024 * 1024)) + " МБ");
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine("ошибка: " + ex.Message);
+            }
+
+            return sb.ToString();
+        }
 
         private static void AddText(ZipArchive zip, string name, string content, BundleResult result)
         {

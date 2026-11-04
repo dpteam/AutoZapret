@@ -16,6 +16,10 @@ jobs:
   build:
     runs-on: windows-latest
 
+    # Страховка от «вечно жёлтого» прогона: если GitHub поставил задачу в
+    # очередь и она там залипла, лучше упасть по таймауту, чем висеть.
+    timeout-minutes: 30
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -110,6 +114,10 @@ jobs:
       - name: Selftest (without engine)
         shell: pwsh
         run: |
+          # Кириллица в логах: без явной кодировки консоль Windows-раннера
+          # превращает часть строк в «?» — отчёт выглядит наполовину битым.
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $OutputEncoding = [System.Text.Encoding]::UTF8
           Push-Location bin
           try {
             $p = Start-Process -FilePath ./AutoZapret.exe -ArgumentList '--selftest' -Wait -PassThru -NoNewWindow
@@ -144,6 +152,8 @@ jobs:
         if: hashFiles('engine/bin/winws.exe') != ''
         shell: pwsh
         run: |
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $OutputEncoding = [System.Text.Encoding]::UTF8
           Push-Location bin
           try {
             $p = Start-Process -FilePath ./AutoZapret.exe -ArgumentList '--selftest','--require-engine' -Wait -PassThru -NoNewWindow

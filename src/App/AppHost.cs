@@ -314,6 +314,7 @@ namespace AutoZapret.App
             });
             bridge.Register("diag.deep", msg => RunInBackground("deep", RunDeepUi));
             bridge.Register("diag.bundle", msg => RunInBackground("bundle", RunBundleUi));
+            bridge.Register("diag.bundleDeep", msg => RunInBackground("bundle-deep", RunBundleDeepUi));
             bridge.Register("diag.bundleFolder", msg => OpenPath(DiagnosticBundle.DefaultDirectory()));
             bridge.Register("diag.test", msg =>
             {
@@ -1408,6 +1409,36 @@ namespace AutoZapret.App
                 "enabled", _settings.ProcessPresets,
                 "active", active == null ? "" : active.Name,
                 "file", ProcessPresets.FilePath));
+        }
+
+        /// <summary>
+        /// Расширенный отчёт: то же, что обычный архив, плюс preflight, состояние
+        /// hosts, полные аргументы всех стратегий, снимок сети и пофайловый
+        /// список движка. Для случая «работать не хочет, а почему — непонятно».
+        /// </summary>
+        private void RunBundleDeepUi()
+        {
+            BundleResult result = DiagnosticBundle.Create(
+                DiagnosticBundle.DefaultDirectory(), _settings, _zapret.Strategies,
+                DeepReportOptions.Extended(line => _form.Bridge.Send(
+                    WebBridge.Msg("diag.bundleProgress", "line", line))));
+
+            if (!result.Ok)
+            {
+                _form.Bridge.Send(WebBridge.Msg("diag.bundle",
+                    "ok", false, "error", result.Error ?? "неизвестная ошибка"));
+                return;
+            }
+
+            Log.Info("DIAG", "расширенный отчёт: " + result.Entries.Count + " файлов, " + result.SizeText());
+
+            _form.Bridge.Send(WebBridge.Msg("diag.bundle",
+                "ok", true,
+                "path", result.Path,
+                "size", result.SizeText(),
+                "entries", result.Entries,
+                "folder", DiagnosticBundle.DefaultDirectory(),
+                "deep", true));
         }
 
         private void RunSystemChecksUi()

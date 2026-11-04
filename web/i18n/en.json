@@ -206,5 +206,6 @@
   "Почистить": "Clean",
   "Пересоздать с нуля": "Recreate from scratch",
   "Оставить только 127.0.0.1 localhost. Помогает, когда файл уже испорчен прошлыми правками": "Keep only 127.0.0.1 localhost. Helps when the file is already damaged by earlier edits",
-  "Пересоздать": "Recreate"
+  "Пересоздать": "Recreate",
+  "Расширенный отчёт": "Extended report"
 }

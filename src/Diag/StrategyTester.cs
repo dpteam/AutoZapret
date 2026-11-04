@@ -897,14 +897,17 @@ namespace AutoZapret.Diag
         public static int RunDiagZip(string[] args)
         {
             string target = null;
+            bool deep = false;
 
             for (int i = 0; i < args.Length; i++)
             {
-                if (!string.Equals(args[i], "--diag-zip", StringComparison.OrdinalIgnoreCase)) continue;
-                if (i + 1 < args.Length && !args[i + 1].StartsWith("--")) target = args[i + 1];
+                if (string.Equals(args[i], "--deep", StringComparison.OrdinalIgnoreCase)) deep = true;
+
+                // путь может стоять в любом порядке относительно --deep
+                if (!args[i].StartsWith("--", StringComparison.Ordinal)) target = args[i];
             }
 
-            Console.WriteLine("== диагностический архив ==");
+            Console.WriteLine("== диагностический архив" + (deep ? " (расширенный)" : "") + " ==");
             Console.WriteLine();
 
             Settings settings = Settings.Load();
@@ -924,7 +927,10 @@ namespace AutoZapret.Diag
             }
 
             BundleResult result = DiagnosticBundle.Create(
-                target ?? DiagnosticBundle.DefaultDirectory(), settings, store);
+                target ?? DiagnosticBundle.DefaultDirectory(), settings, store,
+                deep
+                    ? DeepReportOptions.Extended(line => Console.WriteLine("  " + line))
+                    : DeepReportOptions.Fast());
 
             if (!result.Ok)
             {

@@ -676,6 +676,20 @@
             send("diag.bundle");
         });
 
+        var bundleDeep = document.getElementById("btn-diag-bundle-deep");
+        if (bundleDeep) bundleDeep.addEventListener("click", function () {
+            bundleDeep.disabled = true;
+            bundleDeep.textContent = "Собираю расширенный…";
+
+            var progress = document.getElementById("bundle-progress");
+            if (progress) { progress.textContent = "собираю…"; progress.style.display = ""; }
+
+            var box = document.getElementById("diag-bundle-result");
+            if (box) box.style.display = "none";
+
+            send("diag.bundleDeep");
+        });
+
         var bundleFolder = document.getElementById("btn-diag-bundle-folder");
         if (bundleFolder) bundleFolder.addEventListener("click", function () { send("diag.bundleFolder"); });
 
@@ -725,7 +739,10 @@
 
     function renderBundle(msg) {
         var btn = document.getElementById("btn-diag-bundle");
-        if (btn) { btn.disabled = false; btn.textContent = "Собрать архив"; }
+        if (btn) { btn.disabled = false; btn.textContent = t("Собрать архив"); }
+
+        var deep = document.getElementById("btn-diag-bundle-deep");
+        if (deep) { deep.disabled = false; deep.textContent = t("Расширенный отчёт"); }
 
         var box = document.getElementById("diag-bundle-result");
         if (!box) return;
@@ -1664,6 +1681,13 @@
             case "diag.bundle":
                 renderBundle(msg);
                 break;
+
+            case "diag.bundleProgress":
+            {
+                var progress = document.getElementById("bundle-progress");
+                if (progress) { progress.textContent = msg.line || ""; progress.style.display = ""; }
+                break;
+            }
 
             case "presets":
                 renderPresets(msg);

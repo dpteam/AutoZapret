@@ -162,7 +162,12 @@ namespace AutoZapret.App
             Report.AppendLine(verdict);
 
             string outPath = Path.Combine(Paths.BaseDir, "selftest.txt");
-            try { File.WriteAllText(outPath, Report.ToString(), new UTF8Encoding(false)); }
+            try
+            {
+                // BOM: без него сторонние инструменты (и GitHub-логи) угадывают
+                // кодировку и получают «?» на кириллице. С BOM она однозначна.
+                File.WriteAllText(outPath, Report.ToString(), new UTF8Encoding(true));
+            }
             catch (Exception ex) { Log.Warn("APP", "не удалось записать selftest.txt: " + ex.Message); }
 
             Log.Info("APP", "selftest: " + (_failures == 0 ? "ok" : _failures + " failed"));
