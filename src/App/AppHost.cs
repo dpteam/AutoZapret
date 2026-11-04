@@ -1073,6 +1073,8 @@ namespace AutoZapret.App
                     { "okCount", (long)s.OkCount },
                     { "total", (long)s.Total },
                     { "avgMs", (long)s.AvgMs },
+                    { "score", (long)s.Score },
+                    { "breakdown", s.Breakdown() },
                     { "failed", failed },
                     { "error", s.Error ?? "" }
                 });

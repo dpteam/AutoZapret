@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -105,6 +105,9 @@ namespace AutoZapret.App
 
                 Section("диагностический архив");
                 TestDiagnosticBundle();
+
+                Section("счёт стратегий");
+                TestStrategyScoring();
             }
             catch (Exception ex)
             {
@@ -1148,6 +1151,112 @@ namespace AutoZapret.App
 
                 try { System.IO.Directory.Delete(dir, true); } catch { }
             }
+        }
+
+        private static void TestStrategyScoring()
+        {
+            // ---- идеальная стратегия: процесс жив, всё прошло, быстро и ровно
+            AutoZapret.Diag.StrategyScore perfect = new AutoZapret.Diag.StrategyScore();
+            AutoZapret.Diag.StrategyTester.ComputeScore(perfect,
+                SynthReport(300, 320, 310, 305), true);
+
+            Check("идеал: счёт 100", perfect.Score == 100, perfect.Score.ToString());
+            Check("идеал: процесс 20/20", perfect.ProcessBonus == 20, perfect.ProcessBonus.ToString());
+            Check("идеал: стабильность 15/15", perfect.StabilityBonus == 15, perfect.StabilityBonus.ToString());
+            Check("идеал: задержка 10/10", perfect.LatencyBonus == 10, perfect.LatencyBonus.ToString());
+
+            // ---- мёртвый процесс: минус 20, остальное на месте
+            AutoZapret.Diag.StrategyScore dead = new AutoZapret.Diag.StrategyScore();
+            AutoZapret.Diag.StrategyTester.ComputeScore(dead, SynthReport(300, 320, 310, 305), false);
+
+            Check("мёртвый процесс: счёт 80", dead.Score == 80, dead.Score.ToString());
+            Check("мёртвый процесс: 0/20", dead.ProcessBonus == 0, dead.ProcessBonus.ToString());
+
+            // ---- ничего не прошло: только процесс и стабильность недоступна
+            AutoZapret.Diag.StrategyScore nothing = new AutoZapret.Diag.StrategyScore();
+            AutoZapret.Diag.StrategyTester.ComputeScore(nothing,
+                SynthReport(-1, -1, -1, -1), true);
+
+            Check("ноль успехов: счёт 20", nothing.Score == 20, nothing.Score.ToString());
+            Check("ноль успехов: без бонуса задержки", nothing.LatencyBonus == 0,
+                nothing.LatencyBonus.ToString());
+
+            // ---- разброс задержек 10x: стабильность должна обнулиться
+            AutoZapret.Diag.StrategyScore wild = new AutoZapret.Diag.StrategyScore();
+            AutoZapret.Diag.StrategyTester.ComputeScore(wild, SynthReport(200, 2000, 1500, 1800), true);
+
+            Check("разброс 10x: стабильность 0", wild.StabilityBonus == 0,
+                wild.StabilityBonus.ToString());
+            Check("разброс 10x: счёт ниже идеала", wild.Score < perfect.Score,
+                wild.Score + " < " + perfect.Score);
+
+            // ---- разброс 3x: частичный бонус, между нулём и полным
+            AutoZapret.Diag.StrategyScore mid = new AutoZapret.Diag.StrategyScore();
+            AutoZapret.Diag.StrategyTester.ComputeScore(mid, SynthReport(300, 900, 600, 750), true);
+
+            Check("разброс 3x: частичная стабильность",
+                mid.StabilityBonus > 0 && mid.StabilityBonus < 15, mid.StabilityBonus.ToString());
+
+            // ---- медленно: 4 секунды убивают бонус за задержку
+            AutoZapret.Diag.StrategyScore slow = new AutoZapret.Diag.StrategyScore();
+            AutoZapret.Diag.StrategyTester.ComputeScore(slow, SynthReport(4000, 4100, 4050, 4020), true);
+
+            Check("4 с: без бонуса задержки", slow.LatencyBonus == 0, slow.LatencyBonus.ToString());
+
+            // ---- границы: счёт всегда 0..100
+            bool inRange = true;
+            for (int ms = 0; ms <= 5000; ms += 250)
+            {
+                AutoZapret.Diag.StrategyScore probe = new AutoZapret.Diag.StrategyScore();
+                AutoZapret.Diag.StrategyTester.ComputeScore(probe, SynthReport(ms, ms + 10, ms + 5, ms + 8), true);
+                if (probe.Score < 0 || probe.Score > 100) inRange = false;
+            }
+            Check("счёт всегда в 0..100", inRange, "ok");
+
+            // ---- разбивка читается человеком
+            Check("разбивка описывает все части",
+                perfect.Breakdown().IndexOf("процесс", StringComparison.Ordinal) >= 0 &&
+                perfect.Breakdown().IndexOf("стабильность", StringComparison.Ordinal) >= 0 &&
+                perfect.Breakdown().IndexOf("успех", StringComparison.Ordinal) >= 0 &&
+                perfect.Breakdown().IndexOf("задержка", StringComparison.Ordinal) >= 0,
+                perfect.Breakdown());
+
+            // ---- строка рейтинга содержит счёт
+            Check("строка рейтинга содержит счёт",
+                perfect.ToLine().IndexOf("счёт", StringComparison.Ordinal) >= 0, perfect.ToLine());
+        }
+
+        /// <summary>
+        /// Синтетический отчёт: ms &lt; 0 означает «проба не прошла».
+        /// Первый аргумент — задержка, остальные — дополнительные пробы.
+        /// </summary>
+        private static AutoZapret.Diag.ProbeReport SynthReport(params int[] latencies)
+        {
+            AutoZapret.Diag.ProbeReport report = new AutoZapret.Diag.ProbeReport();
+
+            int ok = 0, sum = 0;
+
+            for (int i = 0; i < latencies.Length; i++)
+            {
+                bool success = latencies[i] >= 0;
+
+                AutoZapret.Diag.ProbeResult result = new AutoZapret.Diag.ProbeResult
+                {
+                    Name = "target" + i,
+                    Ok = success,
+                    ElapsedMs = success ? latencies[i] : 0
+                };
+
+                report.Results.Add(result);
+
+                if (success) { ok++; sum += latencies[i]; }
+            }
+
+            report.OkCount = ok;
+            report.Total = latencies.Length;
+            report.AvgMs = ok == 0 ? 0 : sum / ok;
+
+            return report;
         }
 
         private static void TestDiagnosticBundle()

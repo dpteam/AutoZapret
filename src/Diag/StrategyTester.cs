@@ -21,13 +21,36 @@ namespace AutoZapret.Diag
         public string Error = "";
         public List<string> Failed = new List<string>();
 
+        /// <summary>+20: процесс winws жив после всех проб. Мёртвый движок не обходит ничего.</summary>
+        public int ProcessBonus;
+
+        /// <summary>+15: задержки успешных проб предсказуемы (нет «то 200 мс, то 5 с»).</summary>
+        public int StabilityBonus;
+
+        /// <summary>+10: бонус за низкую задержку.</summary>
+        public int LatencyBonus;
+
+        /// <summary>Итог 0-100: 20 процесс + 15 стабильность + 55 × successRate + 10 задержка.</summary>
+        public int Score;
+
         public double Rate { get { return Total == 0 ? 0 : (double)OkCount / Total; } }
+
+        /// <summary>
+        /// Разбивка счёта. Без неё «78» ничего не объясняет: непонятно,
+        /// стратегия медленная или просто нестабильная.
+        /// </summary>
+        public string Breakdown()
+        {
+            return "процесс " + ProcessBonus + "/20, стабильность " + StabilityBonus + "/15, " +
+                   "успех " + Math.Round(Rate * 55) + "/55, задержка " + LatencyBonus + "/10";
+        }
 
         public string ToLine()
         {
             string mark = Rate >= 1.0 ? "🟢" : Rate > 0 ? "🟡" : "🔴";
             return mark + " " + Name.PadRight(28) + OkCount + "/" + Total +
-                   "  " + AvgMs + "ms" + (Error.Length > 0 ? "  (" + Error + ")" : "");
+                   "  " + AvgMs + "ms  счёт " + Score.ToString().PadLeft(3) +
+                   (Error.Length > 0 ? "  (" + Error + ")" : "");
         }
 
         /// <summary>Что именно не пробило — без этого «4/5» ничего не говорит.</summary>
@@ -98,12 +121,14 @@ namespace AutoZapret.Diag
 
                 ProbeReport report = _probe.CheckAll(targets, timeoutSec, 4);
 
-                score.OkCount = report.OkCount;
-                score.Total = report.Total;
-                score.AvgMs = report.AvgMs;
-
                 foreach (ProbeResult r in report.Results)
                     if (!r.Ok) score.Failed.Add(r.Name);
+
+                // ---- счёт: считается ДО остановки, иначе «процесс жив» всегда false.
+                // OkCount/Total/AvgMs заполняет сам ComputeScore — из отчёта.
+                bool alive = WinwsSupervisor.AnyWinwsRunning();
+
+                ComputeScore(score, report, alive);
 
                 scores.Add(score);
 
@@ -114,6 +139,7 @@ namespace AutoZapret.Diag
 
                 Log.Info("DIAG", score.ToLine());
                 Report(score.ToLine());
+                Report("   " + score.Breakdown());
                 if (score.Failed.Count > 0) Report(score.FailedLine());
             }
 
@@ -122,6 +148,8 @@ namespace AutoZapret.Diag
 
             scores.Sort((a, b) =>
             {
+                int byScore = b.Score.CompareTo(a.Score);
+                if (byScore != 0) return byScore;
                 int byRate = b.Rate.CompareTo(a.Rate);
                 if (byRate != 0) return byRate;
                 int byCount = b.OkCount.CompareTo(a.OkCount);
@@ -130,6 +158,77 @@ namespace AutoZapret.Diag
             });
 
             return scores;
+        }
+
+        /// <summary>
+        /// Счёт 0-100. Почему не «только successRate»: стратегия, которая пробивает
+        /// всё, но с задержкой 4 секунды или с процессом, падающим через минуту,
+        /// на практике хуже, чем 4/5 за 300 мс. Одного процента для этого мало.
+        ///
+        ///   20 — процесс жив после проб (мёртвый winws не обходит ничего);
+        ///   15 — стабильность: разброс задержек успешных проб не больше 2x;
+        ///   55 × successRate — основная часть;
+        ///   10 — задержка (полный бонус до 400 мс, ноль от 3 с).
+        ///
+        /// Чистая функция без побочных эффектов — её проверяет selftest.
+        /// </summary>
+        public static void ComputeScore(StrategyScore score, ProbeReport report, bool alive)
+        {
+            // ---- все цифры берём ИЗ ОТЧЁТА, а не из score: иначе функция молча
+            // зависит от того, что вызывающий уже успел заполнить, и на синтетике
+            // в тестах выдаёт ноль. Один источник правды.
+            score.OkCount = report.OkCount;
+            score.Total = report.Total;
+            score.AvgMs = report.AvgMs;
+
+            score.ProcessBonus = alive ? 20 : 0;
+
+            // ---- стабильность: по разбросу задержек среди УСПЕШНЫХ проб.
+            // Упавшие пробы сюда не идут: они уже наказаны через successRate,
+            // иначе одна и та же проблема штрафуется дважды.
+            int minMs = int.MaxValue;
+            int maxMs = 0;
+            int successes = 0;
+
+            foreach (ProbeResult r in report.Results)
+            {
+                if (!r.Ok) continue;
+                successes++;
+                if (r.ElapsedMs < minMs) minMs = r.ElapsedMs;
+                if (r.ElapsedMs > maxMs) maxMs = r.ElapsedMs;
+            }
+
+            score.StabilityBonus = 0;
+
+            if (successes >= 2 && minMs > 0)
+            {
+                double spread = (double)maxMs / minMs;
+
+                if (spread <= 2.0) score.StabilityBonus = 15;
+                else if (spread >= 6.0) score.StabilityBonus = 0;
+                else score.StabilityBonus = (int)Math.Round(15.0 * (6.0 - spread) / 4.0);
+            }
+            else if (successes == 1)
+            {
+                // одна проба: разброс не измерить, но и повода штрафовать нет
+                score.StabilityBonus = 7;
+            }
+
+            // ---- задержка: до 400 мс полный бонус, от 3 с нулевой
+            score.LatencyBonus = 0;
+
+            if (score.OkCount > 0)
+            {
+                int ms = score.AvgMs;
+                if (ms <= 400) score.LatencyBonus = 10;
+                else if (ms >= 3000) score.LatencyBonus = 0;
+                else score.LatencyBonus = (int)Math.Round(10.0 * (3000 - ms) / 2600.0);
+            }
+
+            int total = score.ProcessBonus + score.StabilityBonus +
+                        (int)Math.Round(55.0 * score.Rate) + score.LatencyBonus;
+
+            score.Score = Math.Max(0, Math.Min(100, total));
         }
 
         private void Report(string line)
@@ -1036,6 +1135,7 @@ namespace AutoZapret.Diag
                 foreach (StrategyScore s in scores)
                 {
                     Console.WriteLine(s.ToLine());
+                    Console.WriteLine("   " + s.Breakdown());
                     if (s.Failed.Count > 0) Console.WriteLine(s.FailedLine());
                 }
 

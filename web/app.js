@@ -635,12 +635,16 @@
             var mark = s.okCount === s.total ? "🟢" : (s.okCount > 0 ? "🟡" : "🔴");
             var failed = (s.failed && s.failed.length > 0)
                 ? '<div class="detail">не прошло: ' + s.failed.join(", ") + "</div>" : "";
+            var breakdown = s.breakdown
+                ? '<div class="detail">' + s.breakdown + "</div>" : "";
+            var scoreCls = s.score >= 80 ? "diag-ok" : (s.score >= 50 ? "diag-warn" : "diag-bad");
 
             tr.innerHTML =
                 "<td>" + mark + "</td>" +
-                "<td>" + s.name + failed + "</td>" +
+                "<td>" + s.name + failed + breakdown + "</td>" +
                 "<td>" + s.okCount + "/" + s.total + "</td>" +
-                "<td>" + (s.okCount > 0 ? s.avgMs + " ms" : "—") + "</td>";
+                "<td>" + (s.okCount > 0 ? s.avgMs + " ms" : "—") + "</td>" +
+                "<td class=\"" + scoreCls + "\"><b>" + (s.score || 0) + "</b></td>";
             body.appendChild(tr);
         });
 
