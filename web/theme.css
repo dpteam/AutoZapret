@@ -537,4 +537,19 @@ textarea.list-input {
 
 textarea.list-input:focus { border-color: var(--accent-blue); }
 
+/* файл перетаскивают прямо в поле — подсветить, иначе непонятно, что оно принимает */
+textarea.list-input.drop {
+    border-color: var(--accent-green);
+    background: rgba(0, 214, 143, .06);
+}
+
 textarea.list-input::placeholder { color: var(--text-dim); }
+
+/* ------------------------------------------------------- простой режим
+
+   Элементы с data-advanced видны только в расширенном режиме.
+   Атрибут стоит рядом с самим элементом в разметке, поэтому
+   список скрытого нельзя забыть обновить в двух местах. */
+body.simple [data-advanced] {
+    display: none !important;
+}

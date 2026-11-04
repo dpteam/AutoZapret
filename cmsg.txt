@@ -1,35 +1,40 @@
-feat(P5): update channels, start-up check, and the missing app install button
+feat(P2): domain import by drag-and-drop, danger confirms, simple mode, speed meter
 
-Three gaps in the self-update path:
+Four items that were listed as 'setting exists but the UI ignores it' or
+were missing outright.
 
-1. settings.updates.channel existed but nothing read it. Now
-   SelfUpdater.Channel drives the lookup. Stable uses /releases/latest,
-   which never returns pre-releases at all, so a stable user cannot be
-   handed a beta by accident. Beta fetches the release list and picks
-   the MAXIMUM version - the list is ordered by creation date, so
-   'first entry' would offer an old hotfix tag over a newer release.
+1. Import domains from a file: a button and drag-and-drop straight into
+   the textarea. The file is read in the browser via FileReader, so no
+   native open dialog and no path crossing the bridge - only text, which
+   is what 'Save' takes anyway. The same code will work on Android, where
+   there is no Windows dialog at all.
+   Import APPENDS instead of replacing: dropping the wrong file and
+   silently losing your list is too easy a mistake to design in.
+   Notepad BOM and CRLF are stripped, 4 MB cap, empty file reported.
 
-2. SanitizeTag used to reject any tag containing a hyphen. That is
-   correct for stable and wrong for beta. It now takes allowPrerelease:
-   -beta/-rc/-alpha/-pre pass only on the beta channel, while
-   -fork/-custom/-anything-else is rejected on both. The rule the code
-   exists for is unchanged: a fork tag must never look like an update.
+2. Confirmation on irreversible actions. The text names the consequence,
+   not 'are you sure?': hosts restore says entries added since the backup
+   will disappear; a new proxy secret says every distributed link stops
+   working. Applied to hosts apply/restore, local-subnet rewrite, list
+   extension, and secret regeneration.
 
-3. There was no 'upd.app.install' handler and no button. The app could
-   check for updates and then had no way to apply one - the whole
-   self-update mechanism was reachable only from the CLI. Now it stops
-   the bypass first (xcopy silently skips files locked by WinDivert),
-   installs, and exits so the replacer can swap the exe.
+3. Simple mode now actually does something. body.simple plus a
+   data-advanced attribute next to each element, hidden by one CSS rule.
+   Hiding the attribute next to its element means the list of hidden
+   things cannot drift out of sync with the markup. Hidden: engine
+   selector, ipset mode, update channel, process presets, hosts, fakes.
+   The switch toggles instantly instead of waiting for a save round-trip.
 
-HasUpdate now also handles the beta -> release transition: 1.3.0-beta1
-to 1.3.0 compares equal numerically, so without an explicit check a beta
-user would never be offered the final build. The reverse (release ->
-beta) stays off.
+4. Traffic speed on the home screen. NetStats diffs interface counters
+   once a second, and only while home is open - no point pushing bridge
+   messages from a screen nobody is looking at. Labelled honestly as
+   whole-machine traffic: per-process byte counts need ETW, and WinDivert
+   works in the kernel, so 'bypass speed' cannot be measured this way.
+   Loopback and tunnels are excluded; a counter reset yields 0 rather
+   than a negative rate.
 
-Auto-check on start is quiet by design: it asks, and if something newer
-exists only notifies. Installing without a click would restart the app
-under the user's hands.
-
-UI: 'Обновить' next to the app, and a channel selector.
-selftest: 25 checks on the channel barrier, including the two
-transitions above and 1.10.0 > 1.9 ordering.
+selftest: 14 checks on NetStats - formatting at every unit boundary,
+rate arithmetic, counter reset, too-short interval, null inputs, and a
+live Sample(). The formatting checks build the expected string from
+CurrentCulture on purpose: Russian Windows prints '1,0' and English
+prints '1.0', and the test must not depend on the machine.

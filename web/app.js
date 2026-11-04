@@ -32,6 +32,7 @@
     var logRenderTimer = null;
     var saveTimer = null;
     var pendingSettings = {};
+    var netSpeedTimer = null;
 
     // ------------------------------------------------------------ навигация
 
@@ -55,6 +56,34 @@
         if (name === "proxy") {
             send("proxy.state");
         }
+
+        // скорость сети нужна только на главной: опрос раз в секунду
+        // на других экранах — лишний трафик моста впустую
+        updateNetSpeedPolling(name === "home");
+    }
+
+    /// <summary>
+    /// Опрос скорости сети раз в секунду, только пока открыта главная.
+    /// Первый замер всегда нулевой (разница с прошлым), поэтому подпись
+    /// показываем после второго ответа — иначе «0 Б/с» выглядит как поломка.
+    /// </summary>
+    function updateNetSpeedPolling(active) {
+        if (netSpeedTimer) { clearInterval(netSpeedTimer); netSpeedTimer = null; }
+
+        var el = document.getElementById("net-speed");
+        if (!active) { if (el) el.textContent = "—"; return; }
+
+        send("net.speed");
+        netSpeedTimer = setInterval(function () { send("net.speed"); }, 1000);
+    }
+
+    function renderNetSpeed(msg) {
+        var el = document.getElementById("net-speed");
+        if (!el) return;
+
+        if (!msg.ok) { el.textContent = "нет данных"; return; }
+
+        el.textContent = "↓ " + msg.downText + "   ↑ " + msg.upText;
     }
 
     function initNav() {
@@ -81,6 +110,20 @@
     function text(id, value) {
         var el = document.getElementById(id);
         if (el) el.textContent = (value === undefined || value === null || value === "") ? "—" : value;
+    }
+
+    function applySimpleMode(on) {
+        // Простой режим: только то, что нужно каждый день. Всё остальное помечено
+        // data-advanced в разметке и скрывается через CSS — так список скрытого
+        // живёт рядом с самим элементом, а не в двух местах.
+        document.body.classList.toggle("simple", !!on);
+
+        var hint = document.getElementById("simple-hint");
+        if (hint) {
+            hint.textContent = on
+                ? "Скрыты: движок, режим списков, канал обновлений, пресеты, hosts и фейки"
+                : "Показаны все настройки";
+        }
     }
 
     function setSwitch(id, on) {
@@ -190,6 +233,7 @@
         if (portEl && document.activeElement !== portEl) portEl.value = s.proxyPort;
         text("set-proxy-secret", s.proxySecret || "—");
         setSwitch("set-simple-mode", s.simpleMode);
+        applySimpleMode(s.simpleMode);
         setSwitch("set-minimize-to-tray", s.minimizeToTray);
         setSwitch("set-start-minimized", s.startMinimized);
         setSwitch("set-update-engine", s.updateEngine);
@@ -392,6 +436,12 @@
         }
 
         bindSwitch("set-simple-mode", "simpleMode");
+
+        // простой режим должен переключаться сразу, а не после round-trip
+        var simple = document.getElementById("set-simple-mode");
+        if (simple) simple.addEventListener("click", function () {
+            applySimpleMode(!simple.classList.contains("on"));
+        });
         bindSwitch("set-auto-start", "autoStart");
         bindSwitch("set-minimize-to-tray", "minimizeToTray");
         bindSwitch("set-start-minimized", "startMinimized");
@@ -400,7 +450,15 @@
         bindSwitch("set-update-lists", "updateLists");
 
         var regen = document.getElementById("btn-secret-regen");
-        if (regen) regen.addEventListener("click", function () { send("secret.regenerate"); });
+        if (regen) regen.addEventListener("click", function () {
+            // секрет — это часть ссылки прокси: после смены все старые ссылки мертвы
+            if (!window.confirm(
+                "Секрет — часть ссылки подключения. После смены все уже розданные " +
+                "ссылки перестанут работать, и устройства нужно будет подключить заново.\r\n\r\n" +
+                "Сгенерировать новый секрет?")) return;
+
+            send("secret.regenerate");
+        });
     }
 
     function bindSwitch(id, field) {
@@ -768,10 +826,20 @@
     function initLists() {
         bindList("general");
         bindList("exclude");
+        bindListFile("general");
+        bindListFile("exclude");
 
-        bindAction("btn-update-ipset", "lists.updateIpset", "Обновляю…");
-        bindAction("btn-update-exclude", "lists.updateExclude", "Дополняю…");
-        bindAction("btn-update-ipset-exclude", "lists.updateIpsetExclude", "Восстанавливаю…");
+        bindAction("btn-update-ipset", "lists.updateIpset", "Обновляю…",
+            "Список IP-подсетей будет скачан заново и заменён. Ваши домены не пострадают. Продолжить?");
+
+        bindAction("btn-update-exclude", "lists.updateExclude", "Дополняю…",
+            "Список исключений будет дополнен из интернета. Ваши строки останутся, " +
+            "но новые домены добавятся. Продолжить?");
+
+        bindAction("btn-update-ipset-exclude", "lists.updateIpsetExclude", "Восстанавливаю…",
+            "Список локальных сетей будет ПЕРЕЗАПИСАН стандартным набором (10/8, 192.168/16 и т.д.). " +
+            "Ваши правки в этом файле пропадут. Продолжить?");
+
         bindAction("btn-fakes-scan", "fakes.scan", "Сканирую…");
 
         var search = document.getElementById("fakes-search");
@@ -844,10 +912,99 @@
         });
     }
 
-    function bindAction(id, action, busyText) {
+    /// <summary>
+    /// Импорт доменов из файла: кнопка и перетаскивание прямо в поле.
+    ///
+    /// Файл читается в браузере, а не в приложении: не нужен ни диалог выбора
+    /// файла на стороне C#, ни передача пути — только текст, который и так
+    /// уходит в «Сохранить». Работает одинаково и на Android, где никакого
+    /// диалога Windows нет.
+    ///
+    /// Содержимое ДОБАВЛЯЕТСЯ к текущему, а не заменяет его: случайно
+    /// перетащить не тот файл и потерять свой список — слишком легко.
+    /// </summary>
+    function bindListFile(kind) {
+        var input = document.getElementById("list-" + kind + "-input");
+        var button = document.getElementById("btn-list-" + kind + "-import");
+        var file = document.getElementById("file-list-" + kind);
+        if (!input) return;
+
+        if (button && file) button.addEventListener("click", function () { file.click(); });
+
+        if (file) file.addEventListener("change", function () {
+            var chosen = file.files && file.files[0];
+            if (chosen) importIntoTextarea(chosen, input, kind);
+            file.value = "";   // иначе повторный выбор того же файла не сработает
+        });
+
+        input.addEventListener("dragover", function (e) {
+            e.preventDefault();
+            input.classList.add("drop");
+        });
+
+        input.addEventListener("dragleave", function () { input.classList.remove("drop"); });
+
+        input.addEventListener("drop", function (e) {
+            e.preventDefault();
+            input.classList.remove("drop");
+            if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+            importIntoTextarea(e.dataTransfer.files[0], input, kind);
+        });
+
+        // вставка большого текста из буфера тоже должна работать без сюрпризов
+        if (button) button.title = "Домены добавятся к уже введённым";
+    }
+
+    function importIntoTextarea(file, textarea, kind) {
+        // защита от перетаскивания exe/архива: нам нужен только текст
+        if (file.size > 4 * 1024 * 1024) {
+            setListHint(kind, "файл слишком большой (" + Math.round(file.size / 1024) + " КБ)", true);
+            return;
+        }
+
+        var reader = new FileReader();
+
+        reader.onload = function () {
+            var raw = String(reader.result || "");
+
+            // BOM и CRLF: файлы из Блокнота приходят именно так
+            if (raw.charCodeAt(0) === 0xFEFF) raw = raw.substring(1);
+            var text = raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+
+            if (text.length === 0) {
+                setListHint(kind, "файл пуст", true);
+                return;
+            }
+
+            var existing = textarea.value.replace(/\s+$/, "");
+            textarea.value = existing.length > 0 ? existing + "\n" + text : text;
+
+            var lines = text.split("\n").length;
+            setListHint(kind, "добавлено " + lines + " строк из " + file.name + " — не забудьте «Сохранить»", false);
+        };
+
+        reader.onerror = function () {
+            setListHint(kind, "не удалось прочитать файл", true);
+        };
+
+        reader.readAsText(file, "UTF-8");
+    }
+
+    function setListHint(kind, message, bad) {
+        var hint = document.getElementById("list-" + kind + "-hint");
+        if (!hint) return;
+        hint.textContent = message;
+        hint.className = "row-hint " + (bad ? "diag-bad" : "diag-ok");
+    }
+
+    function bindAction(id, action, busyText, confirmText) {
         var el = document.getElementById(id);
         if (!el) return;
         el.addEventListener("click", function () {
+            // Подтверждение там, где откат неочевиден: hosts, перезапись исключений,
+            // новый секрет прокси. Спрашиваем о ПОСЛЕДСТВИИ, а не «вы уверены?».
+            if (confirmText && !window.confirm(confirmText)) return;
+
             var original = el.textContent;
             el.disabled = true;
             el.textContent = busyText;
@@ -888,6 +1045,12 @@
     function initHosts() {
         var apply = document.getElementById("btn-hosts-apply");
         if (apply) apply.addEventListener("click", function () {
+            // hosts — системный файл. Предупреждаем о пути и о том, что свои записи целы.
+            if (!window.confirm(
+                "Будет изменён системный файл hosts " +
+                "(C:\\Windows\\System32\\drivers\\etc\\hosts).\n\n" +
+                "Ваши записи сохранятся, блок AutoZapret добавится отдельной секцией.")) return;
+
             var verify = document.getElementById("hosts-verify");
             apply.disabled = true;
             apply.textContent = "Собираю…";
@@ -903,6 +1066,12 @@
 
         var restore = document.getElementById("btn-hosts-restore");
         if (restore) restore.addEventListener("click", function () {
+            if (!window.confirm(
+                "hosts вернётся из резервной копии, сделанной при первом изменении.\n\n" +
+                "Записи, добавленные после этого момента, исчезнут.")) return;
+
+            restore.disabled = true;
+            restore.textContent = "Восстанавливаю…";
             send("hosts.restore");
         });
     }
@@ -1210,6 +1379,10 @@
                 renderUpdateProgress(msg);
                 break;
 
+            case "net.speed":
+                renderNetSpeed(msg);
+                break;
+
             case "logs":
                 logLines = msg.lines || [];
                 text("log-file", msg.file);
@@ -1249,6 +1422,10 @@
         initProxy();
         initUpdates();
         initButtons();
+
+        // главная открыта с самого начала — опрос скорости надо запустить сразу,
+        // иначе цифра появится только после перехода на другой экран и обратно
+        updateNetSpeedPolling(true);
 
         if (host) {
             host.addEventListener("message", onMessage);

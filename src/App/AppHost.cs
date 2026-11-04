@@ -33,6 +33,7 @@ namespace AutoZapret.App
         private bool _exiting;
         private bool _startedMinimized;
         private bool _autoStartTried;
+        private NetStats _lastNetSample;
 
         public AppHost()
         {
@@ -315,6 +316,22 @@ namespace AutoZapret.App
             {
                 int count = Json.GetInt(msg, "count", 5);
                 RunInBackground("test", () => RunTestUi(count));
+            });
+
+            // ---- трафик (по запросу, раз в секунду пока открыта главная)
+            bridge.Register("net.speed", msg =>
+            {
+                NetStats current = NetStats.Sample();
+                long down, up;
+                NetStats.Rates(_lastNetSample, current, out down, out up);
+                _lastNetSample = current;
+
+                bridge.Send(WebBridge.Msg("net.speed",
+                    "down", down,
+                    "up", up,
+                    "downText", NetStats.Format(down),
+                    "upText", NetStats.Format(up),
+                    "ok", _lastNetSample != null && current.BytesReceived > 0));
             });
 
             // ---- автозапуск

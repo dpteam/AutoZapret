@@ -120,6 +120,9 @@ namespace AutoZapret.App
 
                 Section("каналы обновлений");
                 TestUpdateChannels();
+
+                Section("счётчики трафика");
+                TestNetStats();
             }
             catch (Exception ex)
             {
@@ -1163,6 +1166,99 @@ namespace AutoZapret.App
 
                 try { System.IO.Directory.Delete(dir, true); } catch { }
             }
+        }
+
+        /// <summary>
+        /// Счётчики трафика. Арифметика простая, но именно в ней легко получить
+        /// отрицательные значения (сброс адаптера) или деление на ноль.
+        /// </summary>
+        private static void TestNetStats()
+        {
+            // ---- форматирование
+            Check("скорость: 0",
+                NetStats.Format(0) == "0 Б/с", NetStats.Format(0));
+            Check("скорость: байты",
+                NetStats.Format(1023) == "1023 Б/с", NetStats.Format(1023));
+            Check("скорость: ровно 1 КБ",
+                NetStats.Format(1024) == "1 КБ/с", NetStats.Format(1024));
+            // формат числа — по текущей локали: «1,0 МБ/с» для русской Windows,
+            // «1.0 МБ/с» для английской. Тест не должен зависеть от машины.
+            string oneMb = "1" + CultureInfo.CurrentCulture.NumberFormat.NumberDecimalSeparator + "0 МБ/с";
+            string oneGb = "1" + CultureInfo.CurrentCulture.NumberFormat.NumberDecimalSeparator +
+                           "00 ГБ/с";
+
+            Check("скорость: 1 МБ",
+                NetStats.Format(1024 * 1024) == oneMb, NetStats.Format(1024 * 1024));
+            Check("скорость: 1 ГБ",
+                NetStats.Format(1024L * 1024 * 1024) == oneGb,
+                NetStats.Format(1024L * 1024 * 1024));
+            Check("скорость: отрицательное -> 0",
+                NetStats.Format(-500) == "0 Б/с", NetStats.Format(-500));
+
+            // ---- разница между замерами
+            DateTime start = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+
+            NetStats first = new NetStats
+            {
+                BytesReceived = 1000,
+                BytesSent = 500,
+                SampledAt = start
+            };
+
+            NetStats second = new NetStats
+            {
+                BytesReceived = 1000 + 2048 * 2,   // 2 КБ/с за 2 с
+                BytesSent = 500 + 512 * 2,          // 512 Б/с за 2 с
+                SampledAt = start.AddSeconds(2)
+            };
+
+            long down, up;
+            NetStats.Rates(first, second, out down, out up);
+
+            Check("разница: приём", down == 2048, down + " Б/с");
+            Check("разница: отдача", up == 512, up + " Б/с");
+
+            // ---- счётчики обнулились (адаптер переподключился)
+            NetStats reset = new NetStats
+            {
+                BytesReceived = 10,
+                BytesSent = 5,
+                SampledAt = start.AddSeconds(4)
+            };
+
+            NetStats.Rates(second, reset, out down, out up);
+            Check("сброс счётчиков: приём 0", down == 0, down + " Б/с");
+            Check("сброс счётчиков: отдача 0", up == 0, up + " Б/с");
+
+            // ---- слишком маленький интервал: делить нельзя
+            NetStats tooSoon = new NetStats
+            {
+                BytesReceived = 999999,
+                BytesSent = 999999,
+                SampledAt = start.AddMilliseconds(10)
+            };
+
+            NetStats.Rates(first, tooSoon, out down, out up);
+            Check("интервал 10 мс: без деления", down == 0 && up == 0, "ok");
+
+            // ---- null-замеры
+            NetStats.Rates(null, second, out down, out up);
+            Check("null-предыдущий: 0", down == 0 && up == 0, "ok");
+
+            // ---- реальный замер не бросает
+            bool threw = false;
+            NetStats real = null;
+
+            try { real = NetStats.Sample(); }
+            catch { threw = true; }
+
+            Check("Sample() не бросает", !threw, threw ? "исключение" : "ok");
+            Check("Sample() ставит время",
+                real != null && real.SampledAt != DateTime.MinValue,
+                real == null ? "null" : real.SampledAt.ToString("HH:mm:ss", CultureInfo.InvariantCulture));
+            Check("Sample() без отрицательных значений",
+                real != null && real.BytesReceived >= 0 && real.BytesSent >= 0,
+                real == null ? "null" : real.BytesReceived + "/" + real.BytesSent);
         }
 
         /// <summary>
