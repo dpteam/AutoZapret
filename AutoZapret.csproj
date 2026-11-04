@@ -111,7 +111,22 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="assets\AutoZapret.ico" />
+    <!--
+      Данные продукта: стратегии, фейки, списки, hosts, пресеты.
+
+      Копируются самим MSBuild, а не скриптом сборки. Раньше это делал только
+      build.cmd, и любой другой способ сборки (dotnet build, как в GitHub
+      Actions) давал exe БЕЗ данных: приложение стартовало с нулём стратегий,
+      и selftest падал на «v1 найдены -> 0 шт.» — при том что файлы лежали
+      в репозитории.
+
+      Ошибка была в том, что «собирается» и «работает» — разные вещи, а
+      зависимость от скрипта делала вторую необязательной.
+    -->
+    <Content Include="assets\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>

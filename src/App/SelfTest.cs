@@ -911,11 +911,25 @@ namespace AutoZapret.App
             Check("есть QUIC-фейки", quic > 0, quic.ToString());
             Check("есть STUN-фейки", stun > 0, stun.ToString());
 
-            // SNI должен извлекаться из ClientHello
-            AutoZapret.Payloads.Payload google =
-                library.Find("tls_clienthello_www_google_com.bin");
-            Check("SNI извлечён", google != null && google.Sni == "www.google.com",
-                google == null ? "файл не найден" : google.Sni);
+            // SNI должен извлекаться из ClientHello. Проверяем СВОЙСТВО, а не конкретное
+            // имя файла: имя зависит от апстрима, и проверка на «tls_clienthello_
+            // www_google_com.bin» падала, стоило файлу переименоваться или не попасть
+            // в поставку — при том что разбор SNI работал.
+            string sniSample = "";
+            string sniValue = "";
+
+            foreach (AutoZapret.Payloads.Payload candidate in
+                     library.ByKind(AutoZapret.Payloads.PayloadKind.TlsClientHello))
+            {
+                if (string.IsNullOrEmpty(candidate.Sni)) continue;
+
+                sniSample = candidate.File;
+                sniValue = candidate.Sni;
+                break;
+            }
+
+            Check("SNI извлекается из ClientHello", sniValue.Length > 0,
+                sniValue.Length > 0 ? sniSample + " -> " + sniValue : "ни у одного файла нет SNI");
 
             // валидатор должен ОТБРАКОВЫВАТЬ битые файлы
             string dir = System.IO.Path.Combine(Paths.StateDir, "selftest-fakes");
@@ -1269,6 +1283,15 @@ namespace AutoZapret.App
         /// </summary>
         private static void TestStrategiesByEngine()
         {
+            // Данные продукта должны быть рядом с exe. Если их нет — все
+            // проверки ниже упадут «0 шт.», и причина будет неочевидна:
+            // однажды это случилось на CI, потому что assets копировал только
+            // build.cmd, а не сам MSBuild. Пусть падает здесь и с адресом.
+            string dataDir = Paths.StrategiesDir;
+
+            Check("стратегии: данные на месте", Directory.Exists(dataDir),
+                Directory.Exists(dataDir) ? dataDir : "НЕТ каталога " + dataDir);
+
             AutoZapret.Zapret.StrategyStore store;
 
             using (AutoZapret.Zapret.ZapretService svc = new AutoZapret.Zapret.ZapretService())

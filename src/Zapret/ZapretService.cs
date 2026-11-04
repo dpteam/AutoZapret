@@ -94,13 +94,19 @@ namespace AutoZapret.Zapret
         {
             string engineTag = kind == EngineKind.V2 ? "v2" : "v1";
 
-            if (!_engine.IsAvailable(kind))
+            bool available = _engine.IsAvailable(kind);
+
+            if (!available)
             {
-                Log.Info("WINWS", engineTag + " недоступен: " + _engine.UnavailableReason(kind));
-                return;
+                // Стратегии — это ДАННЫЕ, а не движок. Их надо показывать и
+                // тогда, когда движок ещё не скачан: иначе на первом запуске
+                // (и в CI, где движок качается отдельным шагом) список пуст,
+                // и человек видит «нет доступных стратегий» без причины.
+                Log.Info("WINWS", engineTag + " не установлен: " + _engine.UnavailableReason(kind) +
+                                 " (стратегии загружаем всё равно)");
             }
 
-            // 1) кэш рядом с exe
+            // 1) кэш рядом с exe — не зависит от движка
             string cachePath = Path.Combine(Paths.StrategiesDir, cacheName);
             if (_store.Load(cachePath) && _store.ByEngine(engineTag).Count > 0)
             {
@@ -108,7 +114,10 @@ namespace AutoZapret.Zapret
                 return;
             }
 
-            // 2) импорт из исходных .bat
+            // 2) импорт из исходных .bat — только когда движок есть: нужны его
+            //    пути для подстановки ${BIN}/${LISTS}/${LUA}
+            if (!available) return;
+
             string batDir = FindBatDirectory(kind);
             if (batDir != null)
             {
