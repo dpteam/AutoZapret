@@ -842,6 +842,29 @@
 
         bindAction("btn-fakes-scan", "fakes.scan", "Сканирую…");
 
+        var genButton = document.getElementById("btn-fake-generate");
+        if (genButton) genButton.addEventListener("click", function () {
+            var sni = document.getElementById("fake-sni");
+            var type = document.getElementById("fake-type");
+            var box = document.getElementById("fake-result");
+
+            if (!sni || sni.value.trim().length === 0) {
+                if (box) {
+                    box.textContent = "Введите домен, например example.com";
+                    box.className = "row-hint diag-bad";
+                    box.style.display = "";
+                }
+                if (sni) sni.focus();
+                return;
+            }
+
+            genButton.disabled = true;
+            genButton.textContent = "Собираю…";
+            if (box) box.style.display = "none";
+
+            send("fakes.generate", { sni: sni.value, type: type ? type.value : "tls" });
+        });
+
         var search = document.getElementById("fakes-search");
         if (search) {
             var timer = null;
@@ -853,6 +876,31 @@
                 }, 250);
             });
         }
+    }
+
+    function renderFakeGenerated(msg) {
+        var button = document.getElementById("btn-fake-generate");
+        if (button) { button.disabled = false; button.textContent = "Собрать"; }
+
+        var box = document.getElementById("fake-result");
+        if (!box) return;
+
+        box.style.display = "";
+
+        if (!msg.ok) {
+            box.className = "row-hint diag-bad";
+            box.textContent = "Не получилось: " + (msg.error || msg.reason || "неизвестная ошибка");
+            return;
+        }
+
+        box.className = "row-hint diag-ok";
+        box.textContent = "Готово: " + msg.file + " · " + (msg.type === "quic" ? "QUIC Initial" : "TLS ClientHello") +
+            ", " + msg.size + " Б" +
+            (msg.sni ? " · SNI " + msg.sni : "") +
+            (msg.keyShare ? " · ключ " + msg.keyShare : "");
+
+        // список фейков устарел — обновим, чтобы новый файл был виден
+        send("fakes.scan");
     }
 
     function renderFakes(msg) {
@@ -1381,6 +1429,10 @@
 
             case "net.speed":
                 renderNetSpeed(msg);
+                break;
+
+            case "fakes.generated":
+                renderFakeGenerated(msg);
                 break;
 
             case "logs":

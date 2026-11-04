@@ -1,0 +1,45 @@
+feat(P9): own fake-payload generator (TLS ClientHello + QUIC Initial)
+
+The library has 1694 ready fakes from TLSpack, but they were captured on
+a particular day for particular domains. There is no fake for your own
+host, and borrowing someone else's SNI is a lottery. payloadGen cannot be
+shipped - no licence - so the generator is written from the RFCs.
+
+TlsClientHello builds a real TLS 1.3 record: GREASE value, 8 cipher
+suites, 16 extensions (server_name, supported_groups, key_share, ALPN
+h2/http1.1, signature_algorithms, supported_versions, padding and the
+rest), then pads with RFC 7685 to the requested size - 517 bytes by
+default, which is exactly what the TLSpack Chrome-like hello measures.
+
+The important detail is key_share. It gets a REAL ECDH public key -
+X25519 via CNG curve25519, falling back to P-256 when the platform says
+no (it does on this machine). Dropping 32 random bytes there would have
+been three lines shorter and wrong: a random point is not a valid key,
+so the hello differs from a genuine one in a way a real endpoint notices
+immediately. Padding and GREASE are cosmetic; the key is not.
+
+QuicInitial writes long header + version 1 + random payload, exactly 1200
+bytes as RFC 9000 demands. Random payload is not laziness: the contents
+of an Initial are encrypted under keys derived from the public DCID, so
+DPI sees only the header and length. A real CRYPTO frame would look
+identical from outside and cost AES-GCM + HKDF for zero effect.
+
+Every generated payload is checked by our own PayloadValidator before it
+is written, and Inspect() reads it back from disk afterwards. If either
+check fails, nothing is saved - a broken .bin silently fed to
+--dpi-desync-fake-tls is worse than no file.
+
+Domain input is normalised: a pasted URL, a port, a trailing dot all
+reduce to a bare host; 'localhost' and single words are rejected. File
+names match the library convention (tls_clienthello_<host>.bin) with dots
+turned into underscores, because the name ends up in winws arguments.
+
+The UI says plainly what this is: a synthetic ClientHello, not a browser
+fingerprint, so nobody expects uTLS-grade parity from it.
+
+CLI: --gen-fake --sni <domain> [--type tls|quic|all] [--size N] [--out dir]
+UI: 'Собрать фейк под свой домен' in the fakes card (advanced mode)
+selftest: 42 checks - byte-level structure, record length consistency,
+SNI read back from the bytes, uniqueness across calls, padding to an
+exact size, QUIC header bits and version, size guards, name sanitising,
+save-then-reread, and refusal to save an invalid payload.

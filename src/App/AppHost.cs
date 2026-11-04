@@ -386,6 +386,50 @@ namespace AutoZapret.App
                 OpenPath(ProcessPresets.FilePath);
             });
 
+            // ---- генератор фейков: свой домен -> свой payload
+            bridge.Register("fakes.generate", msg => RunInBackground("genfake", () =>
+            {
+                string sni = Json.GetString(msg, "sni", "");
+                string type = Json.GetString(msg, "type", "tls");
+
+                GeneratedFake fake = type == "quic"
+                    ? FakeGenerator.QuicInitial(FakeGenerator.QuicSize, sni)
+                    : FakeGenerator.TlsClientHello(sni, FakeGenerator.DefaultTlsSize);
+
+                if (!fake.Valid)
+                {
+                    _form.Bridge.Send(WebBridge.Msg("fakes.generated",
+                        "ok", false, "error", fake.Error ?? "не удалось собрать"));
+                    return;
+                }
+
+                string error;
+                string path = FakeGenerator.Save(fake, Paths.FakesDir, out error);
+
+                if (path == null)
+                {
+                    _form.Bridge.Send(WebBridge.Msg("fakes.generated",
+                        "ok", false, "error", error));
+                    return;
+                }
+
+                // библиотека кеширует индекс — иначе новый файл не появится в списке
+                PayloadLibrary.Invalidate();
+
+                Payload check = PayloadValidator.Inspect(path);
+
+                Log.Info("FAKE", "создан фейк " + System.IO.Path.GetFileName(path) + ": " + fake.Describe());
+
+                _form.Bridge.Send(WebBridge.Msg("fakes.generated",
+                    "ok", check.Valid,
+                    "file", System.IO.Path.GetFileName(path),
+                    "size", (long)fake.Size,
+                    "sni", fake.Sni,
+                    "keyShare", fake.KeyShare ?? "",
+                    "type", fake.Kind == PayloadKind.QuicInitial ? "quic" : "tls",
+                    "reason", check.Valid ? "" : check.InvalidReason));
+            }));
+
             // ---- списки
             bridge.Register("lists.get", msg =>
             {

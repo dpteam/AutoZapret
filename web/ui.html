@@ -425,6 +425,25 @@
           </div>
         </div>
         <div id="fakes-list" class="diag-list" style="margin-top:10px;display:none"></div>
+
+        <div class="row" style="margin-top:14px;align-items:flex-start">
+          <div style="flex:1">
+            <div class="row-label">Собрать фейк под свой домен</div>
+            <div class="row-hint">
+              Синтетический ClientHello с настоящим ключом ECDH. Не слепок браузера —
+              но для DPI выглядит как обычный TLS
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="text" id="fake-sni" placeholder="example.com" style="min-width:170px">
+            <select id="fake-type">
+              <option value="tls">TLS</option>
+              <option value="quic">QUIC</option>
+            </select>
+            <button class="btn primary" id="btn-fake-generate">Собрать</button>
+          </div>
+        </div>
+        <div id="fake-result" class="row-hint" style="margin-top:8px;display:none"></div>
       </div>
     </section>
 

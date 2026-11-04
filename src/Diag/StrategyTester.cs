@@ -403,6 +403,102 @@ namespace AutoZapret.Diag
             return result;
         }
 
+        /// <summary>
+        /// --gen-fake --sni домен [--type tls|quic] [--size N] [--out каталог] [--all]
+        /// Свой генератор фейков: собрать payload под конкретный домен.
+        /// </summary>
+        public static int RunGenFake(string[] args)
+        {
+            string sni = null;
+            string type = "tls";
+            string outDir = Paths.FakesDir;
+            int size = 0;
+
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], "--sni", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                    sni = args[i + 1];
+
+                if (string.Equals(args[i], "--type", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                    type = args[i + 1].ToLowerInvariant();
+
+                if (string.Equals(args[i], "--size", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                    int.TryParse(args[i + 1], out size);
+
+                if (string.Equals(args[i], "--out", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                    outDir = args[i + 1];
+            }
+
+            if (string.IsNullOrEmpty(sni))
+            {
+                Console.WriteLine("использование: AutoZapret.exe --gen-fake --sni <домен> [--type tls|quic] [--size N]");
+                Console.WriteLine("               [--out <каталог>] [--all]");
+                return 1;
+            }
+
+            Console.WriteLine("== генератор фейков ==");
+            Console.WriteLine("домен:  " + sni);
+            Console.WriteLine("каталог: " + outDir);
+            Console.WriteLine();
+
+            int created = 0;
+
+            if (type == "tls" || type == "all")
+            {
+                GeneratedFake fake = FakeGenerator.TlsClientHello(sni, size > 0 ? size : FakeGenerator.DefaultTlsSize);
+                created += Report(fake, outDir);
+            }
+
+            if (type == "quic" || type == "all")
+            {
+                GeneratedFake fake = FakeGenerator.QuicInitial(size > 0 ? size : FakeGenerator.QuicSize, sni);
+                created += Report(fake, outDir);
+            }
+
+            bool allTypes = type == "all";
+            if (!allTypes && type != "tls" && type != "quic")
+            {
+                Console.WriteLine("неизвестный тип: " + type + " (ожидалось tls | quic | all)");
+                return 1;
+            }
+
+            Console.WriteLine();
+            Console.WriteLine(created == 0 ? "ничего не создано" : "создано: " + created);
+
+            return created > 0 ? 0 : 1;
+        }
+
+        private static int Report(GeneratedFake fake, string outDir)
+        {
+            if (!fake.Valid)
+            {
+                Console.WriteLine("  ОШИБКА: " + fake.Error);
+                return 0;
+            }
+
+            string error;
+            string path = FakeGenerator.Save(fake, outDir, out error);
+
+            if (path == null)
+            {
+                Console.WriteLine("  не удалось сохранить: " + error);
+                return 0;
+            }
+
+            Console.WriteLine("  " + Path.GetFileName(path));
+            Console.WriteLine("     " + fake.Describe());
+
+            // перечитываем с диска: файл должен проходить валидатор, а не только память
+            Payload check = PayloadValidator.Inspect(path);
+            Console.WriteLine("     проверка с диска: " +
+                              (check.Valid ? "ok" : "ПРОВАЛ — " + check.InvalidReason) +
+                              (check.Kind == PayloadKind.TlsClientHello
+                                  ? (check.Sni.Length > 0 ? ", SNI читается: " + check.Sni : ", SNI не найден")
+                                  : ", SNI в открытом виде отсутствует (так и должно быть)"));
+
+            return check.Valid ? 1 : 0;
+        }
+
         /// <summary>--sha256 &lt;файл&gt;: посчитать хеш и сверить с checksums.txt рядом, если он есть.</summary>
         public static int RunSha256(string[] args)
         {

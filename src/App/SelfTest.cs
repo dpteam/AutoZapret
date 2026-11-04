@@ -123,6 +123,9 @@ namespace AutoZapret.App
 
                 Section("счётчики трафика");
                 TestNetStats();
+
+                Section("генератор фейков");
+                TestFakeGenerator();
             }
             catch (Exception ex)
             {
@@ -1166,6 +1169,175 @@ namespace AutoZapret.App
 
                 try { System.IO.Directory.Delete(dir, true); } catch { }
             }
+        }
+
+        /// <summary>
+        /// Генератор фейков. Главное здесь — что результат проходит НАШ ЖЕ валидатор
+        /// и что SNI реально читается из байтов: «выглядит как TLS» проверяется
+        /// разбором, а не на глаз.
+        /// </summary>
+        private static void TestFakeGenerator()
+        {
+            // ---- нормализация домена
+            Check("домен: со схемой и путём",
+                AutoZapret.Payloads.FakeGenerator.NormalizeHost("https://www.YouTube.com/watch?v=1") ==
+                "www.youtube.com",
+                AutoZapret.Payloads.FakeGenerator.NormalizeHost("https://www.YouTube.com/watch?v=1"));
+
+            Check("домен: с портом",
+                AutoZapret.Payloads.FakeGenerator.NormalizeHost("example.com:443") == "example.com", "ok");
+
+            Check("домен: с точкой на конце",
+                AutoZapret.Payloads.FakeGenerator.NormalizeHost("example.com.") == "example.com", "ok");
+
+            Check("домен: голое слово отклонено",
+                AutoZapret.Payloads.FakeGenerator.NormalizeHost("localhost") == "", "ok");
+
+            Check("домен: пустое отклонено",
+                AutoZapret.Payloads.FakeGenerator.NormalizeHost("") == "", "ok");
+
+            // ---- TLS ClientHello
+            AutoZapret.Payloads.GeneratedFake tls =
+                AutoZapret.Payloads.FakeGenerator.TlsClientHello("www.youtube.com");
+
+            Check("TLS: создан", tls.Valid, tls.Describe());
+            Check("TLS: размер по умолчанию 517", tls.Size == 517, tls.Size + " Б");
+            Check("TLS: домен нормализован", tls.Sni == "www.youtube.com", tls.Sni);
+
+            if (tls.Valid)
+            {
+                byte[] d = tls.Data;
+
+                Check("TLS: тип записи 0x16", d[0] == 0x16, "0x" + d[0].ToString("x2"));
+                Check("TLS: тип handshake 0x01", d[5] == 0x01, "0x" + d[5].ToString("x2"));
+
+                int recordLength = (d[3] << 8) | d[4];
+                Check("TLS: длина записи сходится с файлом",
+                    recordLength + 5 == d.Length, recordLength + " vs " + (d.Length - 5));
+
+                Check("TLS: legacy_version 0x0303", d[9] == 0x03 && d[10] == 0x03,
+                    "0x" + d[9].ToString("x2") + d[10].ToString("x2"));
+
+                string sni;
+                AutoZapret.Payloads.PayloadKind kind =
+                    AutoZapret.Payloads.PayloadValidator.DetectKind(d, out sni);
+
+                Check("TLS: валидатор распознал",
+                    kind == AutoZapret.Payloads.PayloadKind.TlsClientHello, kind.ToString());
+
+                Check("TLS: SNI читается из байтов",
+                    AutoZapret.Payloads.PayloadValidator.ExtractSni(d, kind) == "www.youtube.com",
+                    AutoZapret.Payloads.PayloadValidator.ExtractSni(d, kind));
+
+                // ключ ECDH не должен быть нулевым или пустым
+                Check("TLS: key_share заполнен",
+                    tls.KeyShare.Length > 0, tls.KeyShare);
+            }
+
+            // ---- два вызова дают разные байты (random и session_id случайны)
+            AutoZapret.Payloads.GeneratedFake tls2 =
+                AutoZapret.Payloads.FakeGenerator.TlsClientHello("www.youtube.com");
+
+            bool differs = tls.Valid && tls2.Valid && !SameBytes(tls.Data, tls2.Data);
+            Check("TLS: каждый вызов уникален", differs, differs ? "ok" : "байты совпали");
+
+            // ---- размер: меньше естественного -> без padding
+            AutoZapret.Payloads.GeneratedFake small =
+                AutoZapret.Payloads.FakeGenerator.TlsClientHello("a.b", 200);
+            Check("TLS: маленькая цель не ломает формат", small.Valid, small.Describe());
+            Check("TLS: маленькая цель даёт естественный размер", small.Size > 200, small.Size + " Б");
+
+            // ---- размер: больше естественного -> padding
+            AutoZapret.Payloads.GeneratedFake padded =
+                AutoZapret.Payloads.FakeGenerator.TlsClientHello("a.b", 1500);
+            Check("TLS: padding до 1500", padded.Valid && padded.Size == 1500,
+                padded.Size + " Б");
+
+            // ---- пустой домен
+            AutoZapret.Payloads.GeneratedFake noSni =
+                AutoZapret.Payloads.FakeGenerator.TlsClientHello("");
+            Check("TLS: без домена не создаётся", !noSni.Valid, noSni.Error);
+
+            // ---- QUIC Initial
+            AutoZapret.Payloads.GeneratedFake quic =
+                AutoZapret.Payloads.FakeGenerator.QuicInitial();
+
+            Check("QUIC: создан", quic.Valid, quic.Describe());
+            Check("QUIC: ровно 1200 байт", quic.Size == 1200, quic.Size + " Б");
+
+            if (quic.Valid)
+            {
+                Check("QUIC: long header", (quic.Data[0] & 0x80) != 0, "0x" + quic.Data[0].ToString("x2"));
+                Check("QUIC: fixed bit",
+                    (quic.Data[0] & 0x40) != 0, "0x" + quic.Data[0].ToString("x2"));
+                Check("QUIC: тип Initial (00)",
+                    (quic.Data[0] & 0x30) == 0, "0x" + quic.Data[0].ToString("x2"));
+                Check("QUIC: версия 1",
+                    quic.Data[1] == 0 && quic.Data[2] == 0 && quic.Data[3] == 0 && quic.Data[4] == 1, "ok");
+
+                string reason;
+                Check("QUIC: валидатор распознал",
+                    AutoZapret.Payloads.PayloadValidator.DetectKind(quic.Data, out reason) ==
+                    AutoZapret.Payloads.PayloadKind.QuicInitial, reason);
+            }
+
+            Check("QUIC: слишком маленький отклонён",
+                !AutoZapret.Payloads.FakeGenerator.QuicInitial(30).Valid, "ok");
+            Check("QUIC: слишком большой отклонён",
+                !AutoZapret.Payloads.FakeGenerator.QuicInitial(20000).Valid, "ok");
+            Check("QUIC: 1400 допустим",
+                AutoZapret.Payloads.FakeGenerator.QuicInitial(1400).Size == 1400, "ok");
+
+            // ---- имя файла
+            string tlsName = AutoZapret.Payloads.FakeGenerator.FileNameFor(
+                "www.youtube.com", AutoZapret.Payloads.PayloadKind.TlsClientHello);
+
+            Check("имя TLS-файла", tlsName == "tls_clienthello_www_youtube_com.bin", tlsName);
+            Check("имя без точек и слешей",
+                tlsName.IndexOf('.') == tlsName.Length - 4 && tlsName.IndexOf('/') < 0, tlsName);
+
+            string quicName = AutoZapret.Payloads.FakeGenerator.FileNameFor(
+                "a.b", AutoZapret.Payloads.PayloadKind.QuicInitial);
+            Check("имя QUIC-файла", quicName == "quic_initial_a_b.bin", quicName);
+
+            // ---- сохранение и чтение с диска
+            string dir = System.IO.Path.Combine(Paths.DataDir, "selftest-fakes");
+
+            try
+            {
+                string error;
+                string path = AutoZapret.Payloads.FakeGenerator.Save(tls, dir, out error);
+
+                Check("фейк сохранён", path != null, path ?? error);
+
+                if (path != null)
+                {
+                    AutoZapret.Payloads.Payload payload = AutoZapret.Payloads.PayloadValidator.Inspect(path);
+
+                    Check("сохранённый файл валиден", payload.Valid, payload.InvalidReason);
+                    Check("размер файла на диске", payload.Size == 517, payload.Size + " Б");
+                    Check("SNI перечитан с диска", payload.Sni == "www.youtube.com", payload.Sni);
+                }
+
+                // ---- невалидный фейк не сохраняется
+                string badPath = AutoZapret.Payloads.FakeGenerator.Save(noSni, dir, out error);
+                Check("невалидный фейк не сохранён", badPath == null, error);
+            }
+            finally
+            {
+                try { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+                catch { }
+            }
+        }
+
+        private static bool SameBytes(byte[] a, byte[] b)
+        {
+            if (a == null || b == null || a.Length != b.Length) return false;
+
+            for (int i = 0; i < a.Length; i++)
+                if (a[i] != b[i]) return false;
+
+            return true;
         }
 
         /// <summary>
