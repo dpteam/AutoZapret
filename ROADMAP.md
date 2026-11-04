@@ -794,10 +794,17 @@ WinDivert + модификация пакетов. Вся «магия» — н�
       частично: TLS ClientHello распознаётся и SNI извлекается. Не сделано:
       seq/ack/flags/options/timestamps, `http_req`, `quic_initial`, `stun`,
       `discord_ip_discovery`.
-- [ ] **P10.3 — Desync-техники, порт с lua.** По одной, с тестом на каждом шаге:
+- [~] **P10.3 — Desync-техники, порт с lua.** По одной, с тестом на каждом шаге:
       `fake` (подмена пейлоада + свои seq/ack/ts), `fakedsplit`, `multisplit` (с `seqovl`),
       `multidisorder`, `hostfakesplit`, `syndata`, `oob`, `udplen`, `wsize`.
       Источник семантики — `docs/research/zapret-win-bundle.md` §4.4 (разбор `zapret-antidpi.lua`).
+
+      Сделано (2026-11-04): конвейер целиком — `TcpPacket` (разбор IPv4/TCP, суммы
+      RFC 1071 с псевдозаголовком, нарезка payload со сдвигом seq), `OwnEngine`
+      (WinDivert, приём в отдельном потоке, любой сбой → пакет уходит неизменённым),
+      техника `split` для TLS ClientHello, CLI `--own [сек] [--split N] [--dry]`.
+      selftest проверяет арифметику сумм и непрерывность seq. Дальше — `fake` и
+      `multisplit`.
 - [ ] **P10.4 — Fooling.** `badseq` (+increment), `badsum`, `md5sig`, `ts`, `hopbyhop`,
       `datanoack`. Проверка: DPI должен отбросить фейк, а получатель — принять настоящий пакет.
 - [ ] **P10.5 — Совместимость конфигов.** Парсер аргументов `winws`/`winws2` → внутренняя
