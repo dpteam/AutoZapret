@@ -640,8 +640,7 @@ namespace AutoZapret.App
                 {
                     List<RestoreEntry> entries = BundledLists.Restore();
 
-                    int restored = 0;
-                    List<object> details = new List<object>();
+                    int restored = 0;                    List<object> details = new List<object>();
 
                     foreach (RestoreEntry entry in entries)
                     {
@@ -667,6 +666,53 @@ namespace AutoZapret.App
 
                     SendListCatalog();
                     SendIpsetState();
+                });
+            });
+
+            // Проверить, есть ли на сервере новые версии списков. Ничего не пишет:
+// человек должен видеть «актуально» или «на сервере 33340, у вас 33336»,
+// а не гадать, стоит ли жать «Обновить».
+            bridge.Register("lists.checkUpdates", msg =>
+            {
+                RunInBackground("lists-check", () =>
+                {
+                    List<ListsUpdater.ListUpdate> updates = ListsUpdater.CheckUpdates(
+                        line => SendUpdateStatus(new UpdateResult { Ok = true, Message = line }));
+
+                    List<object> items = new List<object>();
+                    int outdated = 0, unreachable = 0;
+
+                    foreach (ListsUpdater.ListUpdate update in updates)
+                    {
+                        if (update.Changed) outdated++;
+                        if (!update.Reachable) unreachable++;
+
+                        items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                        {
+                            { "name", update.Name },
+                            { "file", update.File },
+                            { "reachable", update.Reachable },
+                            { "changed", update.Changed },
+                            { "local", (long)update.LocalLines },
+                            { "remote", (long)update.RemoteLines },
+                            { "note", update.Note ?? "" }
+                        });
+                    }
+
+                    string summary;
+
+                    if (unreachable == updates.Count)
+                        summary = "сервер недоступен — работаем на вшитых списках, это нормально";
+                    else if (outdated == 0)
+                        summary = "все списки актуальны";
+                    else
+                        summary = "есть обновления: " + outdated + " из " + updates.Count;
+
+                    _form.Bridge.Send(WebBridge.Msg("lists.updates",
+                        "ok", true,
+                        "summary", summary,
+                        "outdated", (long)outdated,
+                        "items", items));
                 });
             });
 

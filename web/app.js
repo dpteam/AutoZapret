@@ -1625,6 +1625,46 @@
             restore.textContent = "Восстанавливаю…";
             send("lists.restoreBundled");
         });
+
+        var checkUpd = document.getElementById("btn-lists-check-updates");
+        if (checkUpd) checkUpd.addEventListener("click", function () {
+            checkUpd.disabled = true;
+            checkUpd.textContent = "Проверяю…";
+            send("lists.checkUpdates");
+        });
+    }
+
+    function renderListUpdates(msg) {
+        var btn = document.getElementById("btn-lists-check-updates");
+        if (btn) { btn.disabled = false; btn.textContent = "Проверить обновления"; }
+
+        var hint = document.getElementById("lists-bundled-hint");
+        if (hint && msg.summary) {
+            hint.textContent = msg.summary;
+            hint.className = "row-hint " + ((msg.outdated || 0) > 0 ? "diag-warn" : "diag-ok");
+        }
+
+        var box = document.getElementById("lists-updates-list");
+        if (!box) return;
+
+        box.innerHTML = "";
+
+        (msg.items || []).forEach(function (u) {
+            var div = document.createElement("div");
+            div.className = "diag-row";
+
+            var cls = !u.reachable ? "warn" : (u.changed ? "warn" : "ok");
+
+            div.innerHTML =
+                '<span class="badge ' + cls + '">' + (!u.reachable ? "—" : (u.changed ? "!" : "OK")) + '</span>' +
+                '<span class="name">' + u.name + '</span>' +
+                '<span class="verdict">' + (u.note || "") + '</span>' +
+                '<span class="detail">' + u.file + '</span>';
+
+            box.appendChild(div);
+        });
+
+        box.style.display = "";
     }
 
     function renderBundledLists(msg) {
@@ -2424,6 +2464,10 @@
 
             case "lists.bundled":
                 renderBundledLists(msg);
+                break;
+
+            case "lists.updates":
+                renderListUpdates(msg);
                 break;
 
             case "auto":

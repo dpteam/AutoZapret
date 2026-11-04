@@ -254,5 +254,6 @@
   "Запас в поставке": "Bundled fallback",
   "Копия всех списков вшита в программу: работает без интернета, если GitHub недоступен": "A copy of every list ships with the program: works without internet when GitHub is unreachable",
   "Восстановить из поставки": "Restore from bundle",
-  "Восстанавливаю…": "Restoring…"
+  "Восстанавливаю…": "Restoring…",
+  "Проверить обновления": "Check for updates"
 }

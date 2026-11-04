@@ -1,4 +1,4 @@
-// Разовая правка словаря: вшитые списки.
+// Разовая правка словаря: проверка обновлений списков.
 const fs = require("fs");
 const path = require("path");
 
@@ -6,11 +6,8 @@ const p = path.join(__dirname, "..", "web", "i18n", "en.json");
 const dict = JSON.parse(fs.readFileSync(p, "utf8"));
 
 const add = {
-  "Запас в поставке": "Bundled fallback",
-  "Копия всех списков вшита в программу: работает без интернета, если GitHub недоступен":
-    "A copy of every list ships with the program: works without internet when GitHub is unreachable",
-  "Восстановить из поставки": "Restore from bundle",
-  "Восстанавливаю…": "Restoring…"
+  "Проверить обновления": "Check for updates",
+  "Проверяю…": "Checking…"
 };
 
 let added = 0;
