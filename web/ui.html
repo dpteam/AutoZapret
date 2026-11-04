@@ -50,7 +50,13 @@
 
       <div class="notice" id="p0-notice" style="display:none">
         <span>ⓘ</span>
-        <div id="p0-notice-text"></div>
+        <div style="flex:1">
+          <div id="p0-notice-text"></div>
+          <div id="p0-engine-download" style="margin-top:10px;display:none;align-items:center;gap:10px">
+            <button class="btn primary" id="btn-engine-download">Скачать движок</button>
+            <span class="row-hint" id="engine-download-status"></span>
+          </div>
+        </div>
       </div>
 
       <div class="card">
@@ -305,7 +311,7 @@
 
       <div class="notice warn">
         <span>ⓘ</span>
-        <div id="lists-notice">
+        <div>
           Изменения применяются при следующем запуске обхода. Строка, начинающаяся с ! в списке целей, означает исключение, а не цель.
         </div>
       </div>

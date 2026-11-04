@@ -555,6 +555,9 @@ namespace AutoZapret.App
             bridge.Register("upd.engine.install", msg => RunInBackground("upd-install", InstallEngineUi));
             bridge.Register("upd.app.check", msg => RunInBackground("upd-app", CheckAppUi));
             bridge.Register("upd.app.install", msg => RunInBackground("upd-app-install", InstallAppUi));
+
+            // ---- первичная установка движка: без git, без консоли
+            bridge.Register("engine.download", msg => RunInBackground("engine-download", DownloadEngineUi));
         }
 
         // --------------------------------------------------------------- updates
@@ -599,6 +602,47 @@ namespace AutoZapret.App
             }
 
             CheckEngineUi();
+        }
+
+        /// <summary>
+        /// Установка движка из приложения. Прогресс идёт в интерфейс строками:
+        /// скачивание занимает до минуты, и молчащая кнопка выглядит как зависание.
+        /// </summary>
+        private void DownloadEngineUi()
+        {
+            EngineInstaller installer = new EngineInstaller();
+            installer.Progress += line => _form.Bridge.Send(
+                WebBridge.Msg("engine.progress", "line", line, "done", false));
+
+            EngineInstallResult result = installer.Install();
+
+            if (result.Ok)
+            {
+                // движок появился — перечитываем состояние и стратегии
+                try { _zapret.Engine.Refresh(); } catch { }
+
+                _form.Bridge.Send(WebBridge.Msg("engine.progress",
+                    "line", "движок установлен" + (result.Version.Length > 0 ? ", версия " + result.Version : ""),
+                    "done", true, "ok", true));
+
+                Log.Info("ENGINE", "движок установлен из приложения");
+                _tray.Notify(AppInfo.Name, "Движок установлен — можно включать обход", ToolTipIcon.Info);
+
+                _zapret.EnsureStrategies();
+                PushState();
+                PushStrategies();
+            }
+            else
+            {
+                _form.Bridge.Send(WebBridge.Msg("engine.progress",
+                    "line", result.Error ?? "не удалось",
+                    "done", true, "ok", false, "error", result.Error ?? ""));
+
+                Log.Warn("ENGINE", "установка движка не удалась: " + result.Error);
+                _tray.Notify(AppInfo.Name, "Движок не скачался: " + result.Error, ToolTipIcon.Error);
+
+                PushState();
+            }
         }
 
         private void CheckAppUi()

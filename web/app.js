@@ -33,6 +33,7 @@
     var saveTimer = null;
     var pendingSettings = {};
     var netSpeedTimer = null;
+    var engineDownloadBound = false;
 
     // ------------------------------------------------------------- локализация
     //
@@ -289,9 +290,14 @@
             var show = !s.engineReady;
             notice.style.display = show ? "" : "none";
             if (show) {
-                document.getElementById("p0-notice-text").innerHTML =
-                    t("Движок не установлен. Выполните в папке с программой:") + "<br>" +
-                    "<span class='mono'>powershell -ExecutionPolicy Bypass -File tools\\fetch-engine.ps1</span>";
+                // Главный сценарий для нового человека: движка нет.
+                // Раньше здесь была команда для консоли — это ровно тот
+                // «пердолинг», от которого GUI и должен избавлять.
+                document.getElementById("p0-notice-text").textContent =
+                    t("Движок не установлен. Его можно скачать прямо здесь — без консоли и без git.");
+
+                var block = document.getElementById("p0-engine-download");
+                if (block) block.style.display = "flex";
             }
         }
 
@@ -989,6 +995,51 @@
                 }, 250);
             });
         }
+
+        bindEngineDownload();
+    }
+
+    /// <summary>
+    /// Скачивание движка по кнопке. Для нового человека это первое действие
+    /// в приложении, поэтому статус пишется прямо рядом с кнопкой, а не в логи.
+    ///
+    /// Обработчик навешен на документ, а не на саму кнопку: notice с кнопкой
+    /// может быть перерисован (например, при отсутствии моста), и прямой
+    /// addEventListener тихо терялся бы вместе со старым элементом.
+    /// </summary>
+    function bindEngineDownload() {
+        if (engineDownloadBound) return;
+        engineDownloadBound = true;
+
+        document.addEventListener("click", function (event) {
+            var target = event.target;
+            if (!target || typeof target.closest !== "function") return;
+            if (!target.closest("#btn-engine-download")) return;
+
+            var button = target.closest("#btn-engine-download");
+            button.disabled = true;
+            button.textContent = t("Скачиваю…");
+
+            var status = document.getElementById("engine-download-status");
+            if (status) { status.textContent = ""; status.className = "row-hint"; }
+
+            send("engine.download");
+        });
+    }
+
+    function renderEngineProgress(msg) {
+        var status = document.getElementById("engine-download-status");
+        if (!status) return;
+
+        status.textContent = msg.line || "";
+
+        if (msg.done) {
+            var button = document.getElementById("btn-engine-download");
+            if (button) { button.disabled = false; button.textContent = t("Скачать движок"); }
+
+            status.className = "row-hint " + (msg.ok ? "diag-ok" : "diag-bad");
+            if (!msg.ok) status.textContent = t("Не удалось:") + " " + (msg.error || "?");
+        }
     }
 
     function renderFakeGenerated(msg) {
@@ -1555,6 +1606,10 @@
 
             case "i18n":
                 applyLanguage(msg.lang, msg.json);
+                break;
+
+            case "engine.progress":
+                renderEngineProgress(msg);
                 break;
 
             case "logs":

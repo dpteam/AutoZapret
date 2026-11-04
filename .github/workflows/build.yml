@@ -212,6 +212,17 @@ jobs:
             Write-Host "::warning::engine not fetched - the artifact will run without it"
           }
 
+          # tools\ рядом с exe: там fetch-engine.ps1 и check-*.ps1.
+          # Без них у пользователя нет ни ручного способа обновить движок,
+          # ни диагностических скриптов, хотя README на них ссылается.
+          if (Test-Path 'tools') {
+            New-Item -ItemType Directory -Path 'publish/tools' -Force | Out-Null
+            robocopy tools publish/tools /E /XO /NJH /NJS /NDL /NFL /NP /R:1 /W:1 | Out-Null
+            if ($LASTEXITCODE -ge 8) { throw "tools copy failed with $LASTEXITCODE" }
+            $global:LASTEXITCODE = 0
+            Write-Host "tools included in publish"
+          }
+
       - name: Upload self-contained
         uses: actions/upload-artifact@v4
         with:
@@ -221,4 +232,5 @@ jobs:
             publish/WebView2Loader.dll
             publish/assets/
             publish/engine/
+            publish/tools/
           retention-days: 14

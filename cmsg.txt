@@ -1,50 +1,54 @@
-fix(ci): robocopy exit code, engine in artifacts, version from tag + RU/EN interface
+feat: download the engine from inside the app, and check encodings everywhere
 
-Three defects reported from GitHub Actions, all real:
+Two things the user asked for, and both were real holes.
 
-1. "Successful build, step failed with exit code 1". robocopy returns 1
-   for "files were copied" - 0..7 is success, 8+ is failure. The Actions
-   pwsh wrapper exits with $LASTEXITCODE of the last command, so a
-   perfectly good copy failed the step. Now: explicit "-ge 8" check and
-   $LASTEXITCODE reset, with a comment explaining why.
+1. "Who is going to fetch the engine?" The portable package shipped WITH
+   engine\, but the self-contained artifact did not, and the only way to
+   get an engine was tools\fetch-engine.ps1 - which needs git, PowerShell
+   execution policy, and a console. For a product whose whole point is a
+   GUI for people who do not want that, it was the worst possible first
+   run experience.
 
-2. The self-contained artifact shipped WITHOUT engine\, so the app
-   started and said "Engine is not installed". The release zip had the
-   same hole and told the user to run tools\fetch-engine.ps1 - which was
-   not in the archive either. Both workflows now put the engine inside,
-   release fails outright if the engine is missing, and tools/ is
-   packaged so the update instruction actually resolves.
+   EngineInstaller downloads two zip archives over HTTPS, unpacks what is
+   needed and places it in engine\. No git, no console. The new user sees
+   one button on the home screen and a progress line next to it.
 
-3. Release never set the version from the tag: v0.3.0 built with
-   <Version>0.2.0</Version> from csproj reports 0.2.0, so self-update
-   offers 0.3.0 forever - download, install, still 0.2.0, repeat. A
-   "Resolve version from tag" step now validates the tag shape and passes
-   -p:Version/-p:FileVersion/-p:AssemblyVersion to build and publish, and
-   the exe is asked for --version afterwards.
+   Sources are the same as in fetch-engine.ps1: Flowseal main for bin+lists,
+   SnAnVl zapret2 for winws2.exe and lua ONLY. Mixing the two bin sets is
+   forbidden (AGENTS.md) - Flowseal winws.exe is 203 776 bytes, the bundle
+   one is 223 232, and nobody tested the combination.
 
-check-workflows.ps1 also learned to substitute ${{ ... }} before parsing:
-Actions expands those placeholders before PowerShell sees them, but the
-parser choked on them and reported false syntax errors.
+   Guards, because a broken engine is worse than no engine:
+   - ZIP signature check: an HTML error page is detected and rejected
+   - size sanity on the archive and on winws.exe afterwards
+   - zip-slip: entries with ".." or a path outside the target are skipped,
+     and the same IsInsideDirectory() helper is what the selftest asserts
+   - v2 failure does not fail the whole install; v1 alone is usable
 
-Localisation RU/EN:
-- en.json embedded as a resource, key = Russian source text (gettext
-  style: msgid = source string), so no markup surgery across 650 lines.
-  translateDom() walks text nodes plus placeholder/title attributes;
-  dynamic labels go through t() and tf("{0} of {1}", ...).
-- Boundary stated honestly in the settings hint: the INTERFACE is
-  translated, while diagnostics and logs are produced in C# and stay
-  Russian. Pretending otherwise would be a lie the first time someone
-  opens the Diagnostics screen.
-- selftest: 191 keys, valid JSON, no empty or untranslated values, no
-  orphan keys (text edited but dictionary forgotten), templates keep
-  their {0} placeholders.
-- The orphan check caught itself: two keys I had added were unused, and
-  a long hint split across two lines needed whitespace-normalised
-  comparison.
+   Verified live: --install-engine fetched both engines, wrote version.txt
+   1.10.4, EngineLocator reports v1 and v2 available.
 
-Also recorded the new pitfalls in AGENTS.md, including the one that bit
-me here: a literal "<script>" inside a comment in app.js breaks any tool
-that injects markup into the page.
+2. tools\ was not in the artifacts at all, while the README referred to
+   tools\fetch-engine.ps1. Now publish.cmd, build.yml and release.yml copy
+   tools\ next to the exe.
 
-ROADMAP gained section 11 "Final check" - the last pass before handover,
-which explicitly asks to look for half-finished work.
+3. Encoding checks (tools\check-encoding.ps1, wired into ci-test.ps1).
+   This is the "half one way, half the other" class of bug: invisible in a
+   diff, loud at runtime, and impossible to diagnose from the error text.
+
+   The checker found real defects immediately:
+   - all three .cmd files were LF-only; cmd needs CRLF for if/else blocks
+   - publish.cmd had Cyrillic, which cmd prints as OEM garbage
+   - publish.cmd had a stray ")" inside an echo INSIDE an if block. cmd
+     parses the whole block even when the branch is not taken, so the ")"
+     closed it early and the script died mid-way with exit code 255 and a
+     message that decoded to nonsense. That was the "successful build with
+     an error" from the user's screenshot - not robocopy at all, though
+     robocopy's exit code was a separate real bug.
+
+   The checker now enforces: UTF-8 validity everywhere, BOM on .ps1 with
+   Cyrillic, ASCII-only and CRLF-only .cmd, no parentheses in echo, and no
+   mixed line endings in any file.
+
+   publish.cmd went from exit 255 half-way through to exit 0 with the full
+   layout: exe + WebView2Loader.dll + engine\ + assets\ + tools\.

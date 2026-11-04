@@ -37,6 +37,30 @@ Section "workflow-файлы"
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'tools\check-workflows.ps1')
 if ($LASTEXITCODE -ne 0) { Fail "workflow-файлы содержат ошибки" } else { Ok "workflow-файлы валидны" }
 
+# ------------------------------------------------------- 1в. кодировки
+# .cmd с LF, кириллица в .cmd, .ps1 без BOM, смешанные переводы строк,
+# «наполовину UTF-8, наполовину cp1251». Компилятор такое не ловит,
+# а ломается оно громко и непонятно.
+Section "кодировки"
+if (Test-Path (Join-Path $root 'tools\check-encoding.ps1')) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'tools\check-encoding.ps1')
+    if ($LASTEXITCODE -ne 0) { Fail "кодировки и переводы строк" } else { Ok "кодировки и переводы строк" }
+} else {
+    Write-Host "[skip] check-encoding.ps1 не найден"
+}
+
+# ------------------------------------------------------- 1б. целостность UI
+# Ловит два класса ошибок, которые иначе видны только глазами:
+#   * getElementById на id, которого нет в разметке — обработчик в пустоту;
+#   * элемент с id, к которому никто не обращается — забытая проводка.
+Section "целостность UI"
+if (Test-Path (Join-Path $root 'tools\check-ui-ids.js')) {
+    & node (Join-Path $root 'tools\check-ui-ids.js')
+    if ($LASTEXITCODE -ne 0) { Fail "разметка и app.js расходятся" } else { Ok "разметка и app.js согласованы" }
+} else {
+    Write-Host "[skip] check-ui-ids.js не найден"
+}
+
 # ------------------------------------------------------------------- 2. скрипты
 Section "PowerShell-скрипты"
 $scripts = Get-ChildItem (Join-Path $root 'tools') -Filter '*.ps1'

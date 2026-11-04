@@ -561,6 +561,48 @@ namespace AutoZapret.Diag
             return 0;
         }
 
+        /// <summary>
+        /// --install-engine: скачать движок из приложения (без git и без консоли).
+        /// </summary>
+        public static int RunInstallEngine(string[] args)
+        {
+            Console.WriteLine("== установка движка ==");
+            Console.WriteLine();
+
+            EngineInstaller installer = new EngineInstaller();
+            installer.Progress += line => Console.WriteLine("  " + line);
+
+            EngineInstallResult result = installer.Install();
+
+            Console.WriteLine();
+
+            if (!result.Ok)
+            {
+                Console.WriteLine("не удалось: " + result.Error);
+                return 1;
+            }
+
+            Console.WriteLine("движок установлен, версия " +
+                              (result.Version.Length > 0 ? result.Version : "неизвестна"));
+
+            if (result.Note.Length > 0) Console.WriteLine("примечание: " + result.Note);
+
+            // проверяем, что EngineLocator видит установленный движок
+            EngineLocator locator = new EngineLocator();
+            locator.Refresh();
+
+            Console.WriteLine("v1 доступен: " + (locator.HasV1 ? "да" : "НЕТ"));
+            Console.WriteLine("v2 доступен: " + (locator.HasV2 ? "да" : "нет"));
+
+            if (!locator.Ready)
+            {
+                Console.WriteLine("движок не готов: " + locator.Problem);
+                return 1;
+            }
+
+            return 0;
+        }
+
         /// <summary>--presets: показать пресеты по процессам и что совпадает сейчас.</summary>
         public static int RunPresets(string[] args)
         {

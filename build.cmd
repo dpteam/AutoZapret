@@ -85,8 +85,8 @@ if exist "%ROOT%engine\bin\winws.exe" (
   echo        powershell -ExecutionPolicy Bypass -File tools\fetch-engine.ps1
 )
 
-rem Assets: иконка, стратегии, фейки, данные диагностики.
-rem Без них приложение работает, но пустое: нет стратегий и фейков.
+rem Assets: icon, strategies, fakes, diagnostics data.
+rem Without them the app runs but is empty: no strategies, no fakes.
 if exist "%ROOT%assets" (
   robocopy "%ROOT%assets" "%OUT%\assets" /E /XO /NJH /NJS /NDL /NFL /NP /R:1 /W:1 >nul 2>&1
   if errorlevel 8 (

@@ -2,18 +2,18 @@
 setlocal
 rem ===========================================================================
 rem  AutoZapret - publish script
-rem  Self-contained single-file: пользователю НЕ нужен установленный .NET.
+rem  Self-contained single-file: the user does NOT need .NET installed.
 rem
-rem  Отличия от build.cmd:
-rem    build.cmd   - быстрая сборка для разработки (нужен .NET 9 на машине)
-rem    publish.cmd - готовый дистрибутив (~50-60 МБ, .NET внутри)
+rem  Differences from build.cmd:
+rem    build.cmd   - fast dev build (needs .NET 9 on the machine)
+rem    publish.cmd - ready-to-ship package (~50-60 MB, .NET inside)
 rem ===========================================================================
 
 set "ROOT=%~dp0"
 set "OUT=%ROOT%publish"
 
 echo.
-echo  AutoZapret publish (self-contained, single-file)
+echo  AutoZapret publish - self-contained, single-file
 echo  ------------------------------------------------------------------
 
 if not exist "%ROOT%AutoZapret.csproj" (
@@ -28,7 +28,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-rem Запущенный exe держит файл - гасим свой процесс
+rem A running exe holds the file - stop our own process
 tasklist /fi "imagename eq AutoZapret.exe" 2>nul | find /i "AutoZapret.exe" >nul
 if not errorlevel 1 (
   echo [1/3] AutoZapret.exe is running - stopping it
@@ -46,7 +46,7 @@ if not exist "%ROOT%lib\webview2\Microsoft.Web.WebView2.Core.dll" (
 
 if exist "%OUT%" rmdir /s /q "%OUT%"
 
-echo [2/3] publishing (это занимает до минуты)...
+echo [2/3] publishing - takes up to a minute...
 pushd "%ROOT%"
 dotnet publish AutoZapret.csproj -c Release -r win-x64 --self-contained true ^
   -p:PublishSingleFile=true ^
@@ -66,7 +66,7 @@ if not "%RC%"=="0" (
 
 echo [3/3] laying out engine and assets...
 
-rem Движок рядом с exe: приложение ищет <exe dir>\engine
+rem Engine next to the exe: the app looks for <exe dir>\engine
 if exist "%ROOT%engine\bin\winws.exe" (
   if not exist "%OUT%\engine" mkdir "%OUT%\engine"
   robocopy "%ROOT%engine" "%OUT%\engine" /E /XO /NJH /NJS /NDL /NFL /NP /R:1 /W:1 >nul 2>&1
@@ -76,7 +76,7 @@ if exist "%ROOT%engine\bin\winws.exe" (
     echo       engine -^> %OUT%\engine
   )
 ) else (
-  echo       [note] engine\ не установлен - движок скачается при первом запуске
+  echo       [note] engine\ is not installed - the app downloads it on first run
 )
 
 if exist "%ROOT%assets" (
@@ -85,9 +85,9 @@ if exist "%ROOT%assets" (
 )
 
 rem ---------------------------------------------------------------------------
-rem  Стратегии. В репозитории их нет (они импортируются из .bat-файлов
-rem  апстрима, которые лежат в refs\ и не шипятся). Для релиза генерируем
-rem  JSON-кэш здесь: он компактнее .bat-набора и уже проверен.
+rem  Strategies. They are not in the repo (imported from the upstream .bat
+rem  files under refs\, which are not shipped). For a release we generate
+rem  the JSON cache here: it is smaller than the .bat set and already proven.
 rem ---------------------------------------------------------------------------
 if not exist "%OUT%\assets\strategies" mkdir "%OUT%\assets\strategies"
 
@@ -95,31 +95,37 @@ if exist "%ROOT%bin\assets\strategies\strategies.v1.json" (
   robocopy "%ROOT%bin\assets\strategies" "%OUT%\assets\strategies" *.json /NJH /NJS /NDL /NFL /NP /R:1 /W:1 >nul 2>&1
 )
 
-rem Если кэша нет (чистая сборка) — просим приложение его создать.
+rem No cache (clean build) - ask the app to create it.
 if not exist "%OUT%\assets\strategies\strategies.v1.json" (
-  echo       генерирую кэш стратегий...
+  echo       generating strategy cache...
   pushd "%OUT%"
   ".\AutoZapret.exe" --strategies >nul 2>&1
   popd
   if exist "%OUT%\assets\strategies\strategies.v1.json" (
-    echo       стратегии: v1 есть
+    echo       strategies: v1 present
   ) else (
-    echo [WARN] не удалось создать кэш стратегий.
-    echo        Нужны исходные .bat в refs\zapret-discord-youtube и refs\snanvl-zapret2
-    echo        и установленный engine\ (tools\fetch-engine.ps1).
-    echo        Без кэша приложение на машине пользователя останется без стратегий.
+    echo [WARN] could not create the strategy cache.
+    echo        Needs the source .bat files in refs\zapret-discord-youtube and refs\snanvl-zapret2
+    echo        and an installed engine\ from tools\fetch-engine.ps1.
+    echo        Without the cache the app on a user machine will have no strategies.
   )
 )
 
 if exist "%OUT%\assets\strategies\strategies.v2.json" (
-  echo       стратегии: v1 + v2
+  echo       strategies: v1 + v2
 ) else (
   if exist "%OUT%\assets\strategies\strategies.v1.json" (
-    echo       стратегии: только v1 (zapret2 не установлен?)
+    echo       strategies: v1 only - zapret2 not installed?
   )
 )
 if exist "%ROOT%licenses" (
   robocopy "%ROOT%licenses" "%OUT%\licenses" /E /XO /NJH /NJS /NDL /NFL /NP /R:1 /W:1 >nul 2>&1
+)
+
+rem tools\ next to the exe: fetch-engine.ps1 and the check-*.ps1 diagnostics.
+rem The README refers to them, so shipping without them sends people nowhere.
+if exist "%ROOT%tools" (
+  robocopy "%ROOT%tools" "%OUT%\tools" /E /XO /NJH /NJS /NDL /NFL /NP /R:1 /W:1 >nul 2>&1
 )
 if exist "%ROOT%README.md" copy /y "%ROOT%README.md" "%OUT%\" >nul
 
@@ -128,14 +134,14 @@ if not exist "%OUT%\AutoZapret.exe" (
   exit /b 1
 )
 
-rem WebView2Loader.dll - нативная библиотека WebView2. В single-file она НЕ
-rem встраивается (это не managed-сборка), поэтому копируем явно. Без неё
-rem окно не запускается: DllNotFoundException при создании окружения.
+rem WebView2Loader.dll - native WebView2 library. In single-file it is NOT
+rem embedded (it is not a managed assembly), so copy it explicitly. Without it
+rem the window does not start: DllNotFoundException on environment creation.
 if exist "%ROOT%lib\webview2\WebView2Loader.dll" (
   copy /y "%ROOT%lib\webview2\WebView2Loader.dll" "%OUT%\" >nul
   echo       WebView2Loader.dll
 ) else (
-  echo [ERROR] lib\webview2\WebView2Loader.dll не найден - окно не запустится.
+  echo [ERROR] lib\webview2\WebView2Loader.dll not found - the window will not start.
   exit /b 1
 )
 
@@ -144,13 +150,13 @@ set /a SIZE_MB=%SIZE% / 1048576
 
 echo.
 echo  Done.
-echo    папка   : %OUT%
-echo    exe     : %OUT%\AutoZapret.exe  (%SIZE_MB% МБ)
-echo    .NET    : не требуется (вшит в exe)
-echo    проверить: "%OUT%\AutoZapret.exe" --selftest
+echo    folder  : %OUT%
+echo    exe     : %OUT%\AutoZapret.exe  - %SIZE_MB% MB
+echo    .NET    : not required - bundled in the exe
+echo    selftest: "%OUT%\AutoZapret.exe" --selftest
 echo.
-echo  Раскладка: exe + WebView2Loader.dll + engine\ + assets\
-echo  Раздать можно папкой или заархивировать целиком.
+echo  Layout: exe + WebView2Loader.dll + engine\ + assets\ + tools\
+echo  Ships as a folder or zipped as a whole.
 echo.
 endlocal
 exit /b 0

@@ -129,6 +129,9 @@ namespace AutoZapret.App
 
                 Section("локализация");
                 TestLocalization();
+
+                Section("скачивание движка");
+                TestEngineInstaller();
             }
             catch (Exception ex)
             {
@@ -1179,6 +1182,99 @@ namespace AutoZapret.App
         /// и что SNI реально читается из байтов: «выглядит как TLS» проверяется
         /// разбором, а не на глаз.
         /// </summary>
+        /// <summary>
+        /// Установщик движка. Без сети: проверяем то, что защищает от порчи
+        /// файлов и от zip-slip — именно здесь ошибка стоит дорого.
+        /// </summary>
+        private static void TestEngineInstaller()
+        {
+            // ---- отбрасывание корневой папки архива
+            Check("архив: корень отброшен",
+                AutoZapret.Zapret.EngineInstaller.StripArchiveRoot("repo-main/bin/winws.exe") ==
+                @"bin\winws.exe",
+                AutoZapret.Zapret.EngineInstaller.StripArchiveRoot("repo-main/bin/winws.exe"));
+
+            Check("архив: без слэша -> пусто",
+                AutoZapret.Zapret.EngineInstaller.StripArchiveRoot("file.txt") == "", "ok");
+
+            Check("архив: пустая строка",
+                AutoZapret.Zapret.EngineInstaller.StripArchiveRoot("") == "", "ok");
+
+            // ---- zip-slip: запись обязана остаться внутри каталога
+            string root = Path.Combine(Paths.DataDir, "selftest-engine");
+
+            Check("zip-slip: обычный путь внутри",
+                AutoZapret.Zapret.EngineInstaller.IsInsideDirectory(
+                    Path.Combine(root, "bin", "winws.exe"), root), "ok");
+
+            Check("zip-slip: выход через ..",
+                !AutoZapret.Zapret.EngineInstaller.IsInsideDirectory(
+                    Path.Combine(root, "..", "evil.exe"), root), "ok");
+
+            Check("zip-slip: выход на два уровня",
+                !AutoZapret.Zapret.EngineInstaller.IsInsideDirectory(
+                    Path.Combine(root, "..", "..", "evil.exe"), root), "ok");
+
+            Check("zip-slip: абсолютный путь снаружи",
+                !AutoZapret.Zapret.EngineInstaller.IsInsideDirectory(
+                    @"C:\Windows\System32\evil.dll", root), "ok");
+
+            Check("zip-slip: пустой путь отброшен",
+                !AutoZapret.Zapret.EngineInstaller.IsInsideDirectory("", root), "ok");
+
+            Check("zip-slip: пустой корень отброшен",
+                !AutoZapret.Zapret.EngineInstaller.IsInsideDirectory(@"C:\x\y.exe", ""), "ok");
+
+            // ---- проверка «это правда ZIP»
+            string dir = Path.Combine(Paths.DataDir, "selftest-engine-zip");
+
+            try
+            {
+                Directory.CreateDirectory(dir);
+
+                // настоящий zip
+                string zipPath = Path.Combine(dir, "ok.zip");
+
+                using (FileStream fs = new FileStream(zipPath, FileMode.Create, FileAccess.Write))
+                using (System.IO.Compression.ZipArchive zip =
+                       new System.IO.Compression.ZipArchive(fs, System.IO.Compression.ZipArchiveMode.Create))
+                {
+                    System.IO.Compression.ZipArchiveEntry entry = zip.CreateEntry("repo-main/bin/winws.exe");
+                    using (Stream s = entry.Open())
+                    {
+                        byte[] payload = new byte[2048];
+                        s.Write(payload, 0, payload.Length);
+                    }
+                }
+
+                Check("zip: настоящий архив распознан",
+                    AutoZapret.Zapret.EngineInstaller.LooksLikeZip(zipPath), "ok");
+
+                // HTML вместо архива — типичный ответ при ошибке или редиректе
+                string htmlPath = Path.Combine(dir, "error.html");
+                File.WriteAllText(htmlPath, "<!DOCTYPE html><html><body>404</body></html>");
+                Check("zip: HTML не считается архивом",
+                    !AutoZapret.Zapret.EngineInstaller.LooksLikeZip(htmlPath), "ok");
+
+                // пустой файл
+                string emptyPath = Path.Combine(dir, "empty.zip");
+                File.WriteAllBytes(emptyPath, new byte[0]);
+                Check("zip: пустой файл не считается архивом",
+                    !AutoZapret.Zapret.EngineInstaller.LooksLikeZip(emptyPath), "ok");
+
+                // несуществующий файл
+                Check("zip: отсутствующий файл",
+                    !AutoZapret.Zapret.EngineInstaller.LooksLikeZip(Path.Combine(dir, "nope.zip")), "ok");
+            }
+            finally
+            {
+                try { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+                catch { }
+                try { if (Directory.Exists(root)) Directory.Delete(root, true); }
+                catch { }
+            }
+        }
+
         /// <summary>
         /// Локализация. Проверяем то, что реально ломается: битый JSON, ключи,
         /// которые никто не использует после правки текста, и переводы-пустышки.
