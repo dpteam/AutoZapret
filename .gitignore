@@ -85,3 +85,7 @@ scratch/
 !assets/**/*.ico
 !assets/**/*.png
 !assets/fakes/**/*.bin
+
+# temporary commit-message files (git add -A after writing one of these
+# has already polluted the history twice - do not let it happen again)
+cmsg*.txt
