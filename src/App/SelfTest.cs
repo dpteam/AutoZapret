@@ -130,6 +130,9 @@ namespace AutoZapret.App
                 Section("каталог списков");
                 TestListCatalog();
 
+                Section("результаты скана");
+                TestScanResults();
+
                 Section("пресеты по процессам");
                 TestProcessPresets();
 
@@ -3198,6 +3201,81 @@ namespace AutoZapret.App
             // неизвестный id не должен бросать: интерфейс спрашивает что попало
             Check("каталог: неизвестный id", AutoZapret.Lists.ListCatalog.Find("нет-такого") == null, "ok");
             Check("каталог: путь для null", AutoZapret.Lists.ListCatalog.PathOf(null) == "", "ok");
+        }
+
+        /// <summary>
+        /// Результаты скана: сохранение и чтение для интерфейса.
+        ///
+        /// Проверяем на синтетике, не трогая реальный файл: подменяем список
+        /// оценок, читаем обратно, смотрим строку для выбранной стратегии.
+        /// Важно, чтобы «не проверялась» отличалось от «0 из 0» — иначе у
+        /// непроверенной стратегии будет зелёная подпись.
+        /// </summary>
+        private static void TestScanResults()
+        {
+            // Реальный файл скана сохраняем и возвращаем: selftest не должен
+            // подменять человеку результаты его подбора на «net-test».
+            string path = System.IO.Path.Combine(Paths.StateDir, "last-scan.json");
+            string backup = null;
+
+            try
+            {
+                if (System.IO.File.Exists(path)) backup = System.IO.File.ReadAllText(path);
+            }
+            catch { }
+
+            try
+            {
+                System.Collections.Generic.List<AutoZapret.Diag.StrategyScore> scores =
+                    new System.Collections.Generic.List<AutoZapret.Diag.StrategyScore>
+                    {
+                        new AutoZapret.Diag.StrategyScore
+                        {
+                            Id = "test.good", Name = "good", OkCount = 4, Total = 4, Score = 98, AvgMs = 210
+                        },
+                        new AutoZapret.Diag.StrategyScore
+                        {
+                            Id = "test.bad", Name = "bad", OkCount = 0, Total = 4, Score = 20,
+                            ProbeReasons = "таймаут ×4"
+                        }
+                    };
+
+                AutoZapret.Diag.ScanResults.Save(scores, "net-test");
+
+                bool fresh, good;
+
+                string lineGood = AutoZapret.Diag.ScanResults.Describe("test.good", out fresh, out good);
+                Check("скан: успешная стратегия описана", lineGood.Length > 0, lineGood);
+                Check("скан: успешная помечена хорошей", good, good.ToString());
+                Check("скан: свежая", fresh, fresh.ToString());
+                Check("скан: в строке есть 4/4",
+                    lineGood.IndexOf("4/4", StringComparison.Ordinal) >= 0, lineGood);
+
+                string lineBad = AutoZapret.Diag.ScanResults.Describe("test.bad", out fresh, out good);
+                Check("скан: провал не считается хорошим", !good, good.ToString());
+                Check("скан: причина провала в строке",
+                    lineBad.IndexOf("таймаут", StringComparison.Ordinal) >= 0, lineBad);
+
+                string lineNone = AutoZapret.Diag.ScanResults.Describe("test.нет", out fresh, out good);
+                Check("скан: непроверенная — пусто", lineNone.Length == 0, lineNone.Length > 0 ? lineNone : "ok");
+
+                Check("скан: сеть запомнена",
+                    AutoZapret.Diag.ScanResults.NetworkOf() == "net-test",
+                    AutoZapret.Diag.ScanResults.NetworkOf());
+            }
+            catch (Exception ex)
+            {
+                Check("результаты скана", false, ex.Message);
+            }
+            finally
+            {
+                try
+                {
+                    if (backup != null) System.IO.File.WriteAllText(path, backup);
+                    else if (System.IO.File.Exists(path)) System.IO.File.Delete(path);
+                }
+                catch { }
+            }
         }
 
         private static void TestSniffResult()

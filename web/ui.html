@@ -103,7 +103,10 @@
             <div class="row-label">Стратегия</div>
             <div class="row-hint">Набор правил обхода для вашего провайдера</div>
           </div>
-          <select id="strategy-select" style="min-width:260px"></select>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+            <select id="strategy-select" style="min-width:260px"></select>
+            <div class="row-hint mono" id="strategy-scan"></div>
+          </div>
         </div>
 
         <div class="row" id="row-strategy-note" style="display:none">
@@ -674,7 +677,10 @@
         <div class="row">
           <div>
             <div class="row-label">Движок и стратегия</div>
-            <div class="row-hint">Выбираются на главном экране — там же, где кнопка включения</div>
+            <div class="row-hint">
+              Выбираются на главном экране — там же, где кнопка включения
+              <span class="dim" id="set-strategy-scan"></span>
+            </div>
           </div>
         </div>
 

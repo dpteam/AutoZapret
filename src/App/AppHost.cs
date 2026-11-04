@@ -2646,6 +2646,12 @@ namespace AutoZapret.App
 
             List<StrategyScore> scores = tester.Run(ids, baseline, 5, 8, token);
 
+            // Снимок скана — чтобы результат был виден у выбора стратегии,
+            // а не только здесь. Человек выбирает стратегию на главной, и
+            // «проверена, 6/6, счёт 98» должно быть рядом с ней.
+            if (scores.Count > 0 && !token.IsCancellationRequested)
+                ScanResults.Save(scores, baseline.Network);
+
             bool cancelled = token.IsCancellationRequested;
 
             _form.Bridge.Send(WebBridge.Msg("diag.progress",
@@ -3077,6 +3083,9 @@ namespace AutoZapret.App
 
             EngineLocator engine = _zapret.Engine;
 
+            bool fresh, good;
+            string scanLine = ScanResults.Describe(_settings.StrategyId, out fresh, out good);
+
             Dictionary<string, object> state = WebBridge.Msg("state",
                 "version", AppInfo.Version,
                 "os", AppInfo.OsDescription,
@@ -3096,6 +3105,11 @@ namespace AutoZapret.App
                 "activeStrategy", _zapret.ActiveStrategyName ?? "",
                 "uptimeSec", (long)_zapret.Uptime.TotalSeconds,
                 "strategyId", _settings.StrategyId,
+                // результат последнего скана именно для выбранной стратегии
+                "scan", scanLine,
+                "scanFresh", fresh,
+                "scanGood", good,
+                "scanCount", (long)ScanResults.Count(),
                 "gameFilter", _settings.GameFilter,
                 "ipsetMode", _settings.IpsetMode,
                 "autoPilot", _settings.AutoPilot,

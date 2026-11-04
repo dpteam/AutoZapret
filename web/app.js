@@ -402,6 +402,16 @@
         var sel = document.getElementById("strategy-select");
         if (sel && s.strategyId && sel.value !== s.strategyId) sel.value = s.strategyId;
 
+        // результат последнего скана для выбранной стратегии: человек выбирает
+        // её здесь, значит и «проверена / 6 из 6 / счёт 98» должно быть здесь,
+        // а не на другом экране
+        var scanEl = document.getElementById("strategy-scan");
+        if (scanEl) {
+            scanEl.textContent = s.scan || "не проверялась подбором";
+            scanEl.className = "row-hint mono " +
+                (s.scan ? (s.scanGood ? (s.scanFresh ? "diag-ok" : "diag-warn") : "diag-warn") : "dim");
+        }
+
         text("game-filter", GAME_FILTER_LABEL[s.gameFilter] || s.gameFilter);
         text("proxy-state", t(s.proxyEnabled ? "включён" : "выключен"));
 
@@ -416,6 +426,9 @@
 
         // настройки
         setSelect("set-engine", s.engineKind);
+
+        var setScan = document.getElementById("set-strategy-scan");
+        if (setScan) setScan.textContent = s.scan ? " · " + s.scan : "";
         var engHint = document.getElementById("engine-hint");
         if (engHint) {
             if (s.engineKind === "v2") {
@@ -1031,20 +1044,32 @@
         var items = msg.items || [];
         box.innerHTML = "";
 
+        // Квадратами: 14 строк в столбик — это длинная простыня, в которой
+        // глаз не находит проблему. Плитки в сетке видно целиком, а проблемные
+        // всё равно подсвечены цветом.
+        var grid = document.createElement("div");
+        grid.className = "check-grid";
+
         items.forEach(function (c) {
             var badge = c.status === "Ok" ? "ok" : (c.status === "Warn" ? "warn" : (c.status === "Fail" ? "bad" : ""));
-            var div = document.createElement("div");
-            div.className = "diag-row";
-            div.innerHTML =
-                '<span class="badge ' + badge + '">' + (c.status === "Ok" ? "OK" : (c.status === "Skip" ? "—" : "!")) + '</span>' +
-                '<span class="name">' + c.name + '</span>' +
-                '<span class="verdict">' + (c.detail || "") + '</span>';
-            box.appendChild(div);
+
+            var tile = document.createElement("div");
+            tile.className = "check-tile " + badge;
+            tile.title = (c.detail || "") + (c.advice ? " — " + c.advice : "");
+
+            tile.innerHTML =
+                '<div class="check-head"><span class="badge ' + badge + '">' +
+                    (c.status === "Ok" ? "OK" : (c.status === "Skip" ? "—" : "!")) + '</span>' +
+                    '<span class="check-name">' + c.name + '</span></div>' +
+                '<div class="check-detail">' + (c.detail || "") + '</div>';
+
+            grid.appendChild(tile);
+            box.appendChild(grid);
 
             if (c.advice) {
                 var adv = document.createElement("div");
                 adv.className = "advice";
-                adv.style.margin = "0 0 6px 0";
+                adv.style.margin = "6px 0";
                 adv.innerHTML = c.advice;
                 box.appendChild(adv);
             }
