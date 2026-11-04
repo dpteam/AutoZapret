@@ -78,7 +78,7 @@ WebView2 в ресурсах, `postMessage`-мост, `refs/` в `.gitignore`, `
 
 - [x] Клонированы все источники в `refs/`
 - [x] Проведено исследование → `docs/research/` (6 разборов, ~400 КБ)
-- [x] Собран `ROADMAP.md` (P0-P10)
+- [x] Собран `ROADMAP.md` (P0-P12)
 - [x] Создан `.git` + `.gitignore` + `.gitattributes` (`refs/`, `engine/`, `bin/`, `data/state/` исключены)
 - [x] Первый коммит `7e471cd`
 - [x] **P0 — фундамент** (окно + трей + настройки + логи + `--selftest`) — `RESULT: ok`
@@ -93,6 +93,7 @@ WebView2 в ресурсах, `postMessage`-мост, `refs/` в `.gitignore`, `
 - [x] **P8 — оркестратор** (Thompson Sampling + Wilson, автопилот, статистика по сетям)
 - [ ] P10 ⭐ — свой движок
 - [ ] P11 ⭐ — Mihomo / Xray (комбайн)
+- [ ] P12 ⭐ — Android-версия (самое последнее)
 
 ---
 
