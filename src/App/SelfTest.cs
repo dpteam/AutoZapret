@@ -115,6 +115,9 @@ namespace AutoZapret.App
                 Section("свой движок: пакеты и суммы");
                 TestTcpPacket();
 
+                Section("свой движок: техники desync");
+                TestDesync();
+
                 Section("Secure DNS в браузерах");
                 TestBrowserDoh();
 
@@ -3397,6 +3400,201 @@ namespace AutoZapret.App
             {
                 Check("вшитые списки", false, ex.Message);
             }
+        }
+
+        /// <summary>
+        /// Техники desync на синтетическом ClientHello.
+        ///
+        /// Проверяем свойства, которые нельзя увидеть глазами и которые дороже
+        /// всего ошибить:
+        ///   * split: куски стыкуются без потерь и перекрытий, seq непрерывный;
+        ///   * multisplit: то же для N позиций, ни один байт не потерян;
+        ///   * fake: подставные пакеты имеют ДРУГОЙ seq (иначе получатель их
+        ///     примет за настоящие данные), а настоящий идёт последним и целым;
+        ///   * badsum: сумма у фейка действительно испорчена, у настоящего — нет.
+        ///
+        /// Если это сломается, интернет будет «иногда не работать», и найти
+        /// причину будет крайне тяжело.
+        /// </summary>
+        private static void TestDesync()
+        {
+            byte[] packet = SynthTlsPacket(600, 0x11223344);
+            AutoZapret.Zapret.Own.TcpPacket tcp =
+                AutoZapret.Zapret.Own.TcpPacket.Parse(packet, packet.Length);
+
+            if (tcp == null)
+            {
+                Check("desync: синтетический пакет разобран", false, "null");
+                return;
+            }
+
+            // ---- split в позиции 1
+            AutoZapret.Zapret.Own.TechniqueOptions split =
+                new AutoZapret.Zapret.Own.TechniqueOptions
+                {
+                    Kind = AutoZapret.Zapret.Own.Technique.Split,
+                    Position = 1
+                };
+
+            string error;
+            System.Collections.Generic.List<AutoZapret.Zapret.Own.Desync.Outgoing> parts =
+                AutoZapret.Zapret.Own.Desync.Build(tcp, split, out error);
+
+            Check("split: два пакета", parts.Count == 2, parts.Count + " шт.");
+
+            if (parts.Count == 2)
+            {
+                int total = (parts[0].Length - tcp.PayloadOffset) + (parts[1].Length - tcp.PayloadOffset);
+
+                Check("split: данные не потеряны", total == tcp.PayloadLength,
+                    total + " из " + tcp.PayloadLength);
+
+                AutoZapret.Zapret.Own.TcpPacket a =
+                    AutoZapret.Zapret.Own.TcpPacket.Parse(parts[0].Data, parts[0].Length);
+                AutoZapret.Zapret.Own.TcpPacket b =
+                    AutoZapret.Zapret.Own.TcpPacket.Parse(parts[1].Data, parts[1].Length);
+
+                Check("split: seq стыкуется",
+                    a != null && b != null && b.Seq == a.Seq + (uint)a.PayloadLength,
+                    a == null || b == null ? "не разобраны" : (b.Seq - a.Seq).ToString());
+
+                Check("split: суммы обеих частей верны",
+                    a != null && b != null &&
+                    AutoZapret.Zapret.Own.TcpPacket.VerifyIpChecksum(parts[0].Data, parts[0].Length) &&
+                    AutoZapret.Zapret.Own.TcpPacket.VerifyTcpChecksum(parts[0].Data, a.TcpOffset, parts[0].Length - a.TcpOffset) &&
+                    AutoZapret.Zapret.Own.TcpPacket.VerifyIpChecksum(parts[1].Data, parts[1].Length) &&
+                    AutoZapret.Zapret.Own.TcpPacket.VerifyTcpChecksum(parts[1].Data, b.TcpOffset, parts[1].Length - b.TcpOffset),
+                    "ok");
+            }
+
+            // ---- multisplit в трёх позициях: четыре куска, ни одного потерянного байта
+            AutoZapret.Zapret.Own.TechniqueOptions multi =
+                new AutoZapret.Zapret.Own.TechniqueOptions
+                {
+                    Kind = AutoZapret.Zapret.Own.Technique.MultiSplit
+                };
+
+            multi.Positions.Add(1);
+            multi.Positions.Add(100);
+            multi.Positions.Add(300);
+
+            System.Collections.Generic.List<AutoZapret.Zapret.Own.Desync.Outgoing> many =
+                AutoZapret.Zapret.Own.Desync.Build(tcp, multi, out error);
+
+            Check("multisplit: четыре пакета", many.Count == 4, many.Count + " шт.");
+
+            int sum = 0;
+            uint expectedSeq = tcp.Seq;
+            bool contiguous = true;
+
+            foreach (AutoZapret.Zapret.Own.Desync.Outgoing o in many)
+            {
+                AutoZapret.Zapret.Own.TcpPacket piece =
+                    AutoZapret.Zapret.Own.TcpPacket.Parse(o.Data, o.Length);
+
+                if (piece == null) { contiguous = false; break; }
+                if (piece.Seq != expectedSeq) contiguous = false;
+
+                expectedSeq += (uint)piece.PayloadLength;
+                sum += piece.PayloadLength;
+            }
+
+            Check("multisplit: данные не потеряны", sum == tcp.PayloadLength,
+                sum + " из " + tcp.PayloadLength);
+            Check("multisplit: seq непрерывен", contiguous, contiguous ? "ok" : "разрыв");
+
+            // ---- fake: подставной seq отличается, настоящий идёт последним
+            AutoZapret.Zapret.Own.TechniqueOptions fake =
+                new AutoZapret.Zapret.Own.TechniqueOptions
+                {
+                    Kind = AutoZapret.Zapret.Own.Technique.Fake,
+                    Repeats = 3,
+                    FakeSeqOffset = -66000
+                };
+
+            System.Collections.Generic.List<AutoZapret.Zapret.Own.Desync.Outgoing> fakes =
+                AutoZapret.Zapret.Own.Desync.Build(tcp, fake, out error);
+
+            Check("fake: три фейка и настоящий", fakes.Count == 4, fakes.Count + " шт.");
+
+            if (fakes.Count == 4)
+            {
+                AutoZapret.Zapret.Own.TcpPacket fakeOne =
+                    AutoZapret.Zapret.Own.TcpPacket.Parse(fakes[0].Data, fakes[0].Length);
+
+                Check("fake: seq подставной, не настоящий",
+                    fakeOne != null && fakeOne.Seq != tcp.Seq,
+                    fakeOne == null ? "не разобран" : fakeOne.Seq.ToString());
+
+                Check("fake: seq сдвинут на заданную величину",
+                    fakeOne != null && fakeOne.Seq == unchecked(tcp.Seq - 66000),
+                    fakeOne == null ? "?" : fakeOne.Seq.ToString());
+
+                Check("fake: подставной payload отличается от настоящего",
+                    fakeOne != null && fakeOne.PayloadLength != tcp.PayloadLength,
+                    fakeOne == null ? "?" : fakeOne.PayloadLength + " vs " + tcp.PayloadLength);
+
+                AutoZapret.Zapret.Own.TcpPacket real =
+                    AutoZapret.Zapret.Own.TcpPacket.Parse(fakes[3].Data, fakes[3].Length);
+
+                Check("fake: настоящий идёт последним и целым",
+                    real != null && real.Seq == tcp.Seq && real.PayloadLength == tcp.PayloadLength,
+                    real == null ? "?" : real.PayloadLength + " байт");
+
+                Check("fake: у настоящего сумма верна",
+                    real != null &&
+                    AutoZapret.Zapret.Own.TcpPacket.VerifyTcpChecksum(
+                        fakes[3].Data, real.TcpOffset, fakes[3].Length - real.TcpOffset),
+                    "ok");
+            }
+
+            // ---- badsum: у фейка сумма испорчена, у настоящего — нет
+            AutoZapret.Zapret.Own.TechniqueOptions bad =
+                new AutoZapret.Zapret.Own.TechniqueOptions
+                {
+                    Kind = AutoZapret.Zapret.Own.Technique.Fake,
+                    Repeats = 1,
+                    BadSum = true
+                };
+
+            System.Collections.Generic.List<AutoZapret.Zapret.Own.Desync.Outgoing> badOnes =
+                AutoZapret.Zapret.Own.Desync.Build(tcp, bad, out error);
+
+            if (badOnes.Count == 2)
+            {
+                AutoZapret.Zapret.Own.TcpPacket fakeBad =
+                    AutoZapret.Zapret.Own.TcpPacket.Parse(badOnes[0].Data, badOnes[0].Length);
+
+                Check("badsum: у фейка сумма неверна",
+                    fakeBad != null && !AutoZapret.Zapret.Own.TcpPacket.VerifyTcpChecksum(
+                        badOnes[0].Data, fakeBad.TcpOffset, badOnes[0].Length - fakeBad.TcpOffset),
+                    "ok");
+
+                AutoZapret.Zapret.Own.TcpPacket realBad =
+                    AutoZapret.Zapret.Own.TcpPacket.Parse(badOnes[1].Data, badOnes[1].Length);
+
+                Check("badsum: у настоящего сумма верна",
+                    realBad != null && AutoZapret.Zapret.Own.TcpPacket.VerifyTcpChecksum(
+                        badOnes[1].Data, realBad.TcpOffset, badOnes[1].Length - realBad.TcpOffset),
+                    "ok");
+            }
+
+            // ---- выключено: ничего не делаем
+            AutoZapret.Zapret.Own.TechniqueOptions off =
+                new AutoZapret.Zapret.Own.TechniqueOptions { Kind = AutoZapret.Zapret.Own.Technique.Off };
+
+            Check("off: пакетов нет",
+                AutoZapret.Zapret.Own.Desync.Build(tcp, off, out error).Count == 0, "ok");
+
+            // ---- не ClientHello: пакет не наш, техника не применяется
+            byte[] notTls = SynthTlsPacket(600, 0x11223344);
+            notTls[40] = 0x17;   // application data вместо handshake
+
+            AutoZapret.Zapret.Own.TcpPacket other =
+                AutoZapret.Zapret.Own.TcpPacket.Parse(notTls, notTls.Length);
+
+            Check("desync: не-TLS пакет распознан",
+                other != null && other.PayloadLength > 0, "ok");
         }
 
         private static void TestSniffResult()

@@ -9,8 +9,8 @@ namespace AutoZapret.Zapret.Own
     /// <summary>Настройки своего движка.</summary>
     public sealed class OwnEngineOptions
     {
-        /// <summary>Где резать ClientHello. 1 — сразу после первого байта (как split-pos=1).</summary>
-        public int SplitPosition = 1;
+        /// <summary>Какая техника применяется к ClientHello.</summary>
+        public TechniqueOptions Technique = new TechniqueOptions();
 
         /// <summary>Сколько секунд работать (0 — пока не отменят).</summary>
         public int Seconds = 0;
@@ -27,13 +27,13 @@ namespace AutoZapret.Zapret.Own
     {
         public int Packets;
         public int ClientHellos;
-        public int Split;
+        public int Applied;
         public int Errors;
 
         public string Summary()
         {
             return "пакетов " + Packets + ", ClientHello " + ClientHellos +
-                   ", разрезано " + Split + ", ошибок " + Errors;
+                   ", применено " + Applied + ", ошибок " + Errors;
         }
     }
 
@@ -95,7 +95,7 @@ namespace AutoZapret.Zapret.Own
                     : "WinDivert не открылся (код " + error + "): драйвер занят другим перехватчиком";
             }
 
-            Log.Info("OWN", "движок запущен: split pos=" + _options.SplitPosition +
+            Log.Info("OWN", "движок запущен: " + _options.Technique.Describe() +
                             (_options.DryRun ? " (только показ)" : "") + ", фильтр: " + filter);
 
             ManualResetEvent stop = new ManualResetEvent(false);
@@ -181,8 +181,12 @@ namespace AutoZapret.Zapret.Own
         }
 
         /// <summary>
-        /// Разобрать и, если это ClientHello, разрезать. false — «ничего не делал,
-        /// отправьте пакет как есть».
+        /// Разобрать и, если это ClientHello, применить технику.
+        /// false — «ничего не делал, отправьте пакет как есть».
+        ///
+        /// Все техники живут в Desync: здесь только перехват, отправка и
+        /// отбрасывание оригинала. Разделение важное — иначе каждая новая
+        /// техника лезла бы в цикл приёма пакетов, где ошибка стоит дорого.
         /// </summary>
         private bool Handle(IntPtr handle, IntPtr addressPtr, byte[] packet, int length, byte[] address)
         {
@@ -197,48 +201,62 @@ namespace AutoZapret.Zapret.Own
 
             _stats.ClientHellos++;
 
-            int pos = _options.SplitPosition;
+            string error;
+            List<Desync.Outgoing> outgoing = Desync.Build(tcp, _options.Technique, out error);
 
-            if (pos <= 0) pos = 1;
-            if (pos >= tcp.PayloadLength) pos = tcp.PayloadLength / 2;
+            if (outgoing.Count == 0)
+            {
+                // Техника не сработала (нет фейка, пустой payload) — пакет уйдёт
+                // как есть. Тихо ломать соединение мы не имеем права.
+                if (error.Length > 0 && _stats.Errors < 5)
+                    Log.Warn("OWN", "техника не применилась (" + error + "), пакет уходит как есть");
 
-            if (pos <= 0) return false;
+                return false;
+            }
 
             if (_options.DryRun)
             {
-                Log.Info("OWN", "разрезал бы " + tcp.SrcPort + "->" + tcp.DstPort +
-                                ": seq=" + tcp.Seq + ", payload=" + tcp.PayloadLength + ", pos=" + pos);
+                Log.Info("OWN", "сделал бы " + tcp.SrcPort + "->" + tcp.DstPort + ": " +
+                                _options.Technique.Describe() + " → " +
+                                outgoing.Count + " пакет(ов), payload " + tcp.PayloadLength);
+
+                foreach (Desync.Outgoing o in outgoing)
+                    Log.Info("OWN", "   " + o.Note + ", " + o.Length + " байт");
+
                 return false;   // в режиме показа пакет уходит как есть
             }
 
-            int firstLen, secondLen;
+            int sent = 0;
 
-            byte[] first = tcp.BuildSegment(0, pos, 0, out firstLen);
-            byte[] second = tcp.BuildSegment(pos, tcp.PayloadLength, pos, out secondLen);
-
-            if (!Send(handle, addressPtr, first, firstLen))
+            foreach (Desync.Outgoing o in outgoing)
             {
-                _stats.Errors++;
-                return false;
+                if (!Send(handle, addressPtr, o.Data, o.Length))
+                {
+                    _stats.Errors++;
+
+                    // Если не ушёл хоть один — не отбрасываем оригинал: лучше
+                    // отправить ClientHello целиком, чем оставить соединение
+                    // без рукопожатия вовсе.
+                    if (sent == 0) return false;
+
+                    break;
+                }
+
+                sent++;
             }
 
-            if (!Send(handle, addressPtr, second, secondLen))
+            if (sent == 0) return false;
+
+            _stats.Applied++;
+
+            if (_stats.Applied <= 20 || _stats.Applied % 100 == 0)
             {
-                _stats.Errors++;
-                return false;
+                Log.Info("OWN", _options.Technique.Describe() + " " +
+                                tcp.SrcPort + "->" + tcp.DstPort + ": " +
+                                tcp.PayloadLength + " байт → " + sent + " пакет(ов), seq " + tcp.Seq);
             }
 
-            _stats.Split++;
-
-            if (_stats.Split <= 20 || _stats.Split % 100 == 0)
-            {
-                Log.Info("OWN", "split " + tcp.SrcPort + "->" + tcp.DstPort +
-                                ": " + tcp.PayloadLength + " → " + pos + "+" + (tcp.PayloadLength - pos) +
-                                ", seq " + tcp.Seq + " / " + unchecked(tcp.Seq + (uint)pos));
-            }
-
-            // Оригинал НЕ отправляем: он уже отправлен двумя частями.
-            // Если бы первая часть не ушла, мы сюда не попали бы — пакет уйдёт целиком.
+            // Оригинал НЕ отправляем: он уже отправлен частями или после фейка.
             return true;
         }
 

@@ -104,6 +104,56 @@ namespace AutoZapret.Zapret.Own
             return result;
         }
 
+        /// <summary>
+        /// Собрать пакет с ЧУЖИМ payload: заголовки наши, данные — подставные.
+        ///
+        /// Это и есть основа техники `fake`: DPI видит правдоподобный ClientHello,
+        /// отправляет его «на проверку» и теряет интерес к настоящему. Получатель
+        /// же такой пакет отбрасывает, потому что seq не попадает в окно.
+        ///
+        /// seqAdjust — сдвиг sequence number. Отрицательный уводит пакет «в прошлое»
+        /// (уже принято, отбросить), большой положительный — «в будущее»
+        /// (вне окна, тоже отбросить). Ноль означал бы настоящие данные, поэтому
+        /// для фейка ноль не используется никогда.
+        /// </summary>
+        public byte[] BuildWithPayload(byte[] payload, int seqAdjust, out int outLength)
+        {
+            int payloadSize = payload == null ? 0 : payload.Length;
+            int size = PayloadOffset + payloadSize;
+
+            byte[] result = new byte[size];
+
+            Array.Copy(_packet, 0, result, 0, PayloadOffset);
+
+            if (payloadSize > 0)
+                Array.Copy(payload, 0, result, PayloadOffset, payloadSize);
+
+            result[2] = (byte)(size >> 8);
+            result[3] = (byte)(size & 0xFF);
+
+            WriteU32(result, TcpOffset + 4, unchecked(Seq + (uint)seqAdjust));
+
+            RecomputeChecksums(result, size, IpHeaderLength, TcpOffset, size - TcpOffset);
+
+            outLength = size;
+            return result;
+        }
+
+        /// <summary>
+        /// Пакет с испорченной контрольной суммой TCP (техника fooling `badsum`).
+        ///
+        /// Зачем: часть DPI проверяет сумму и такой пакет пропускает мимо
+        /// обработки, а настоящий получатель его всё равно отбросит. То есть
+        /// фейк не доходит ни до кого, кроме того, кого мы обманываем.
+        /// </summary>
+        public static void CorruptTcpChecksum(byte[] packet, int tcpOffset)
+        {
+            if (packet == null || tcpOffset + 18 > packet.Length) return;
+
+            packet[tcpOffset + 16] = (byte)(packet[tcpOffset + 16] ^ 0xFF);
+            packet[tcpOffset + 17] = (byte)(packet[tcpOffset + 17] ^ 0xFF);
+        }
+
         // ---------------------------------------------------------- контрольные суммы
 
         /// <summary>

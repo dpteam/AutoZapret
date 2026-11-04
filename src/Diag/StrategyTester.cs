@@ -738,7 +738,56 @@ namespace AutoZapret.Diag
 
                 if (string.Equals(a, "--split", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
                 {
-                    int.TryParse(args[i + 1], out options.SplitPosition);
+                    int.TryParse(args[i + 1], out options.Technique.Position);
+                    continue;
+                }
+
+                // --tech split|multisplit|fake|fakedsplit
+                if (string.Equals(a, "--tech", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    string name = args[i + 1].Trim().ToLowerInvariant();
+
+                    if (name == "multisplit") options.Technique.Kind = AutoZapret.Zapret.Own.Technique.MultiSplit;
+                    else if (name == "fake") options.Technique.Kind = AutoZapret.Zapret.Own.Technique.Fake;
+                    else if (name == "fakedsplit") options.Technique.Kind = AutoZapret.Zapret.Own.Technique.FakeSplit;
+                    else if (name == "off") options.Technique.Kind = AutoZapret.Zapret.Own.Technique.Off;
+                    else options.Technique.Kind = AutoZapret.Zapret.Own.Technique.Split;
+
+                    continue;
+                }
+
+                // --pos 1,5,10 — несколько позиций для multisplit
+                if (string.Equals(a, "--pos", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    options.Technique.Positions.Clear();
+
+                    foreach (string part in args[i + 1].Split(','))
+                    {
+                        int p;
+                        if (int.TryParse(part.Trim(), out p) && p > 0) options.Technique.Positions.Add(p);
+                    }
+
+                    continue;
+                }
+
+                // --repeats N — сколько раз повторить фейк
+                if (string.Equals(a, "--repeats", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    int.TryParse(args[i + 1], out options.Technique.Repeats);
+                    continue;
+                }
+
+                // --fake-file path.bin
+                if (string.Equals(a, "--fake-file", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    options.Technique.FakeFile = args[i + 1];
+                    continue;
+                }
+
+                // --badsum — испортить сумму у фейка
+                if (string.Equals(a, "--badsum", StringComparison.OrdinalIgnoreCase))
+                {
+                    options.Technique.BadSum = true;
                     continue;
                 }
 
@@ -756,7 +805,7 @@ namespace AutoZapret.Diag
                 return 1;
             }
 
-            Console.WriteLine("== свой движок: split pos=" + options.SplitPosition +
+            Console.WriteLine("== свой движок: " + options.Technique.Describe() +
                               ", " + options.Seconds + " с" + (options.DryRun ? ", показ" : "") + " ==");
             Console.WriteLine("откройте https://www.youtube.com в браузере во время работы");
             Console.WriteLine();
@@ -775,7 +824,7 @@ namespace AutoZapret.Diag
             }
 
             Console.WriteLine(engine.Stats.Summary());
-            return engine.Stats.Split > 0 ? 0 : 2;
+            return engine.Stats.Applied > 0 ? 0 : 2;
         }
 
         /// <summary>
