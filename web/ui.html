@@ -81,9 +81,15 @@
         <div class="row">
           <div>
             <div class="row-label">Движок</div>
-            <div class="row-hint">zapret 1 (winws) или zapret 2 (winws2)</div>
+            <div class="row-hint" id="engine-hint">zapret 1 — проверенный, совместимый</div>
           </div>
-          <span class="tag mono" id="home-engine">—</span>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span class="tag mono" id="home-engine">—</span>
+            <select id="set-engine">
+              <option value="v1">zapret 1 (winws)</option>
+              <option value="v2">zapret 2 (winws2)</option>
+            </select>
+          </div>
         </div>
 
         <div class="row">
@@ -149,6 +155,21 @@
       <h1>Диагностика</h1>
       <p class="subtitle">Что заблокировано, почему и чем это лечится</p>
 
+      <div class="card" id="diag-run-card" style="display:none">
+        <div class="row">
+          <div>
+            <div class="row-label" id="diag-run-title">Идёт проверка</div>
+            <div class="row-hint">
+              Проверки идут по одной, иначе мешают друг другу. Обход на время замера
+              выключается и потом возвращается как был
+            </div>
+          </div>
+          <button class="btn" id="btn-diag-cancel">Отменить</button>
+        </div>
+      </div>
+
+      <div class="advice" id="diag-busy-hint" style="display:none"></div>
+
       <div class="card">
         <div class="card-title">Шаг 0 — проверки окружения</div>
         <div class="row">
@@ -156,7 +177,7 @@
             <div class="row-label">12 проверок системы</div>
             <div class="row-hint">BFE, драйвер, timestamps, конфликтующие обходчики, VPN, антивирус… <span class="dim">· ~10 s</span></div>
           </div>
-          <button class="btn primary" id="btn-diag-sys">Проверить всё</button>
+          <button class="btn primary diag-run-btn" id="btn-diag-sys">Проверить всё</button>
         </div>
         <div id="diag-sys-result" class="diag-list" style="margin-top:12px;display:none"></div>
 
@@ -168,8 +189,8 @@
             </div>
           </div>
           <div style="display:flex;gap:8px;align-items:center">
-            <button class="btn primary" id="btn-diag-bundle">Собрать архив</button>
-            <button class="btn" id="btn-diag-bundle-deep">Расширенный отчёт</button>
+            <button class="btn primary diag-run-btn" id="btn-diag-bundle">Собрать архив</button>
+            <button class="btn diag-run-btn" id="btn-diag-bundle-deep">Расширенный отчёт</button>
             <button class="btn" id="btn-diag-bundle-folder">Папка</button>
           </div>
         </div>
@@ -184,7 +205,7 @@
             <div class="row-label">Проверить сеть без обхода</div>
             <div class="row-hint">Обход должен быть выключен — иначе замер врёт <span class="dim">· ~20–40 s</span></div>
           </div>
-          <button class="btn primary" id="btn-diag-probe">Проверить</button>
+          <button class="btn primary diag-run-btn" id="btn-diag-probe">Проверить</button>
         </div>
         <div id="diag-probe-result" style="display:none;margin-top:12px">
           <div class="diag-list" id="diag-probe-list"></div>
@@ -195,13 +216,32 @@
       </div>
 
       <div class="card">
+        <div class="card-title">Шаг 1б — видит ли драйвер трафик</div>
+        <div class="row">
+          <div>
+            <div class="row-label">Сниффер WinDivert</div>
+            <div class="row-hint">
+              Слушает TCP/443 и показывает, что реально проходит мимо DPI.
+              Если здесь пусто — стратегии не помогут <span class="dim">· 8 s</span>
+            </div>
+          </div>
+          <button class="btn diag-run-btn" id="btn-diag-netcap">Слушать 8 с</button>
+        </div>
+        <div id="diag-netcap-result" style="display:none;margin-top:12px">
+          <div class="row-hint mono" id="diag-netcap-summary"></div>
+          <div class="advice" id="diag-netcap-verdict" style="margin-top:10px"></div>
+          <div class="row-hint mono" id="diag-netcap-snis" style="margin-top:8px;word-break:break-all"></div>
+        </div>
+      </div>
+
+      <div class="card">
         <div class="card-title">Шаг 2 — почему не открывается</div>
         <div class="row">
           <div>
             <div class="row-label">Определить тип блокировки</div>
             <div class="row-hint">RST, подмена TLS, тишина, DNS — от этого зависит выбор стратегии <span class="dim">· ~15–30 s</span></div>
           </div>
-          <button class="btn" id="btn-diag-deep">Определить</button>
+          <button class="btn diag-run-btn" id="btn-diag-deep">Определить</button>
         </div>
         <div id="diag-deep-result" style="display:none;margin-top:12px">
           <div class="diag-list" id="diag-deep-list"></div>
@@ -224,7 +264,7 @@
               <option value="8" selected>8 провайдеров</option>
               <option value="12">12 провайдеров</option>
             </select>
-            <button class="btn" id="btn-diag-tcp16">Проверить</button>
+            <button class="btn diag-run-btn" id="btn-diag-tcp16">Проверить</button>
           </div>
         </div>
         <div id="diag-tcp16-result" style="display:none;margin-top:12px">
@@ -246,7 +286,7 @@
               <option value="10">10 стратегий</option>
               <option value="22" selected>все 22</option>
             </select>
-            <button class="btn primary" id="btn-diag-test">Подобрать</button>
+            <button class="btn primary diag-run-btn" id="btn-diag-test">Подобрать</button>
           </div>
         </div>
         <div id="diag-test-progress" style="display:none;margin-top:12px">
@@ -515,13 +555,9 @@
 
         <div class="row">
           <div>
-            <div class="row-label">Движок</div>
-            <div class="row-hint" id="engine-hint">zapret 1 — проверенный, совместимый</div>
+            <div class="row-label">Движок и стратегия</div>
+            <div class="row-hint">Выбираются на главном экране — там же, где кнопка включения</div>
           </div>
-          <select id="set-engine">
-            <option value="v1">zapret 1 (winws)</option>
-            <option value="v2">zapret 2 (winws2)</option>
-          </select>
         </div>
 
         <div class="row">

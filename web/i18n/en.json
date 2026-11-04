@@ -200,7 +200,6 @@
   "Перезапустить от админа": "Restart as administrator",
   "Перезапускаюсь…": "Restarting…",
   "Проверка готовности нашла проблемы:": "Readiness check found problems:",
-  "zapret 1 (winws) или zapret 2 (winws2)": "zapret 1 (winws) or zapret 2 (winws2)",
   "Убрать записи AutoZapret": "Remove AutoZapret entries",
   "Если сайт не открывается после «Обновить» — уберите наш блок. Ваши собственные записи останутся": "If a site stops opening after Update - remove our block. Your own entries stay",
   "Почистить": "Clean",
@@ -209,5 +208,16 @@
   "Пересоздать": "Recreate",
   "Расширенный отчёт": "Extended report",
   "Переподключать при смене стратегии": "Reconnect on strategy change",
-  "Выбрали другую стратегию — обход перезапустится на ней сразу. Старт занимает ~1.5 с и рвёт текущие соединения": "Picking another strategy restarts the bypass on it immediately. A start takes ~1.5 s and drops current connections"
+  "Выбрали другую стратегию — обход перезапустится на ней сразу. Старт занимает ~1.5 с и рвёт текущие соединения": "Picking another strategy restarts the bypass on it immediately. A start takes ~1.5 s and drops current connections",
+  "Идёт проверка": "Check running",
+  "Проверки идут по одной, иначе мешают друг другу. Обход на время замера выключается и потом возвращается как был": "Checks run one at a time, otherwise they get in each other's way. The bypass is turned off for the measurement and restored afterwards",
+  "Отменить": "Cancel",
+  "Движок и стратегия": "Engine and strategy",
+  "Выбираются на главном экране — там же, где кнопка включения": "Chosen on the home screen, right next to the power button",
+  "Уже идёт другая проверка": "Another check is already running",
+  "Идёт проверка: ": "Check running: ",
+  "Шаг 1б — видит ли драйвер трафик": "Step 1b — does the driver see traffic",
+  "Сниффер WinDivert": "WinDivert sniffer",
+  "Слушает TCP/443 и показывает, что реально проходит мимо DPI. Если здесь пусто — стратегии не помогут": "Listens on TCP/443 and shows what actually goes past the DPI. If this stays empty, strategies will not help",
+  "Слушать 8 с": "Listen 8 s"
 }

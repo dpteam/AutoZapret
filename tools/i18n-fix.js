@@ -1,4 +1,4 @@
-// Разовая правка словаря (третья порция ключей).
+// Разовая правка словаря (пятая порция ключей).
 const fs = require("fs");
 const path = require("path");
 
@@ -6,9 +6,11 @@ const p = path.join(__dirname, "..", "web", "i18n", "en.json");
 const dict = JSON.parse(fs.readFileSync(p, "utf8"));
 
 const add = {
-  "Переподключать при смене стратегии": "Reconnect on strategy change",
-  "Выбрали другую стратегию — обход перезапустится на ней сразу. Старт занимает ~1.5 с и рвёт текущие соединения":
-    "Picking another strategy restarts the bypass on it immediately. A start takes ~1.5 s and drops current connections"
+  "Шаг 1б — видит ли драйвер трафик": "Step 1b — does the driver see traffic",
+  "Сниффер WinDivert": "WinDivert sniffer",
+  "Слушает TCP/443 и показывает, что реально проходит мимо DPI. Если здесь пусто — стратегии не помогут":
+    "Listens on TCP/443 and shows what actually goes past the DPI. If this stays empty, strategies will not help",
+  "Слушать 8 с": "Listen 8 s"
 };
 
 let added = 0;

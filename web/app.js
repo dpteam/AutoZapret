@@ -163,6 +163,11 @@
             // и ждать, пока человек догадается нажать «Обновить»
             send("logs.get");
         }
+        if (name === "diag") {
+            // идёт ли уже проверка: экран должен открываться с этим знанием,
+            // иначе кнопки выглядят свободными, а нажатие молча отклоняется
+            send("diag.state");
+        }
 
         // скорость сети нужна только на главной: опрос раз в секунду
         // на других экранах — лишний трафик моста впустую
@@ -729,6 +734,14 @@
             send("diag.test", { count: count });
         });
 
+        var netcap = document.getElementById("btn-diag-netcap");
+        if (netcap) netcap.addEventListener("click", function () {
+            netcap.disabled = true;
+            netcap.textContent = "Слушаю…";
+            document.getElementById("diag-netcap-result").style.display = "none";
+            send("diag.netcap", { seconds: 8 });
+        });
+
         var apply = document.getElementById("btn-diag-apply");
         if (apply) apply.addEventListener("click", function () {
             if (!lastBestStrategy) return;
@@ -736,6 +749,52 @@
             apply.textContent = "Применено";
             apply.disabled = true;
         });
+
+        var cancel = document.getElementById("btn-diag-cancel");
+        if (cancel) cancel.addEventListener("click", function () {
+            cancel.disabled = true;
+            cancel.textContent = "Отменяю…";
+            send("diag.cancel");
+        });
+    }
+
+    // Кнопки, которые запускают проверки: пока одна идёт, остальные недоступны.
+    // Иначе «Проверить сеть» и «Подобрать» запускаются вместе и спорят за winws.
+    var diagRunIds = [
+        "btn-diag-sys", "btn-diag-bundle", "btn-diag-bundle-deep",
+        "btn-diag-probe", "btn-diag-deep", "btn-diag-tcp16", "btn-diag-test"
+    ];
+
+    function setDiagBusy(running, title) {
+        var card = document.getElementById("diag-run-card");
+        if (card) card.style.display = running ? "" : "none";
+
+        if (running) text("diag-run-title", "Идёт проверка: " + (title || ""));
+
+        diagRunIds.forEach(function (id) {
+            var b = document.getElementById(id);
+            if (b) b.disabled = !!running;
+        });
+
+        var cancel = document.getElementById("btn-diag-cancel");
+        if (cancel) {
+            cancel.disabled = !running;
+            cancel.textContent = running ? "Отменить" : "Отменить";
+        }
+    }
+
+    function showDiagBusy(message) {
+        var hint = document.getElementById("diag-busy-hint");
+        if (!hint) return;
+
+        hint.textContent = message || "";
+        hint.style.display = message ? "" : "none";
+
+        if (message) {
+            window.setTimeout(function () {
+                hint.style.display = "none";
+            }, 7000);
+        }
     }
 
     var lastBestStrategy = null;
@@ -943,6 +1002,35 @@
         box.style.display = "";
     }
 
+    /// <summary>
+    /// Результат сниффера: сколько пакетов, разобран ли TLS и что это значит.
+    /// Здесь же ответ «драйвер вообще работает?», а не только список домены.
+    /// </summary>
+    function renderNetCap(msg) {
+        var btn = document.getElementById("btn-diag-netcap");
+        if (btn) { btn.disabled = false; btn.textContent = "Слушать 8 с"; }
+
+        var box = document.getElementById("diag-netcap-result");
+        if (!box) return;
+
+        text("diag-netcap-summary", msg.summary || "");
+
+        var verdict = document.getElementById("diag-netcap-verdict");
+        if (verdict) {
+            verdict.textContent = msg.verdict || "";
+            verdict.className = "advice " + (msg.ok && msg.total > 0 ? "diag-ok" : "diag-bad");
+        }
+
+        var snis = document.getElementById("diag-netcap-snis");
+        if (snis) {
+            var list = msg.snis || [];
+            snis.textContent = list.length > 0 ? "SNI: " + list.join(", ") : "";
+            snis.style.display = list.length > 0 ? "" : "none";
+        }
+
+        box.style.display = "";
+    }
+
     function renderDeepResult(msg) {
         var box = document.getElementById("diag-deep-result");
         var list = document.getElementById("diag-deep-list");
@@ -1039,18 +1127,28 @@
                 ? '<div class="detail">не прошло: ' + s.failed.join(", ") + "</div>" : "";
             var breakdown = s.breakdown
                 ? '<div class="detail">' + s.breakdown + "</div>" : "";
+
+            // почему не пробило: таймаут, DNS, TLS, сброс.
+            // «0/4» без причины заставляет перебирать стратегии бесконечно.
+            var reasons = (s.reasons && s.okCount === 0)
+                ? '<div class="detail">почему: ' + s.reasons + "</div>" : "";
+
             var scoreCls = s.score >= 80 ? "diag-ok" : (s.score >= 50 ? "diag-warn" : "diag-bad");
 
             tr.innerHTML =
                 "<td>" + mark + "</td>" +
-                "<td>" + s.name + failed + breakdown + "</td>" +
+                "<td>" + s.name + failed + reasons + breakdown + "</td>" +
                 "<td>" + s.okCount + "/" + s.total + "</td>" +
                 "<td>" + (s.okCount > 0 ? s.avgMs + " ms" : "—") + "</td>" +
                 "<td class=\"" + scoreCls + "\"><b>" + (s.score || 0) + "</b></td>";
             body.appendChild(tr);
         });
 
-        document.getElementById("diag-test-summary").textContent = msg.summary || "";
+        var summaryEl = document.getElementById("diag-test-summary");
+        if (summaryEl) {
+            summaryEl.textContent = msg.summary || "";
+            summaryEl.className = "row-hint " + (msg.cancelled ? "diag-warn" : "");
+        }
 
         var apply = document.getElementById("btn-diag-apply");
         if (apply) {
@@ -1704,12 +1802,24 @@
                 renderDeepResult(msg);
                 break;
 
+            case "diag.netcap":
+                renderNetCap(msg);
+                break;
+
             case "diag.tcp16":
                 renderTcp16(msg);
                 break;
 
             case "diag.progress":
                 renderTestProgress(msg);
+                break;
+
+            case "diag.state":
+                setDiagBusy(!!msg.running, msg.title || "");
+                break;
+
+            case "diag.busy":
+                showDiagBusy(msg.message || "Уже идёт другая проверка");
                 break;
 
             case "diag.test":

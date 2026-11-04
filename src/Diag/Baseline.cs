@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using System.Threading;
 using AutoZapret.Core;
 using AutoZapret.Zapret;
 
@@ -130,7 +131,8 @@ namespace AutoZapret.Diag
         /// Замеряет базовую линию. Требует, чтобы обход НЕ был запущен —
         /// иначе получим не «что блокируют», а «что пробивает текущая стратегия».
         /// </summary>
-        public static Snapshot Measure(ConnectivityProbe probe, int timeoutSec, bool verbose)
+        public static Snapshot Measure(ConnectivityProbe probe, int timeoutSec, bool verbose,
+                                       CancellationToken cancel = default(CancellationToken))
         {
             Snapshot snapshot = new Snapshot();
 
@@ -144,7 +146,11 @@ namespace AutoZapret.Diag
             List<ProbeTarget> targets = ConnectivityProbe.DefaultTargets();
             snapshot.Total = targets.Count;
 
-            ProbeReport report = probe.CheckAll(targets, timeoutSec, 4);
+            ProbeReport report = probe.CheckAll(targets, timeoutSec, 4, cancel);
+
+            // Отменённый замер не сохраняем: иначе «наполовину заблокировано»
+            // станет базовой линией и подбор стратегий будет гоняться за призраками.
+            if (cancel.IsCancellationRequested) return snapshot;
 
             foreach (ProbeResult r in report.Results)
             {
@@ -160,8 +166,10 @@ namespace AutoZapret.Diag
 
             Save(snapshot);
 
+            string reasons = report.FailureSummary();
             Log.Info("DIAG", "базовая линия: " + report.OkCount + "/" + report.Total +
-                             ", заблокировано: " + string.Join(", ", snapshot.Blocked.ToArray()));
+                             ", заблокировано: " + string.Join(", ", snapshot.Blocked.ToArray()) +
+                             (reasons.Length > 0 ? " (" + reasons + ")" : ""));
 
             return snapshot;
         }

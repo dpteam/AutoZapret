@@ -41,6 +41,22 @@ namespace AutoZapret.Zapret
         private string _strategyId = "";
         private string _strategyName = "";
 
+        /// <summary>
+        /// Последние строки, которые напечатал сам winws (stdout+stderr).
+        ///
+        /// Зачем: winws — единственный, кто знает, почему обход не работает
+        /// («windivert open error», «cannot load blob», «bad argument»...).
+        /// Раньше stdout уходил в Log.Debug, то есть при обычном уровне Info
+        /// был невидим, и в отчётах оставалось только «winws запущен» — при том
+        /// что на деле он мог ничего не перехватывать.
+        /// </summary>
+        private readonly Queue<string> _output = new Queue<string>();
+        private const int OutputLimit = 120;
+
+        /// <summary>Сколько строк stdout уже выведено в Info: защита от потока отладки.</summary>
+        private int _outputLines;
+        private const int OutputInfoLimit = 60;
+
         public WinwsSupervisor(EngineLocator engine)
         {
             _engine = engine;
@@ -126,9 +142,11 @@ namespace AutoZapret.Zapret
 
                 Log.Debug("WINWS", "cmdline: " + psi.Arguments);
 
+                ClearOutput();
+
                 Process proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
-                proc.OutputDataReceived += (s, e) => { if (!string.IsNullOrEmpty(e.Data)) Log.Debug("WINWS", e.Data); };
-                proc.ErrorDataReceived += (s, e) => { if (!string.IsNullOrEmpty(e.Data)) Log.Warn("WINWS", e.Data); };
+                proc.OutputDataReceived += (s, e) => OnOutput(e.Data, false);
+                proc.ErrorDataReceived += (s, e) => OnOutput(e.Data, true);
                 proc.Exited += OnProcessExited;
 
                 if (!proc.Start()) return "Не удалось запустить winws.exe.";
@@ -180,6 +198,74 @@ namespace AutoZapret.Zapret
                 Log.Exception("WINWS", "старт", ex);
                 SetState(ProtectionState.Error, ex.Message);
                 return ex.Message;
+            }
+        }
+
+        /// <summary>
+        /// Вывод winws. Первые строки — в Info (их видно в обычном логе), дальше —
+        /// в Debug, чтобы включённый `--debug` не превратил лог в мешанину.
+        /// Строки с явной ошибкой всегда идут в Warn.
+        /// </summary>
+        private void OnOutput(string line, bool stderr)
+        {
+            if (string.IsNullOrEmpty(line)) return;
+
+            // Log сам склеивает многострочное, но один \r от cygwin ломает вывод
+            string clean = line.Replace('\r', ' ').Replace('\n', ' ').Trim();
+            if (clean.Length == 0) return;
+
+            if (clean.Length > 300) clean = clean.Substring(0, 300) + "…";
+
+            lock (_gate)
+            {
+                _output.Enqueue(clean);
+                while (_output.Count > OutputLimit) _output.Dequeue();
+                _outputLines++;
+            }
+
+            bool complaint = LooksLikeComplaint(clean);
+
+            if (stderr || complaint) Log.Warn("WINWS", clean);
+            else if (_outputLines <= OutputInfoLimit) Log.Info("WINWS", clean);
+            else Log.Debug("WINWS", clean);
+        }
+
+        /// <summary>
+        /// winws пишет и обычную болтовню, и настоящие причины отказа в один поток.
+        /// Эти слова — маркер «здесь проблема», их нельзя прятать в Debug.
+        /// </summary>
+        private static bool LooksLikeComplaint(string line)
+        {
+            string[] markers = { "error", "fail", "cannot", "can't", "unable", "denied",
+                                 "invalid", "bad ", "not found", "no such", "refused" };
+
+            foreach (string m in markers)
+                if (line.IndexOf(m, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+
+            return false;
+        }
+
+        private void ClearOutput()
+        {
+            lock (_gate)
+            {
+                _output.Clear();
+                _outputLines = 0;
+            }
+        }
+
+        /// <summary>
+        /// Последние строки вывода движка — для отчёта и для объяснения
+        /// «стратегия дала 0/4». Пустой список означает, что winws молчал:
+        /// это тоже ответ (аргументы приняты, но фильтр ничего не поймал).
+        /// </summary>
+        public List<string> RecentOutput(int maxLines = 20)
+        {
+            lock (_gate)
+            {
+                List<string> all = new List<string>(_output);
+                int from = Math.Max(0, all.Count - Math.Max(1, maxLines));
+                return all.GetRange(from, all.Count - from);
             }
         }
 

@@ -22,6 +22,13 @@ namespace AutoZapret.Diag
         public string Error = "";
         public List<string> Failed = new List<string>();
 
+        /// <summary>
+        /// Почему пробы не прошли: «таймаут ×4», «DNS ×2, TLS ×2».
+        /// Без этого «0/4» не отличить от «engine вообще не влияет» и
+        /// «не работает DNS, стратегия тут ни при чём».
+        /// </summary>
+        public string ProbeReasons = "";
+
         /// <summary>+20: процесс winws жив после всех проб. Мёртвый движок не обходит ничего.</summary>
         public int ProcessBonus;
 
@@ -49,9 +56,11 @@ namespace AutoZapret.Diag
         public string ToLine()
         {
             string mark = Rate >= 1.0 ? "🟢" : Rate > 0 ? "🟡" : "🔴";
+            string reasons = ProbeReasons.Length > 0 ? "  " + ProbeReasons : "";
+
             return mark + " " + Name.PadRight(28) + OkCount + "/" + Total +
                    "  " + AvgMs + "ms  счёт " + Score.ToString().PadLeft(3) +
-                   (Error.Length > 0 ? "  (" + Error + ")" : "");
+                   (Error.Length > 0 ? "  (" + Error + ")" : reasons);
         }
 
         /// <summary>Что именно не пробило — без этого «4/5» ничего не говорит.</summary>
@@ -95,7 +104,8 @@ namespace AutoZapret.Diag
         public event Action<int, int, string> StrategyStarted;
 
         public List<StrategyScore> Run(IEnumerable<string> strategyIds, Baseline.Snapshot baseline,
-                                       int holdSeconds, int timeoutSec)
+                                       int holdSeconds, int timeoutSec,
+                                       CancellationToken cancel = default(CancellationToken))
         {
             List<ProbeTarget> targets = baseline != null ? baseline.BlockedTargets()
                                                          : ConnectivityProbe.DefaultTargets();
@@ -109,6 +119,15 @@ namespace AutoZapret.Diag
 
             foreach (string id in ids)
             {
+                // Отмена: человек нажал «Отменить» — не запускаем следующую
+                // стратегию, а гасим движок и выходим. Проверка до старта,
+                // потому что каждая итерация занимает 10-20 секунд.
+                if (cancel.IsCancellationRequested)
+                {
+                    Report("отменено");
+                    break;
+                }
+
                 StrategyScore score = new StrategyScore { Id = id };
                 Strategy strategy = _zapret.Strategies.Find(id);
                 score.Name = strategy != null ? strategy.Name : id;
@@ -139,11 +158,32 @@ namespace AutoZapret.Diag
                 foreach (ProbeResult r in report.Results)
                     if (!r.Ok) score.Failed.Add(r.Name);
 
+                // почему не пробило — до остановки движка, пока его вывод ещё наш
+                score.ProbeReasons = report.FailureSummary();
+
                 // ---- счёт: считается ДО остановки, иначе «процесс жив» всегда false.
                 // OkCount/Total/AvgMs заполняет сам ComputeScore — из отчёта.
                 bool alive = WinwsSupervisor.AnyWinwsRunning();
 
                 ComputeScore(score, report, alive);
+
+                // Ни одна проба не прошла — показываем, что говорил сам движок.
+                // Его молчание тоже информация: аргументы приняты, но фильтр
+                // не поймал ни одного пакета (не тот порт/список/движок).
+                if (score.OkCount == 0)
+                {
+                    List<string> fromEngine = _zapret.EngineOutput(6);
+
+                    if (fromEngine.Count > 0)
+                    {
+                        Log.Warn("DIAG", "движок сказал: " + string.Join(" | ", fromEngine.ToArray()));
+                        Report("   движок: " + string.Join(" | ", fromEngine.ToArray()));
+                    }
+                    else
+                    {
+                        Report("   движок молчит: аргументы приняты, но ни один пакет не перехвачен");
+                    }
+                }
 
                 scores.Add(score);
 
@@ -598,135 +638,29 @@ namespace AutoZapret.Diag
 
             Console.WriteLine("== netcap: sniff TCP " + seconds + " с ==");
 
-            if (!WinDivertInterop.IsAvailable())
+            SniffResult result = TrafficSniffer.Run(seconds);
+
+            if (!result.Ok)
             {
-                Console.WriteLine("WinDivert.dll не найден в " + Paths.EngineBinDir);
-                Console.WriteLine("Сначала установите движок: AutoZapret.exe --install-engine");
+                Console.WriteLine(result.Error);
                 return 1;
             }
 
-            IntPtr handle;
+            Console.WriteLine(result.Summary());
 
-            try
-            {
-                handle = WinDivertInterop.WinDivertOpen(
-                    "tcp.DstPort == 443 or tcp.SrcPort == 443",
-                    WinDivertInterop.LayerNetwork, 0, WinDivertInterop.FlagSniff);
-            }
-            catch (DllNotFoundException ex)
-            {
-                Console.WriteLine("WinDivert.dll не загрузилась: " + ex.Message);
-                Console.WriteLine("ожидалась здесь: " + System.IO.Path.Combine(Paths.EngineBinDir, "WinDivert.dll"));
-                return 1;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("не удалось открыть WinDivert: " + ex.GetType().Name + ": " + ex.Message);
-                return 1;
-            }
-
-            if (handle == IntPtr.Zero || handle == new IntPtr(-1))
-            {
-                int error = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
-                Console.WriteLine("не удалось открыть WinDivert (код " + error + ")");
-                Console.WriteLine(error == 5
-                    ? "нужны права администратора"
-                    : "проверьте, что драйвер не занят (sc query WinDivert)");
-                return 1;
-            }
-
-            Console.WriteLine("сниффер открыт, ждём пакеты…");
-            Console.WriteLine();
-
-            byte[] packet = new byte[WinDivertInterop.MaxPacketSize];
-            byte[] address = new byte[WinDivertInterop.AddressSize];
-
-            IntPtr addressPtr = System.Runtime.InteropServices.Marshal.AllocHGlobal(WinDivertInterop.AddressSize);
-
-            int total = 0, outbound = 0, inbound = 0, tls = 0, withSni = 0;
-            DateTime until = DateTime.UtcNow.AddSeconds(seconds);
-
-            List<string> snis = new List<string>();
-
-            try
-            {
-                while (DateTime.UtcNow < until)
-                {
-                    uint recvLen;
-
-                    bool ok = WinDivertInterop.WinDivertRecv(
-                        handle, packet, (uint)packet.Length, out recvLen, addressPtr);
-
-                    if (!ok)
-                    {
-                        int error = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
-
-                        // таймаут — норма: просто ждём дальше, пока не вышло время
-                        if (error == WinDivertInterop.ErrorTimeout || error == WinDivertInterop.ErrorNoData)
-                        {
-                            System.Threading.Thread.Sleep(50);
-                            continue;
-                        }
-
-                        Console.WriteLine("ошибка приёма: " + error);
-                        break;
-                    }
-
-                    total++;
-
-                    System.Runtime.InteropServices.Marshal.Copy(addressPtr, address, 0, WinDivertInterop.AddressSize);
-                    WinDivertAddress addr = WinDivertAddress.FromBuffer(address);
-
-                    if (addr.Outbound) outbound++; else inbound++;
-
-                    PacketInfo info;
-                    if (!PacketParser.TryParse(packet, (int)recvLen, addr.IsIPv6, out info)) continue;
-
-                    // TLS ClientHello начинается с 0x16 0x03
-                    if (info.HasPayload &&
-                        packet[info.PayloadOffset] == 0x16 &&
-                        info.PayloadLength >= 5 &&
-                        packet[info.PayloadOffset + 1] == 0x03)
-                    {
-                        tls++;
-
-                        byte[] payload = new byte[info.PayloadLength];
-                        Array.Copy(packet, info.PayloadOffset, payload, 0, info.PayloadLength);
-
-                        string sni = Payloads.PayloadValidator.ExtractSni(
-                            payload, Payloads.PayloadKind.TlsClientHello);
-
-                        if (sni.Length > 0)
-                        {
-                            withSni++;
-                            if (!snis.Contains(sni)) snis.Add(sni);
-                        }
-                    }
-                }
-            }
-            finally
-            {
-                System.Runtime.InteropServices.Marshal.FreeHGlobal(addressPtr);
-                WinDivertInterop.WinDivertClose(handle);
-            }
-
-            Console.WriteLine("пакетов TCP/443: " + total +
-                              " (наружу " + outbound + ", внутрь " + inbound + ")");
-            Console.WriteLine("TLS ClientHello: " + tls + ", с SNI: " + withSni);
-
-            if (snis.Count > 0)
+            if (result.Snis.Count > 0)
             {
                 Console.WriteLine();
                 Console.WriteLine("домены в SNI:");
-                foreach (string sni in snis) Console.WriteLine("  " + sni);
+                foreach (string sni in result.Snis) Console.WriteLine("  " + sni);
             }
-            else if (total == 0)
+            else
             {
                 Console.WriteLine();
-                Console.WriteLine("пакетов не было — либо тишина в сети, либо фильтр не совпал");
+                Console.WriteLine(result.Verdict());
             }
 
-            return total > 0 ? 0 : 2;
+            return result.Total > 0 ? 0 : 2;
         }
 
         /// <summary>

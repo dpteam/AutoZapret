@@ -40,6 +40,8 @@ namespace AutoZapret.Diag
         public bool Ok;
         public int Status;
         public int ElapsedMs;
+
+        /// <summary>Короткая причина отказа: «таймаут», «DNS», «TLS», «сброс».</summary>
         public string Error = "";
 
         public string ToLine()
@@ -71,6 +73,34 @@ namespace AutoZapret.Diag
         public string Summary()
         {
             return OkCount + "/" + Total + " (" + (int)(SuccessRate * 100) + "%) " + AvgMs + "ms";
+        }
+
+        /// <summary>
+        /// Одной строкой: почему провалились. «0/4» без причины ничего не объясняет,
+        /// а «0/4 — таймаут ×4» сразу говорит, что дело не в стратегии, а в сети/DNS.
+        /// </summary>
+        public string FailureSummary()
+        {
+            if (OkCount >= Total) return "";
+
+            Dictionary<string, int> byReason = new Dictionary<string, int>(StringComparer.Ordinal);
+
+            foreach (ProbeResult r in Results)
+            {
+                if (r.Ok) continue;
+
+                string reason = string.IsNullOrEmpty(r.Error) ? "нет ответа" : r.Error;
+
+                int n;
+                if (!byReason.TryGetValue(reason, out n)) n = 0;
+                byReason[reason] = n + 1;
+            }
+
+            List<string> parts = new List<string>();
+            foreach (KeyValuePair<string, int> kv in byReason)
+                parts.Add(kv.Value > 1 ? kv.Key + " ×" + kv.Value : kv.Key);
+
+            return string.Join(", ", parts.ToArray());
         }
     }
 
@@ -115,7 +145,8 @@ namespace AutoZapret.Diag
             return result;
         }
 
-        public ProbeReport CheckAll(List<ProbeTarget> targets, int timeoutSec = 10, int parallel = 4)
+        public ProbeReport CheckAll(List<ProbeTarget> targets, int timeoutSec = 10, int parallel = 4,
+                                    CancellationToken cancel = default(CancellationToken))
         {
             ProbeReport report = new ProbeReport();
             report.Total = targets.Count;
@@ -134,6 +165,9 @@ namespace AutoZapret.Diag
                         limiter.Wait();
                         try
                         {
+                            // отмена до старта пробы: не тратим 10 секунд впустую
+                            if (cancel.IsCancellationRequested) return;
+
                             ProbeResult r = CheckOne(t, timeoutSec);
                             lock (gate)
                             {
@@ -200,8 +234,10 @@ namespace AutoZapret.Diag
                     FileName = "curl.exe",
                     // -4: только IPv4. Без этого на машинах с «мёртвым» IPv6
                     // все проверки падают, хотя браузер открывает сайт.
+                    // errormsg + код возврата: «none соединения» не говорит ничего,
+                    // а «DNS» / «таймаут» / «TLS» сразу ведут к причине.
                     Arguments = "-4 -s -o NUL --max-time " + timeoutSec +
-                                " -w \"%{http_code}|%{time_total}\" \"" + target.Url + "\"",
+                                " -w \"%{http_code}|%{time_total}|%{errormsg}\" \"" + target.Url + "\"",
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardOutput = true,
@@ -224,7 +260,16 @@ namespace AutoZapret.Diag
 
                     // 200-499 = сервер ответил. 000 = не достучались.
                     result.Ok = status >= 200 && status < 500;
-                    if (!result.Ok) result.Error = status == 0 ? "нет соединения" : "HTTP " + status;
+
+                    if (!result.Ok)
+                    {
+                        string detail = parts.Length > 2 ? parts[2].Trim() : "";
+
+                        result.Error = status == 0
+                            ? CurlReason(SafeExitCode(p), detail)
+                            : "HTTP " + status;
+                    }
+
                     return result;
                 }
             }
@@ -236,6 +281,41 @@ namespace AutoZapret.Diag
                 result.Error = ex.Message;
                 return result;
             }
+        }
+
+        /// <summary>
+        /// Код возврата curl после WaitForExit. В net48 нет свойства ExitCode
+        /// до завершения процесса, поэтому берём безопасно.
+        /// </summary>
+        private static int SafeExitCode(Process p)
+        {
+            try { return p.HasExited ? p.ExitCode : -1; }
+            catch { return -1; }
+        }
+
+        /// <summary>
+        /// Причина отказа по коду возврата curl. Разница принципиальна:
+        /// «DNS» значит «стратегия тут вообще ни при чём», а «TLS» — что пакеты
+        /// дошли и обход не сработал. Раньше оба случая выглядели как
+        /// «нет соединения», и разобраться было невозможно.
+        /// </summary>
+        private static string CurlReason(int exitCode, string detail)
+        {
+            switch (exitCode)
+            {
+                case 6: return "DNS";
+                case 7: return "нет подключения";
+                case 28: return "таймаут";
+                case 35: return "TLS";
+                case 52: return "пустой ответ";
+                case 55: return "отправка";
+                case 56: return "сброс";
+                case 60: return "сертификат";
+                case 92: return "HTTP/2";
+            }
+
+            if (!string.IsNullOrEmpty(detail)) return detail;
+            return exitCode < 0 ? "нет ответа" : "curl " + exitCode;
         }
 
         // ----------------------------------------------------------------- http

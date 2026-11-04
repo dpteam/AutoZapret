@@ -109,6 +109,9 @@ namespace AutoZapret.App
                 Section("счёт стратегий");
                 TestStrategyScoring();
 
+                Section("сниффер трафика");
+                TestSniffResult();
+
                 Section("пресеты по процессам");
                 TestProcessPresets();
 
@@ -221,6 +224,8 @@ namespace AutoZapret.App
             probe.Theme = "light";
             probe.SimpleMode = false;
             probe.MinimizeToTray = false;
+            probe.StrategyIdV1 = "flowseal.general-alt12";
+            probe.StrategyIdV2 = "zapret2.general-alt12";
             probe.Save();
 
             Settings back = Settings.Load();
@@ -231,6 +236,11 @@ namespace AutoZapret.App
             Check("секрет round-trip", back.ProxySecret == probe.ProxySecret, Log.Secret(back.ProxySecret));
             Check("тема round-trip", back.Theme == "light", back.Theme);
             Check("simpleMode round-trip", !back.SimpleMode, back.SimpleMode.ToString());
+
+            // выбор стратегии помнится отдельно для каждого движка: иначе при
+            // переключении v1 <-> v2 выбор сгорал и человек искал его заново
+            Check("стратегия v1 round-trip", back.StrategyIdV1 == "flowseal.general-alt12", back.StrategyIdV1);
+            Check("стратегия v2 round-trip", back.StrategyIdV2 == "zapret2.general-alt12", back.StrategyIdV2);
 
             // нормализация
             Settings bad = new Settings { ProxyPort = 999999, GameFilter = "мусор", ProxySecret = "не hex" };
@@ -2685,6 +2695,78 @@ namespace AutoZapret.App
             // ---- строка рейтинга содержит счёт
             Check("строка рейтинга содержит счёт",
                 perfect.ToLine().IndexOf("счёт", StringComparison.Ordinal) >= 0, perfect.ToLine());
+
+            // ---- причина провала: «0/4» без неё ничего не объясняет
+            AutoZapret.Diag.ProbeReport failedReport = new AutoZapret.Diag.ProbeReport();
+            failedReport.Total = 4;
+            failedReport.OkCount = 0;
+            failedReport.Results.Add(new AutoZapret.Diag.ProbeResult { Name = "a", Error = "таймаут" });
+            failedReport.Results.Add(new AutoZapret.Diag.ProbeResult { Name = "b", Error = "таймаут" });
+            failedReport.Results.Add(new AutoZapret.Diag.ProbeResult { Name = "c", Error = "DNS" });
+            failedReport.Results.Add(new AutoZapret.Diag.ProbeResult { Name = "d", Error = "TLS" });
+
+            string reasons = failedReport.FailureSummary();
+            Check("причина провала: сводка не пуста", reasons.Length > 0, reasons);
+            Check("причина провала: повтор считается",
+                reasons.IndexOf("таймаут ×2", StringComparison.Ordinal) >= 0, reasons);
+            Check("причина провала: разные причины перечислены",
+                reasons.IndexOf("DNS", StringComparison.Ordinal) >= 0 &&
+                reasons.IndexOf("TLS", StringComparison.Ordinal) >= 0, reasons);
+
+            // всё прошло — объяснять нечего
+            Check("причина провала: успех молчит", SynthReport(100, 120).FailureSummary() == "", "ok");
+
+            // строка стратегии показывает причину, а не только нули
+            AutoZapret.Diag.StrategyScore zero = new AutoZapret.Diag.StrategyScore
+            {
+                Name = "провал",
+                ProbeReasons = "таймаут ×4"
+            };
+            AutoZapret.Diag.StrategyTester.ComputeScore(zero, SynthReport(-1, -1, -1, -1), true);
+            Check("строка стратегии: причина видна",
+                zero.ToLine().IndexOf("таймаут", StringComparison.Ordinal) >= 0, zero.ToLine());
+        }
+
+        /// <summary>
+        /// Выводы сниффера — чистая логика, без WinDivert и без прав.
+        /// Проверяем именно формулировки: от них зависит, поймёт ли человек,
+        /// что делать дальше.
+        /// </summary>
+        private static void TestSniffResult()
+        {
+            AutoZapret.Diag.SniffResult ok = new AutoZapret.Diag.SniffResult
+            {
+                Ok = true,
+                Total = 40,
+                Outbound = 25,
+                Inbound = 15,
+                Tls = 6,
+                WithSni = 6
+            };
+
+            Check("сниффер: сводка с числами",
+                ok.Summary().IndexOf("40", StringComparison.Ordinal) >= 0, ok.Summary());
+            Check("сниффер: трафик виден — виновата стратегия",
+                ok.Verdict().IndexOf("стратеги", StringComparison.Ordinal) >= 0, ok.Verdict());
+
+            AutoZapret.Diag.SniffResult empty = new AutoZapret.Diag.SniffResult { Ok = true };
+
+            Check("сниффер: пусто — предупреждение про драйвер",
+                empty.Verdict().IndexOf("WinDivert", StringComparison.Ordinal) >= 0, empty.Verdict());
+
+            AutoZapret.Diag.SniffResult noTls = new AutoZapret.Diag.SniffResult { Ok = true, Total = 12 };
+
+            Check("сниффер: без TLS — просит открыть сайт",
+                noTls.Verdict().IndexOf("youtube", StringComparison.Ordinal) >= 0, noTls.Verdict());
+
+            AutoZapret.Diag.SniffResult error = new AutoZapret.Diag.SniffResult
+            {
+                Ok = false,
+                Error = "нужны права администратора"
+            };
+
+            Check("сниффер: ошибка показывается как есть",
+                error.Verdict() == error.Error && error.Summary() == error.Error, error.Verdict());
         }
 
         /// <summary>

@@ -47,6 +47,12 @@ namespace AutoZapret.Zapret
         public string ActiveStrategyName { get { return _supervisor.StrategyName; } }
         public TimeSpan Uptime { get { return _supervisor.Uptime; } }
 
+        /// <summary>Последние строки вывода winws — «что сказал движок».</summary>
+        public List<string> EngineOutput(int maxLines = 20)
+        {
+            return _supervisor.RecentOutput(maxLines);
+        }
+
         /// <summary>
         /// Гарантирует, что стратегии загружены.
         /// Порядок для каждого движка: кэш JSON -> импорт из .bat -> ничего.

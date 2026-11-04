@@ -167,6 +167,7 @@ namespace AutoZapret.App
             _autoPilot.StrategySwitched += id =>
             {
                 _settings.StrategyId = id;
+                RememberStrategy(_settings.EngineKind, id);
                 try { _settings.Save(); } catch { }
 
                 Log.Info("AUTO", "стратегия переключена автопилотом: " + id);
@@ -236,6 +237,7 @@ namespace AutoZapret.App
                 if (string.Equals(id, _settings.StrategyId, StringComparison.OrdinalIgnoreCase)) return;
 
                 _settings.StrategyId = id;
+                RememberStrategy(_settings.EngineKind, id);
                 _settings.Save();
                 Log.Info("WINWS", "выбрана стратегия: " + id);
 
@@ -320,22 +322,48 @@ namespace AutoZapret.App
             });
 
             // ---- диагностика
-            bridge.Register("diag.system", msg => RunInBackground("system", RunSystemChecksUi));
-            bridge.Register("diag.probe", msg => RunInBackground("probe", RunProbeUi));
+            //
+            // Все проверки идут через RunDiag: одна за раз, с отменой и с
+            // выключением обхода там, где он мешает замеру. Раньше можно было
+            // запустить «Проверить сеть» и «Подобрать» одновременно — они
+            // стартовали winws друг у друга и обе показывали мусор.
+            bridge.Register("diag.system", msg =>
+                RunDiag("system", "проверки окружения", RunSystemChecksUi, false));
+
+            bridge.Register("diag.probe", msg =>
+                RunDiag("probe", "проверка сети без обхода", RunProbeUi, true));
+
             bridge.Register("diag.tcp16", msg =>
             {
                 int count = Json.GetInt(msg, "count", 8);
-                RunInBackground("tcp16", () => RunTcp16Ui(count));
+                RunDiag("tcp16", "обрыв на 16-20 КБ", ct => RunTcp16Ui(count, ct), true);
             });
-            bridge.Register("diag.deep", msg => RunInBackground("deep", RunDeepUi));
-            bridge.Register("diag.bundle", msg => RunInBackground("bundle", RunBundleUi));
-            bridge.Register("diag.bundleDeep", msg => RunInBackground("bundle-deep", RunBundleDeepUi));
+
+            bridge.Register("diag.deep", msg =>
+                RunDiag("deep", "тип блокировки", RunDeepUi, true));
+
+            bridge.Register("diag.netcap", msg =>
+            {
+                int seconds = Json.GetInt(msg, "seconds", 8);
+                RunDiag("netcap", "проверка драйвера", ct => RunNetCapUi(seconds, ct), false);
+            });
+
+            bridge.Register("diag.bundle", msg =>
+                RunDiag("bundle", "архив для поддержки", RunBundleUi, false));
+
+            bridge.Register("diag.bundleDeep", msg =>
+                RunDiag("bundle-deep", "расширенный отчёт", RunBundleDeepUi, true));
+
             bridge.Register("diag.bundleFolder", msg => OpenPath(DiagnosticBundle.DefaultDirectory()));
+
             bridge.Register("diag.test", msg =>
             {
                 int count = Json.GetInt(msg, "count", 5);
-                RunInBackground("test", () => RunTestUi(count));
+                RunDiag("test", "подбор стратегий", ct => RunTestUi(count, ct), true);
             });
+
+            bridge.Register("diag.cancel", msg => CancelDiag());
+            bridge.Register("diag.state", msg => SendDiagState());
 
             // ---- язык интерфейса: словарь вшит в exe, наружу ничего не пишется
             bridge.Register("i18n.get", msg =>
@@ -1243,10 +1271,200 @@ namespace AutoZapret.App
             });
         }
 
-        private void RunBundleUi()
+        // ------------------------------------------------------- диагностика: одна за раз
+
+        private readonly object _diagGate = new object();
+        private string _diagRunningName;      // null = свободно
+        private string _diagRunningTitle;
+        private CancellationTokenSource _diagCancel;
+
+        /// <summary>
+        /// Запуск диагностики с взаимным исключением и отменой.
+        ///
+        /// Почему это отдельная обёртка, а не RunInBackground:
+        ///   * две проверки одновременно — это два winws и общий WinDivert,
+        ///     то есть гарантированно недостоверный результат у обеих;
+        ///   * проверки, которые меряют «как без обхода», обязаны сначала
+        ///     выключить обход (engineStop), иначе показывают выдумку;
+        ///   * любую долгую проверку человек должен уметь прекратить.
+        ///
+        /// Terminal-сообщение отправляет сама проверка: при отмене тоже,
+        /// иначе кнопка в интерфейсе навсегда останется в состоянии «идёт».
+        /// </summary>
+        private void RunDiag(string name, string title, Action<CancellationToken> work, bool engineStop)
         {
-            BundleResult result = DiagnosticBundle.Create(
-                DiagnosticBundle.DefaultDirectory(), _settings, _zapret.Strategies);
+            CancellationToken token;
+
+            lock (_diagGate)
+            {
+                if (_diagRunningName != null)
+                {
+                    string busy = _diagRunningTitle ?? _diagRunningName;
+
+                    Log.Warn("DIAG", "проверка «" + title + "» отклонена: уже идёт «" + busy + "»");
+
+                    _form.Bridge.Send(WebBridge.Msg("diag.busy",
+                        "running", busy,
+                        "message", "Уже выполняется: " + busy +
+                                   ". Дождитесь окончания или нажмите «Отменить»."));
+
+                    _tray.Notify(AppInfo.Name,
+                        "Сначала дождитесь окончания: " + busy,
+                        ToolTipIcon.Info);
+
+                    return;
+                }
+
+                _diagCancel = new CancellationTokenSource();
+                _diagRunningName = name;
+                _diagRunningTitle = title;
+                token = _diagCancel.Token;
+            }
+
+            Log.Info("DIAG", "проверка начата: " + title);
+            SendDiagState();
+
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                bool wasRunning = false;
+
+                try
+                {
+                    if (engineStop)
+                        wasRunning = StopEngineForDiag(token);
+
+                    work(token);
+                }
+                catch (OperationCanceledException)
+                {
+                    Log.Info("DIAG", "проверка отменена: " + title);
+                }
+                catch (Exception ex)
+                {
+                    Log.Exception("DIAG", name, ex);
+                    _form.Bridge.Send(WebBridge.Msg("error", "message", ex.Message, "action", name));
+                }
+                finally
+                {
+                    // Обход возвращаем только если он был включён до проверки:
+                    // проверка не должна менять состояние системы молча.
+                    //
+                    // Исключение — подбор стратегий: он по своей природе
+                    // заканчивается выключенным движком и экраном выбора,
+                    // и включать старую стратегию «назад» было бы обманом.
+                    bool restore = !string.Equals(name, "test", StringComparison.Ordinal);
+
+                    if (restore) RestoreEngineAfterDiag(wasRunning);
+
+                    lock (_diagGate)
+                    {
+                        _diagRunningName = null;
+                        _diagRunningTitle = null;
+                        _diagCancel = null;
+                    }
+
+                    SendDiagState();
+                }
+            });
+        }
+
+        private void CancelDiag()
+        {
+            CancellationTokenSource cancel;
+
+            lock (_diagGate) cancel = _diagCancel;
+            if (cancel == null) return;
+
+            Log.Info("DIAG", "запрошена отмена проверки: " + (_diagRunningTitle ?? ""));
+
+            try { cancel.Cancel(); }
+            catch (Exception ex) { Log.Exception("DIAG", "отмена", ex); }
+        }
+
+        private void SendDiagState()
+        {
+            string title;
+            lock (_diagGate) title = _diagRunningTitle;
+
+            _form.Bridge.Send(WebBridge.Msg("diag.state",
+                "running", title != null,
+                "title", title ?? ""));
+        }
+
+        /// <summary>
+        /// Выключает обход перед проверкой, которая меряет «как без обхода».
+        /// Возвращает true, если обход был включён (значит, его надо вернуть).
+        /// </summary>
+        private bool StopEngineForDiag(CancellationToken token)
+        {
+            ProtectionState state = _zapret.State;
+
+            bool wasRunning = state == ProtectionState.Running || state == ProtectionState.Starting;
+            if (!wasRunning) return false;
+
+            Log.Info("DIAG", "обход выключен на время проверки");
+            DiagProgress("останавливаю обход — иначе замер врёт…");
+
+            _zapret.Stop();
+
+            // `sc stop`/Kill возвращаются раньше выгрузки WinDivert
+            Thread.Sleep(1200);
+            return true;
+        }
+
+        /// <summary>Возвращает обход в то состояние, в котором он был до проверки.</summary>
+        private void RestoreEngineAfterDiag(bool wasRunning)
+        {
+            if (!wasRunning) return;
+
+            string id = _settings.StrategyId;
+            if (string.IsNullOrEmpty(id)) return;
+
+            try
+            {
+                string error = _zapret.Start(id);
+
+                if (error != null)
+                {
+                    Log.Warn("DIAG", "не удалось вернуть обход: " + error);
+                    return;
+                }
+
+                Log.Info("DIAG", "обход включён обратно: " + id);
+            }
+            catch (Exception ex)
+            {
+                Log.Exception("DIAG", "возврат обхода", ex);
+            }
+        }
+
+        /// <summary>Строка прогресса для экрана диагностики.</summary>
+        private void DiagProgress(string line)
+        {
+            _form.Bridge.Send(WebBridge.Msg("diag.progress", "line", line, "done", false));
+        }
+
+        /// <summary>Проверка прервана пользователем — сообщаем экрану и выходим.</summary>
+        private bool DiagCancelled(CancellationToken token, string message, string summary)
+        {
+            if (!token.IsCancellationRequested) return false;
+
+            _form.Bridge.Send(WebBridge.Msg(message,
+                "items", new List<object>(),
+                "summary", summary,
+                "cancelled", true));
+
+            return true;
+        }
+
+        private void RunBundleUi(CancellationToken token)
+        {
+            string path = DiagnosticBundle.DefaultDirectory();
+
+            // Архив можно собирать и при включённом обходе: это снимок
+            // «как есть», а не замер. Единственное, что делаем, — говорим,
+            // что внутри лог с работающим движком.
+            BundleResult result = DiagnosticBundle.Create(path, _settings, _zapret.Strategies);
 
             if (!result.Ok)
             {
@@ -1431,8 +1649,10 @@ namespace AutoZapret.App
         /// hosts, полные аргументы всех стратегий, снимок сети и пофайловый
         /// список движка. Для случая «работать не хочет, а почему — непонятно».
         /// </summary>
-        private void RunBundleDeepUi()
+        private void RunBundleDeepUi(CancellationToken token)
         {
+            // Расширенный отчёт включает глубокий замер — он имеет смысл только
+            // при выключенном обходе. Обход гасит RunDiag(engineStop: true).
             BundleResult result = DiagnosticBundle.Create(
                 DiagnosticBundle.DefaultDirectory(), _settings, _zapret.Strategies,
                 DeepReportOptions.Extended(line => _form.Bridge.Send(
@@ -1456,9 +1676,12 @@ namespace AutoZapret.App
                 "deep", true));
         }
 
-        private void RunSystemChecksUi()
+        private void RunSystemChecksUi(CancellationToken token)
         {
             List<CheckResult> results = SystemChecks.RunAll();
+
+            if (DiagCancelled(token, "diag.system", "отменено"))
+                return;
 
             List<object> items = new List<object>();
             int problems = 0, warnings = 0;
@@ -1489,10 +1712,15 @@ namespace AutoZapret.App
                 "summary", summary));
         }
 
-        private void RunProbeUi()
+        private void RunProbeUi(CancellationToken token)
         {
+            DiagProgress("замеряю, что доступно без обхода…");
+
             ConnectivityProbe probe = new ConnectivityProbe();
-            Baseline.Snapshot snapshot = Baseline.Measure(probe, 10, false);
+            Baseline.Snapshot snapshot = Baseline.Measure(probe, 10, false, token);
+
+            if (DiagCancelled(token, "diag.probe", "отменено"))
+                return;
 
             List<object> items = new List<object>();
             foreach (ProbeTarget target in ConnectivityProbe.DefaultTargets())
@@ -1520,7 +1748,7 @@ namespace AutoZapret.App
             _form.Bridge.Send(WebBridge.Msg("diag.probe", "items", items, "summary", summary));
         }
 
-        private void RunTcp16Ui(int count)
+        private void RunTcp16Ui(int count, CancellationToken token)
         {
             string path = System.IO.Path.Combine(Paths.BaseDir, "assets", "diag", "tcp16.json");
             List<Tcp16Target> targets = Tcp16Test.LoadTargets(path);
@@ -1545,6 +1773,9 @@ namespace AutoZapret.App
 
             List<Tcp16Result> results = Tcp16Test.ProbeAll(picked, 6000, 4);
 
+            if (DiagCancelled(token, "diag.tcp16", "отменено"))
+                return;
+
             List<object> items = new List<object>();
             foreach (Tcp16Result r in results)
             {
@@ -1565,7 +1796,34 @@ namespace AutoZapret.App
                 "verdict", Tcp16Test.Verdict(results) + " · источник: " + source));
         }
 
-        private void RunDeepUi()
+        /// <summary>
+        /// Проверка сниффером: видит ли WinDivert трафик вообще.
+        ///
+        /// Это ответ на самый частый вопрос «движок запущен, аргументы есть, а
+        /// ничего не работает». Если пакеты видны и TLS разбирается — виновата
+        /// стратегия; если не видны — виноват драйвер/сеть, и перебирать
+        /// двадцать две стратегии бессмысленно.
+        /// </summary>
+        private void RunNetCapUi(int seconds, CancellationToken token)
+        {
+            DiagProgress("слушаю TCP/443 " + seconds + " с — откройте youtube в браузере…");
+
+            SniffResult result = TrafficSniffer.Run(seconds, token);
+
+            List<object> snis = new List<object>();
+            foreach (string s in result.Snis) snis.Add(s);
+
+            _form.Bridge.Send(WebBridge.Msg("diag.netcap",
+                "ok", result.Ok,
+                "error", result.Error ?? "",
+                "summary", result.Summary(),
+                "verdict", result.Verdict(),
+                "total", (long)result.Total,
+                "tls", (long)result.Tls,
+                "snis", snis));
+        }
+
+        private void RunDeepUi(CancellationToken token)
         {
             Baseline.Snapshot baseline = Baseline.Load();
             if (baseline == null)
@@ -1589,6 +1847,13 @@ namespace AutoZapret.App
             {
                 bool blocked = baseline.Blocked.Contains(target.Name);
                 if (!blocked) continue;
+
+                // между целями — проверяем отмену: одна классификация до 8 секунд
+                if (token.IsCancellationRequested)
+                {
+                    DiagCancelled(token, "diag.deep", "отменено");
+                    return;
+                }
 
                 string host = new Uri(target.Url).Host;
                 string detail;
@@ -1646,7 +1911,7 @@ namespace AutoZapret.App
                 "summary", reason));
         }
 
-        private void RunTestUi(int count)
+        private void RunTestUi(int count, CancellationToken token)
         {
             // Подбор стратегий запускает winws для каждой стратегии — без прав
             // это падало сырым Win32Exception, и выглядело как «подбор сломан».
@@ -1671,20 +1936,25 @@ namespace AutoZapret.App
             // заблокировано», и подбор отменялся ни с того ни с сего.
             if (baseline == null || baseline.Blocked.Count == 0)
             {
-                // При включённом обходе замер бессмысленен — глушим движок
-                if (_zapret.State == ProtectionState.Running)
+                // Обход уже выключен RunDiag(engineStop: true), но если проверку
+                // запустили из другого места — гасим сами.
+                if (_zapret.State == ProtectionState.Running || _zapret.State == ProtectionState.Starting)
                 {
-                    _form.Bridge.Send(WebBridge.Msg("diag.progress",
-                        "line", "останавливаю обход для замера…", "done", false));
+                    DiagProgress("останавливаю обход для замера…");
 
                     _zapret.Stop();
                     Thread.Sleep(1200);
                 }
 
-                _form.Bridge.Send(WebBridge.Msg("diag.progress",
-                    "line", "замеряю, что заблокировано (это ~20–40 с)…", "done", false));
+                DiagProgress("замеряю, что заблокировано (это ~20–40 с)…");
 
-                baseline = Baseline.Measure(new ConnectivityProbe(), 10, true);
+                baseline = Baseline.Measure(new ConnectivityProbe(), 10, true, token);
+            }
+
+            if (token.IsCancellationRequested)
+            {
+                AbortTest("отменено");
+                return;
             }
 
             if (baseline == null || baseline.Blocked.Count == 0)
@@ -1729,10 +1999,13 @@ namespace AutoZapret.App
                 "elapsedSec", (long)watch.Elapsed.TotalSeconds,
                 "done", false));
 
-            List<StrategyScore> scores = tester.Run(ids, baseline, 5, 8);
+            List<StrategyScore> scores = tester.Run(ids, baseline, 5, 8, token);
+
+            bool cancelled = token.IsCancellationRequested;
 
             _form.Bridge.Send(WebBridge.Msg("diag.progress",
-                "line", "готово", "elapsedSec", (long)watch.Elapsed.TotalSeconds, "done", true));
+                "line", cancelled ? "отменено" : "готово",
+                "elapsedSec", (long)watch.Elapsed.TotalSeconds, "done", true));
 
             List<object> items = new List<object>();
             foreach (StrategyScore s in scores)
@@ -1750,15 +2023,35 @@ namespace AutoZapret.App
                     { "score", (long)s.Score },
                     { "breakdown", s.Breakdown() },
                     { "failed", failed },
+                    // почему не пробило: «таймаут ×4», «DNS», «TLS»…
+                    { "reasons", s.ProbeReasons ?? "" },
                     { "error", s.Error ?? "" }
                 });
             }
 
-            string summary = scores.Count == 0
-                ? "ничего не проверено"
-                : "проверено " + scores.Count + " стратегий против " + baseline.Blocked.Count + " целей";
+            string summary;
+            if (cancelled) summary = "отменено — проверено " + scores.Count + " стратегий";
+            else if (scores.Count == 0) summary = "ничего не проверено";
+            else summary = "проверено " + scores.Count + " стратегий против " + baseline.Blocked.Count + " целей";
 
-            _form.Bridge.Send(WebBridge.Msg("diag.test", "items", items, "summary", summary));
+            // Если ни одна стратегия не дала ни одной успешной пробы — это не
+            // «нет подходящей», а «движок не влияет на трафик вообще». Говорим
+            // прямо, иначе человек бесконечно перебирает и злится.
+            if (!cancelled && scores.Count > 0 && AllZero(scores))
+                summary += ". Ни одна стратегия не пробила ни одной цели — дело не в стратегиях: " +
+                           "движок не перехватывает трафик или сеть блокирует иначе";
+
+            _form.Bridge.Send(WebBridge.Msg("diag.test",
+                "items", items,
+                "summary", summary,
+                "cancelled", cancelled));
+        }
+
+        private static bool AllZero(List<StrategyScore> scores)
+        {
+            foreach (StrategyScore s in scores)
+                if (s.OkCount > 0) return false;
+            return true;
         }
 
         // --------------------------------------------------------------- control
@@ -1914,6 +2207,49 @@ namespace AutoZapret.App
             PushState();
         }
 
+        /// <summary>Сохранённая стратегия для конкретного движка.</summary>
+        private string SavedStrategy(string engineKind)
+        {
+            return string.Equals(engineKind, "v2", StringComparison.OrdinalIgnoreCase)
+                ? _settings.StrategyIdV2
+                : _settings.StrategyIdV1;
+        }
+
+        /// <summary>Запомнить выбор стратегии за движком.</summary>
+        private void RememberStrategy(string engineKind, string id)
+        {
+            if (string.IsNullOrEmpty(id)) return;
+
+            if (string.Equals(engineKind, "v2", StringComparison.OrdinalIgnoreCase))
+                _settings.StrategyIdV2 = id;
+            else
+                _settings.StrategyIdV1 = id;
+        }
+
+        /// <summary>
+        /// Та же стратегия для другого движка: flowseal.general-alt12 <->
+        /// zapret2.general-alt12. Наборы почти совпадают по именам, поэтому при
+        /// первом переключении человек получает не «первую из списка», а ту же
+        /// самую стратегию на другом движке.
+        /// </summary>
+        private Strategy FindSameStrategyOtherEngine(string id, string engineKind)
+        {
+            if (string.IsNullOrEmpty(id)) return null;
+
+            int dot = id.IndexOf('.');
+            string suffix = dot >= 0 ? id.Substring(dot + 1) : id;
+
+            foreach (Strategy s in _zapret.Strategies.ByEngine(engineKind))
+            {
+                int otherDot = s.Id.IndexOf('.');
+                string otherSuffix = otherDot >= 0 ? s.Id.Substring(otherDot + 1) : s.Id;
+
+                if (string.Equals(otherSuffix, suffix, StringComparison.OrdinalIgnoreCase)) return s;
+            }
+
+            return null;
+        }
+
         private void SwitchEngine(string kind)
         {
             bool wasRunning = _zapret.State == ProtectionState.Running ||
@@ -1950,11 +2286,28 @@ namespace AutoZapret.App
 
             _settings.EngineKind = kind;
 
-            Strategy current = _zapret.Strategies.Find(_settings.StrategyId);
-            if (current == null || !string.Equals(current.Engine, kind, StringComparison.OrdinalIgnoreCase))
+            // Выбор стратегии на каждый движок свой. Порядок: сохранённый слот
+            // этого движка -> та же стратегия по имени -> первая из списка.
+            // Раньше при смене движка выбор сбрасывался на первую стратегию,
+            // и человек каждый раз искал свою заново.
+            string remembered = SavedStrategy(kind);
+            Strategy candidate = string.IsNullOrEmpty(remembered) ? null : _zapret.Strategies.Find(remembered);
+
+            if (candidate == null || !string.Equals(candidate.Engine, kind, StringComparison.OrdinalIgnoreCase))
             {
-                List<Strategy> pool = _zapret.Strategies.ByEngine(kind);
-                if (pool.Count > 0) _settings.StrategyId = pool[0].Id;
+                candidate = FindSameStrategyOtherEngine(_settings.StrategyId, kind);
+
+                if (candidate == null)
+                {
+                    List<Strategy> pool = _zapret.Strategies.ByEngine(kind);
+                    candidate = pool.Count > 0 ? pool[0] : null;
+                }
+            }
+
+            if (candidate != null)
+            {
+                _settings.StrategyId = candidate.Id;
+                RememberStrategy(kind, candidate.Id);
             }
 
             _settings.Save();

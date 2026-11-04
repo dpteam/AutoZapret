@@ -26,6 +26,12 @@ namespace AutoZapret.Core
 
         // ---- zapret
         public string StrategyId = "flowseal.general";
+
+        // Выбор стратегии помнится ДЛЯ КАЖДОГО движка отдельно: у zapret 1 и
+        // zapret 2 разные наборы id (flowseal.* и zapret2.*), и при смене движка
+        // прошлый выбор «сгорал» — человек каждый раз заново искал свою стратегию.
+        public string StrategyIdV1 = "";
+        public string StrategyIdV2 = "";
         public string GameFilter = "tcp+udp";      // off | tcp | udp | tcp+udp
         public string IpsetMode = "loaded";        // off | loaded | any
         public bool AutoStart = false;             // включать обход при запуске приложения
@@ -157,6 +163,19 @@ namespace AutoZapret.Core
                 s.ServiceMode = Json.GetBool(zapret, "serviceMode", s.ServiceMode);
                 s.AutoPilot = Json.GetBool(zapret, "autoPilot", s.AutoPilot);
                 s.ProcessPresets = Json.GetBool(zapret, "processPresets", s.ProcessPresets);
+                s.StrategyIdV1 = Json.GetString(zapret, "strategyIdV1", s.StrategyIdV1);
+                s.StrategyIdV2 = Json.GetString(zapret, "strategyIdV2", s.StrategyIdV2);
+
+                // Миграция к «своя стратегия на каждый движок»: раньше выбор был
+                // один общий. Кладём его в слот того движка, который сейчас выбран,
+                // чтобы у человека ничего не поменялось после обновления.
+                if (s.StrategyIdV1.Length == 0 && s.StrategyIdV2.Length == 0 && s.StrategyId.Length > 0)
+                {
+                    if (string.Equals(s.EngineKind, "v2", StringComparison.OrdinalIgnoreCase))
+                        s.StrategyIdV2 = s.StrategyId;
+                    else
+                        s.StrategyIdV1 = s.StrategyId;
+                }
             }
 
             Dictionary<string, object> proxy = Json.GetObject(map, "proxy");
@@ -220,6 +239,8 @@ namespace AutoZapret.Core
 
             root["zapret"] = Map(
                 "strategyId", StrategyId,
+                "strategyIdV1", StrategyIdV1,
+                "strategyIdV2", StrategyIdV2,
                 "gameFilter", GameFilter,
                 "ipsetMode", IpsetMode,
                 "autoStart", AutoStart,
