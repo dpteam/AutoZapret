@@ -1,4 +1,4 @@
-// Разовая правка словаря: проверка обновлений списков.
+// Разовая правка словаря: поиск в списках.
 const fs = require("fs");
 const path = require("path");
 
@@ -6,8 +6,7 @@ const p = path.join(__dirname, "..", "web", "i18n", "en.json");
 const dict = JSON.parse(fs.readFileSync(p, "utf8"));
 
 const add = {
-  "Проверить обновления": "Check for updates",
-  "Проверяю…": "Checking…"
+  "Найти": "Find"
 };
 
 let added = 0;

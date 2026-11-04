@@ -1632,6 +1632,51 @@
             checkUpd.textContent = "Проверяю…";
             send("lists.checkUpdates");
         });
+
+        // поиск по большому списку: на ipset в 33 000 строк без этого
+        // не найти нужную подсеть глазами
+        var find = document.getElementById("btn-list-any-find");
+        if (find) find.addEventListener("click", function () { findInAnyList(); });
+
+        var filter = document.getElementById("list-any-filter");
+        if (filter) {
+            filter.addEventListener("input", updateAnyListCount);
+            filter.addEventListener("keydown", function (e) {
+                if (e.key === "Enter") { e.preventDefault(); findInAnyList(); }
+            });
+        }
+
+        if (input) input.addEventListener("input", updateAnyListCount);
+    }
+
+    /// Найти следующее совпадение и выделить его в поле.
+    function findInAnyList() {
+        var input = document.getElementById("list-any-input");
+        var filter = document.getElementById("list-any-filter");
+        if (!input || !filter) return;
+
+        var query = filter.value.trim();
+        if (!query) { input.focus(); return; }
+
+        var text = input.value || "";
+        var from = input.selectionEnd || 0;
+        var index = text.toLowerCase().indexOf(query.toLowerCase(), from);
+
+        // дошли до конца — начинаем сначала, чтобы «Найти» всегда находило
+        if (index < 0) index = text.toLowerCase().indexOf(query.toLowerCase(), 0);
+        if (index < 0) { updateAnyListCount(); return; }
+
+        input.focus();
+        input.setSelectionRange(index, index + query.length);
+
+        // прокручиваем так, чтобы найденная строка оказалась в середине
+        var before = text.substring(0, index);
+        var line = before.split("\n").length - 1;
+        var lineHeight = parseFloat(window.getComputedStyle(input).lineHeight) || 16;
+
+        input.scrollTop = Math.max(0, line * lineHeight - input.clientHeight / 2);
+
+        updateAnyListCount();
     }
 
     function renderListUpdates(msg) {
@@ -1844,6 +1889,15 @@
 
     function renderLists(msg) {
         var kind = msg.kind;
+
+        // Списки движка (основной, Google, ipset) показываются в общем
+        // редакторе: отдельных полей для них нет, и раньше обработчик молча
+        // выходил, оставляя пустое поле. Именно поэтому «не редачится».
+        if (kind !== "general" && kind !== "exclude") {
+            renderAnyList(msg);
+            return;
+        }
+
         var input = document.getElementById("list-" + kind + "-input");
         var hint = document.getElementById("list-" + kind + "-hint");
         if (!input) return;
@@ -1858,6 +1912,60 @@
             if (msg.invalid > 0) parts.push("некорректных: " + msg.invalid);
             hint.textContent = parts.join(" · ");
         }
+    }
+
+    // Общий редактор: текст, подпись с размерами и предупреждение о том,
+    // что скачиваемый список перезапишется при обновлении.
+    function renderAnyList(msg) {
+        var input = document.getElementById("list-any-input");
+        if (!input) return;
+
+        if (document.activeElement !== input) input.value = msg.text || "";
+
+        var meta = document.getElementById("list-any-meta");
+        if (meta) {
+            var parts = [];
+            if (msg.file) parts.push(msg.file);
+            parts.push("строк: " + (msg.lines || 0));
+            if (msg.bytes) parts.push(Math.round(msg.bytes / 1024) + " КБ");
+            parts.push(msg.user ? "личный список" : "скачиваемый — обновление перезапишет");
+
+            meta.textContent = parts.join(" · ");
+            meta.className = "row-hint mono " + (msg.user ? "" : "diag-warn");
+        }
+
+        var desc = document.getElementById("list-any-desc");
+        if (desc) desc.textContent = msg.note || "";
+
+        updateAnyListCount();
+    }
+
+    // Сколько строк в поле и сколько совпадений с поиском: на ipset с 33 000
+    // строк иначе непонятно, что ты вообще видишь.
+    function updateAnyListCount() {
+        var input = document.getElementById("list-any-input");
+        var label = document.getElementById("list-any-count");
+        if (!input || !label) return;
+
+        var text = input.value || "";
+        var lines = text.length === 0 ? 0 : text.split(/\r?\n/).length;
+
+        var filter = document.getElementById("list-any-filter");
+        var query = filter ? filter.value.trim().toLowerCase() : "";
+
+        if (!query) {
+            label.textContent = "строк в поле: " + lines;
+            label.className = "row-hint mono";
+            return;
+        }
+
+        var matches = 0;
+        text.split(/\r?\n/).forEach(function (line) {
+            if (line.toLowerCase().indexOf(query) >= 0) matches++;
+        });
+
+        label.textContent = "строк в поле: " + lines + " · совпадений: " + matches;
+        label.className = "row-hint mono " + (matches > 0 ? "diag-ok" : "diag-warn");
     }
 
     function renderListStatus(msg) {

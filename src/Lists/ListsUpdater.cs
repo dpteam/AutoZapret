@@ -244,6 +244,9 @@ namespace AutoZapret.Lists
             public int LocalLines;
             public int RemoteLines;
             public string Note = "";
+
+            /// <summary>true — обновление дополняет файл, а не заменяет.</summary>
+            public bool Merge;
         }
 
         /// <summary>
@@ -258,17 +261,21 @@ namespace AutoZapret.Lists
         {
             List<ListUpdate> result = new List<ListUpdate>();
 
-            CheckOne(result, progress, "IP-подсети", "ipset-all.txt", IpsetUrl);
-            CheckOne(result, progress, "Локальные сети", "ipset-exclude.txt", IpsetExcludeUrl);
-            CheckOne(result, progress, "Домены-исключения", "list-exclude.txt", ExcludeDomainsUrl);
+            // Сравниваем ровно те файлы, которые пишет соответствующая кнопка.
+            // Раньше здесь были list-exclude.txt и ipset-exclude.txt, а обновление
+            // пишет в *-user.txt — отсюда «на сервере 28 строк, у вас 129»,
+            // где 129 — совсем другой список (Flowseal), и это только пугало.
+            CheckOne(result, progress, "IP-подсети для обхода", "ipset-all.txt", IpsetUrl, false);
+            CheckOne(result, progress, "Мои локальные сети", HostlistManager.FileIpsetExclude, IpsetExcludeUrl, true);
+            CheckOne(result, progress, "Мои исключения (дополняются)", HostlistManager.FileExclude, ExcludeDomainsUrl, true);
 
             return result;
         }
 
         private static void CheckOne(List<ListUpdate> result, Action<string> progress,
-                                     string name, string file, string url)
+                                     string name, string file, string url, bool merge)
         {
-            ListUpdate update = new ListUpdate { Name = name, File = file };
+            ListUpdate update = new ListUpdate { Name = name, File = file, Merge = merge };
             result.Add(update);
 
             if (progress != null) progress("проверяю: " + name);
@@ -293,12 +300,25 @@ namespace AutoZapret.Lists
 
             update.Reachable = true;
             update.RemoteLines = CountLines(remote);
-            update.Changed = update.RemoteLines != update.LocalLines;
 
-            if (update.Changed)
-                update.Note = "на сервере " + update.RemoteLines + " строк, у вас " + update.LocalLines;
-            else
-                update.Note = "актуально (" + update.LocalLines + " строк)";
+            // Для дополняемых списков «у вас меньше» — это норма, а не отставание:
+            // кнопка добавляет новые строки к вашим, ничего не удаляя.
+            update.Changed = merge
+                ? update.RemoteLines > update.LocalLines
+                : update.RemoteLines != update.LocalLines;
+
+            if (!update.Changed)
+            {
+                update.Note = merge
+                    ? "дополнять нечего (у вас " + update.LocalLines + ", в источнике " + update.RemoteLines + ")"
+                    : "актуально (" + update.LocalLines + " строк)";
+
+                return;
+            }
+
+            update.Note = merge
+                ? "в источнике " + update.RemoteLines + ", у вас " + update.LocalLines + " — «Дополнить» добавит новое"
+                : "на сервере " + update.RemoteLines + " строк, у вас " + update.LocalLines;
         }
 
         private static int CountLines(string text)

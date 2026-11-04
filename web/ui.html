@@ -484,10 +484,33 @@
               Здесь лежат и ваши списки, и скачиваемые: основной, Google, исключения, IP-подсети
             </div>
           </div>
-          <select id="list-any-select" style="min-width:280px"></select>
+          <select id="list-any-select" style="min-width:320px"></select>
         </div>
 
-        <div class="row" style="margin-top:10px">
+        <div class="row-hint mono" id="list-any-meta" style="margin-top:8px"></div>
+        <div class="row-hint" id="list-any-desc" style="margin-top:2px"></div>
+
+        <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
+          <input type="text" id="list-any-filter" placeholder="найти строку…"
+                 style="flex:1;min-width:200px" spellcheck="false">
+          <button class="btn" id="btn-list-any-find">Найти</button>
+          <span class="row-hint mono" id="list-any-count"></span>
+        </div>
+
+        <textarea id="list-any-input" class="list-input" spellcheck="false"
+                  style="margin-top:8px;min-height:260px"
+                  placeholder="example.com&#10;!excluded.net&#10;10.0.0.0/8"></textarea>
+
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+          <button class="btn primary" id="btn-list-any-save">Сохранить</button>
+          <button class="btn" id="btn-list-any-check">Проверить</button>
+          <button class="btn" id="btn-list-any-dedupe">Убрать дубли</button>
+          <button class="btn" id="btn-list-any-import">Из файла</button>
+          <button class="btn" id="btn-list-any-reload">Обновить</button>
+          <input type="file" id="file-list-any" accept=".txt,.lst,text/plain" style="display:none">
+        </div>
+
+        <div class="row" style="margin-top:16px">
           <div>
             <div class="row-label">Запас в поставке</div>
             <div class="row-hint" id="lists-bundled-hint">
@@ -495,28 +518,12 @@
               если GitHub недоступен
             </div>
           </div>
-          <div style="display:flex;gap:8px;align-items:center">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <button class="btn" id="btn-lists-check-updates">Проверить обновления</button>
             <button class="btn" id="btn-lists-restore-bundled">Восстановить из поставки</button>
           </div>
         </div>
         <div class="diag-list" id="lists-updates-list" style="margin-top:8px;display:none"></div>
-
-        <div class="row" style="align-items:flex-start;margin-top:8px">
-          <div style="flex:1">
-            <textarea id="list-any-input" class="list-input" spellcheck="false"
-                      placeholder="example.com&#10;!excluded.net&#10;10.0.0.0/8"></textarea>
-            <div class="row-hint" id="list-any-hint"></div>
-          </div>
-          <div style="display:flex;flex-direction:column;gap:8px">
-            <button class="btn primary" id="btn-list-any-save">Сохранить</button>
-            <button class="btn" id="btn-list-any-check">Проверить</button>
-            <button class="btn" id="btn-list-any-dedupe">Убрать дубли</button>
-            <button class="btn" id="btn-list-any-import">Из файла</button>
-            <button class="btn" id="btn-list-any-reload">Обновить</button>
-            <input type="file" id="file-list-any" accept=".txt,.lst,text/plain" style="display:none">
-          </div>
-        </div>
       </div>
 
       <div class="card">
