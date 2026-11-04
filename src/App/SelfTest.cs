@@ -102,6 +102,9 @@ namespace AutoZapret.App
 
                 Section("тест TCP 16-20 КБ");
                 TestTcp16();
+
+                Section("диагностический архив");
+                TestDiagnosticBundle();
             }
             catch (Exception ex)
             {
@@ -1145,6 +1148,153 @@ namespace AutoZapret.App
 
                 try { System.IO.Directory.Delete(dir, true); } catch { }
             }
+        }
+
+        private static void TestDiagnosticBundle()
+        {
+            string dir = System.IO.Path.Combine(Paths.DataDir, "selftest-bundle");
+
+            try
+            {
+                if (Directory.Exists(dir)) Directory.Delete(dir, true);
+            }
+            catch { }
+
+            // настройки с ЯВНЫМ секретом: проверяем, что он не утечёт в архив
+            Settings settings = new Settings();
+            settings.ProxySecret = Settings.NewSecret();
+            settings.ProxyPort = 1443;
+
+            AutoZapret.Diag.BundleResult result = null;
+
+            try
+            {
+                result = AutoZapret.Diag.DiagnosticBundle.Create(dir, settings, null);
+
+                Check("архив собран", result.Ok, result.Ok ? result.SizeText() : result.Error);
+                Check("архив не пустой", result.SizeBytes > 0, result.SizeBytes + " Б");
+                Check("имя файла .zip",
+                    result.Path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase),
+                    System.IO.Path.GetFileName(result.Path));
+                Check("временный .tmp убран",
+                    !File.Exists(result.Path + ".tmp"), "ok");
+
+                if (!result.Ok) return;
+
+                // ---- состав
+                using (System.IO.Compression.ZipArchive zip =
+                       System.IO.Compression.ZipFile.OpenRead(result.Path))
+                {
+                    List<string> names = new List<string>();
+                    foreach (System.IO.Compression.ZipArchiveEntry e in zip.Entries)
+                        names.Add(e.FullName);
+
+                    foreach (string required in new[]
+                             {
+                                 "README.txt", "environment.txt", "diagnostics.txt",
+                                 "settings.json", "engine.txt", "strategies.txt"
+                             })
+                    {
+                        Check("в архиве есть " + required, names.Contains(required), names.Count + " файлов");
+                    }
+
+                    // ---- секрет не должен встречаться НИ В ОДНОМ файле
+                    int leaks = 0;
+                    string settingsJson = "";
+
+                    foreach (System.IO.Compression.ZipArchiveEntry entry in zip.Entries)
+                    {
+                        string text = ReadEntry(entry);
+                        if (text.IndexOf(settings.ProxySecret, StringComparison.OrdinalIgnoreCase) >= 0)
+                            leaks++;
+
+                        if (entry.FullName == "settings.json") settingsJson = text;
+                    }
+
+                    Check("секрет прокси не утёк", leaks == 0, leaks + " файлов с секретом");
+                    Check("settings.json содержит REDACTED",
+                        settingsJson.IndexOf("REDACTED", StringComparison.Ordinal) >= 0,
+                        settingsJson.Length + " символов");
+
+                    // ---- окружение должно описывать реальную систему
+                    string environment = ReadEntry(zip.GetEntry("environment.txt"));
+                    Check("environment: есть версия",
+                        environment.IndexOf(AppInfo.Version, StringComparison.Ordinal) >= 0, "ok");
+                    Check("environment: есть рантайм",
+                        environment.IndexOf(".NET", StringComparison.Ordinal) >= 0, "ok");
+                    Check("environment: есть отпечаток сети",
+                        environment.IndexOf("отпечаток", StringComparison.OrdinalIgnoreCase) >= 0, "ok");
+
+                    // ---- диагностика должна содержать все 12 проверок
+                    string diagnostics = ReadEntry(zip.GetEntry("diagnostics.txt"));
+                    int okMarks = 0, marks = 0;
+                    foreach (string line in diagnostics.Split('\n'))
+                    {
+                        string t = line.TrimStart();
+                        if (t.StartsWith("[ok]", StringComparison.Ordinal) ||
+                            t.StartsWith("[warn]", StringComparison.Ordinal) ||
+                            t.StartsWith("[FAIL]", StringComparison.Ordinal) ||
+                            t.StartsWith("[skip]", StringComparison.Ordinal)) marks++;
+                        if (t.StartsWith("[ok]", StringComparison.Ordinal)) okMarks++;
+                    }
+                    Check("diagnostics: 12 строк-результатов", marks == 12, marks + " строк");
+                    Check("diagnostics: есть хотя бы один [ok]", okMarks > 0, okMarks + " ok");
+
+                    // ---- README обязан предупредить про пути
+                    string readme = ReadEntry(zip.GetEntry("README.txt"));
+                    Check("README предупреждает про пути",
+                        readme.IndexOf("пути", StringComparison.OrdinalIgnoreCase) >= 0, "ok");
+                }
+
+                // ---- страховка ScrubSecrets: ссылка с секретом не должна пройти
+                Settings leaky = new Settings();
+                leaky.ProxySecret = "0123456789abcdef0123456789abcdef";
+
+                AutoZapret.Diag.BundleResult second =
+                    AutoZapret.Diag.DiagnosticBundle.Create(dir, leaky, null);
+
+                if (second.Ok)
+                {
+                    using (System.IO.Compression.ZipArchive zip =
+                           System.IO.Compression.ZipFile.OpenRead(second.Path))
+                    {
+                        bool found = false;
+                        foreach (System.IO.Compression.ZipArchiveEntry entry in zip.Entries)
+                            if (ReadEntry(entry).IndexOf(leaky.ProxySecret, StringComparison.Ordinal) >= 0)
+                                found = true;
+
+                        Check("второй архив: секрет вырезан", !found, found ? "НАЙДЕН" : "ok");
+                    }
+                }
+                else
+                {
+                    Check("второй архив собран", false, second.Error);
+                }
+
+                // ---- папка по умолчанию внутри data
+                Check("папка по умолчанию в data",
+                    AutoZapret.Diag.DiagnosticBundle.DefaultDirectory()
+                        .StartsWith(Paths.DataDir, StringComparison.OrdinalIgnoreCase),
+                    AutoZapret.Diag.DiagnosticBundle.DefaultDirectory());
+            }
+            finally
+            {
+                try { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+                catch { }
+            }
+        }
+
+        private static string ReadEntry(System.IO.Compression.ZipArchiveEntry entry)
+        {
+            if (entry == null) return "";
+
+            try
+            {
+                using (Stream stream = entry.Open())
+                using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+                    return reader.ReadToEnd();
+            }
+            catch { return ""; }
         }
 
         private static void TestTcp16()

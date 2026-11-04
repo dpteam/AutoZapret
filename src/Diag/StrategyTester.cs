@@ -341,6 +341,59 @@ namespace AutoZapret.Diag
             return problems == 0 ? 0 : 1;
         }
 
+        /// <summary>--diag-zip [путь]: собрать диагностический архив для поддержки.</summary>
+        public static int RunDiagZip(string[] args)
+        {
+            string target = null;
+
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (!string.Equals(args[i], "--diag-zip", StringComparison.OrdinalIgnoreCase)) continue;
+                if (i + 1 < args.Length && !args[i + 1].StartsWith("--")) target = args[i + 1];
+            }
+
+            Console.WriteLine("== диагностический архив ==");
+            Console.WriteLine();
+
+            Settings settings = Settings.Load();
+
+            StrategyStore store = null;
+            try
+            {
+                using (ZapretService svc = new ZapretService())
+                {
+                    svc.EnsureStrategies();
+                    store = svc.Strategies;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("стратегии недоступны: " + ex.Message);
+            }
+
+            BundleResult result = DiagnosticBundle.Create(
+                target ?? DiagnosticBundle.DefaultDirectory(), settings, store);
+
+            if (!result.Ok)
+            {
+                Console.WriteLine("не удалось: " + result.Error);
+                return 1;
+            }
+
+            Console.WriteLine("файл:  " + result.Path);
+            Console.WriteLine("размер: " + result.SizeText());
+            Console.WriteLine();
+            Console.WriteLine("содержимое:");
+
+            foreach (string entry in result.Entries)
+                Console.WriteLine("  " + entry);
+
+            Console.WriteLine();
+            Console.WriteLine("секрет прокси вырезан, пути оставлены — см. README.txt внутри архива");
+
+            return 0;
+        }
+
         /// <summary>--import-fakes: импортировать набор TLSpack в assets\fakes.</summary>
         public static int RunImportFakes(string[] args)
         {

@@ -401,6 +401,16 @@
             send("diag.system");
         });
 
+        var bundle = document.getElementById("btn-diag-bundle");
+        if (bundle) bundle.addEventListener("click", function () {
+            bundle.disabled = true;
+            bundle.textContent = "Собираю…";
+            send("diag.bundle");
+        });
+
+        var bundleFolder = document.getElementById("btn-diag-bundle-folder");
+        if (bundleFolder) bundleFolder.addEventListener("click", function () { send("diag.bundleFolder"); });
+
         var probe = document.getElementById("btn-diag-probe");
         if (probe) probe.addEventListener("click", function () {
             probe.disabled = true;
@@ -444,6 +454,27 @@
     }
 
     var lastBestStrategy = null;
+
+    function renderBundle(msg) {
+        var btn = document.getElementById("btn-diag-bundle");
+        if (btn) { btn.disabled = false; btn.textContent = "Собрать архив"; }
+
+        var box = document.getElementById("diag-bundle-result");
+        if (!box) return;
+
+        if (!msg.ok) {
+            box.innerHTML = '<div class="advice">Не удалось собрать архив: ' + (msg.error || "?") + '</div>';
+            box.style.display = "";
+            return;
+        }
+
+        box.innerHTML =
+            '<div class="row-hint diag-ok" style="margin-bottom:6px">' +
+            'Готово: ' + msg.size + ', файлов ' + (msg.entries || []).length +
+            '</div>' +
+            '<div class="row-hint" style="word-break:break-all">' + msg.path + '</div>';
+        box.style.display = "";
+    }
 
     function renderSysResult(msg) {
         var btn = document.getElementById("btn-diag-sys");
@@ -989,6 +1020,10 @@
 
             case "diag.system":
                 renderSysResult(msg);
+                break;
+
+            case "diag.bundle":
+                renderBundle(msg);
                 break;
 
             case "diag.deep":

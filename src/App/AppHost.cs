@@ -282,6 +282,8 @@ namespace AutoZapret.App
                 RunInBackground("tcp16", () => RunTcp16Ui(count));
             });
             bridge.Register("diag.deep", msg => RunInBackground("deep", RunDeepUi));
+            bridge.Register("diag.bundle", msg => RunInBackground("bundle", RunBundleUi));
+            bridge.Register("diag.bundleFolder", msg => OpenPath(DiagnosticBundle.DefaultDirectory()));
             bridge.Register("diag.test", msg =>
             {
                 int count = Json.GetInt(msg, "count", 5);
@@ -837,6 +839,27 @@ namespace AutoZapret.App
                     _form.Bridge.Send(WebBridge.Msg("error", "message", ex.Message, "action", name));
                 }
             });
+        }
+
+        private void RunBundleUi()
+        {
+            BundleResult result = DiagnosticBundle.Create(
+                DiagnosticBundle.DefaultDirectory(), _settings, _zapret.Strategies);
+
+            if (!result.Ok)
+            {
+                _form.Bridge.Send(WebBridge.Msg("diag.bundle",
+                    "ok", false,
+                    "error", result.Error ?? "неизвестная ошибка"));
+                return;
+            }
+
+            _form.Bridge.Send(WebBridge.Msg("diag.bundle",
+                "ok", true,
+                "path", result.Path,
+                "size", result.SizeText(),
+                "entries", result.Entries,
+                "folder", DiagnosticBundle.DefaultDirectory()));
         }
 
         private void RunSystemChecksUi()
