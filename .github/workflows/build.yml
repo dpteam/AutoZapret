@@ -86,6 +86,20 @@ jobs:
           $text = Get-Content 'assets/strategies/strategies.v1.json' -Raw -Encoding UTF8
           if ($text -match '[A-Za-z]:\\\\') { throw "в strategies.v1.json есть абсолютные пути" }
 
+      # Библиотека фейков (TLSpack, MIT) - тоже данные продукта.
+      - name: Verify fakes library
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'assets/fakes/fakes.json')) { throw "нет assets/fakes/fakes.json" }
+          $m = Get-Content 'assets/fakes/fakes.json' -Raw -Encoding UTF8 | ConvertFrom-Json
+          $n = @($m.entries).Count
+          Write-Host "фейков в манифесте: $n"
+          if ($n -lt 100) { throw "в манифесте всего $n фейков" }
+
+          $bins = @(Get-ChildItem 'assets/fakes' -Filter '*.bin')
+          Write-Host "файлов .bin: $($bins.Count)"
+          if ($bins.Count -lt 100) { throw "мало .bin файлов: $($bins.Count)" }
+
       # --selftest проверяет настройки, json, атомарную запись, ресурсы UI,
       # списки, фейки, прокси-крипто и обновления.
       #
@@ -187,4 +201,5 @@ jobs:
             publish/AutoZapret.exe
             publish/WebView2Loader.dll
             publish/assets/strategies/*.json
+            publish/assets/fakes/fakes.json
           retention-days: 14

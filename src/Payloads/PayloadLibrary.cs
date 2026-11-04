@@ -241,11 +241,38 @@ namespace AutoZapret.Payloads
     /// <summary>
     /// Библиотека фейков: индексирует .bin в engine\bin и assets\fakes,
     /// проверяет их и отдаёт для UI.
+    ///
+    /// Индекс кешируется: файлов стало 1671 (набор TLSpack), а пересканирование
+    /// читает каждый файл с диска и проверяет формат — это секунды, которые
+    /// нельзя тратить на каждое открытие экрана.
     /// </summary>
     public sealed class PayloadLibrary
     {
+        private static readonly object CacheGate = new object();
+        private static PayloadLibrary _cached;
+
         private readonly List<Payload> _payloads = new List<Payload>();
         private readonly object _gate = new object();
+
+        /// <summary>Общий экземпляр с кешем. null -> пересканировать.</summary>
+        public static PayloadLibrary Shared()
+        {
+            lock (CacheGate)
+            {
+                if (_cached == null)
+                {
+                    _cached = new PayloadLibrary();
+                    _cached.Scan();
+                }
+                return _cached;
+            }
+        }
+
+        /// <summary>Сбросить кеш (после импорта новых фейков).</summary>
+        public static void Invalidate()
+        {
+            lock (CacheGate) _cached = null;
+        }
 
         public IReadOnlyList<Payload> All
         {
@@ -283,6 +310,33 @@ namespace AutoZapret.Payloads
 
             Log.Info("FAKE", "фейков найдено: " + found.Count + ", валидных: " + ValidCount);
             return found.Count;
+        }
+
+        /// <summary>Поиск по SNI или имени файла (для UI).</summary>
+        public List<Payload> Search(string query, int limit)
+        {
+            List<Payload> result = new List<Payload>();
+            string q = (query ?? "").Trim().ToLowerInvariant();
+
+            lock (_gate)
+            {
+                foreach (Payload p in _payloads)
+                {
+                    if (!p.Valid) continue;
+
+                    if (q.Length > 0)
+                    {
+                        bool match = (p.Sni ?? "").IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                     p.File.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0;
+                        if (!match) continue;
+                    }
+
+                    result.Add(p);
+                    if (limit > 0 && result.Count >= limit) break;
+                }
+            }
+
+            return result;
         }
 
         private static void ScanDirectory(string dir, string source, List<Payload> target)

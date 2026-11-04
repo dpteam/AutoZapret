@@ -318,6 +318,11 @@ namespace AutoZapret.App
 
             // ---- фейки
             bridge.Register("fakes.scan", msg => RunInBackground("fakes", SendFakes));
+            bridge.Register("fakes.search", msg =>
+            {
+                string query = Json.GetString(msg, "query", "");
+                SendFakesSearch(query);
+            });
 
             // ---- hosts
             bridge.Register("hosts.apply", msg =>
@@ -642,11 +647,15 @@ namespace AutoZapret.App
 
         private void SendFakes()
         {
-            PayloadLibrary library = new PayloadLibrary();
-            library.Scan();
+            // Shared() кеширует индекс: 1671 файл нельзя пересканировать на каждый запрос
+            PayloadLibrary library = PayloadLibrary.Shared();
 
             List<object> items = new List<object>();
-            foreach (Payload p in library.All)
+
+            // UI показывает первые 300; остальное доступно поиском
+            List<Payload> visible = library.Search(null, 300);
+
+            foreach (Payload p in visible)
             {
                 items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
                 {
@@ -661,7 +670,37 @@ namespace AutoZapret.App
 
             _form.Bridge.Send(WebBridge.Msg("fakes",
                 "items", items,
-                "valid", (long)library.ValidCount));
+                "valid", (long)library.ValidCount,
+                "total", (long)library.Count,
+                "shown", (long)visible.Count));
+        }
+
+        /// <summary>Поиск по библиотеке фейков (для поля в UI).</summary>
+        private void SendFakesSearch(string query)
+        {
+            PayloadLibrary library = PayloadLibrary.Shared();
+            List<Payload> found = library.Search(query, 300);
+
+            List<object> items = new List<object>();
+            foreach (Payload p in found)
+            {
+                items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    { "file", p.File },
+                    { "kind", Payload.KindName(p.Kind) },
+                    { "sni", p.Sni ?? "" },
+                    { "size", (long)p.Size },
+                    { "valid", p.Valid },
+                    { "reason", p.InvalidReason ?? "" }
+                });
+            }
+
+            _form.Bridge.Send(WebBridge.Msg("fakes",
+                "items", items,
+                "valid", (long)library.ValidCount,
+                "total", (long)library.Count,
+                "shown", (long)found.Count,
+                "query", query ?? ""));
         }
 
         // ---------------------------------------------------------------- lists

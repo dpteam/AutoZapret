@@ -70,8 +70,10 @@ jobs:
           }
 
           foreach ($f in @('LICENSE','licenses/README.md','licenses/zapret-MIT.txt',
-                           'licenses/flowseal-MIT.txt','licenses/WinDivert-LGPLv3.txt')) {
-            if (-not (Test-Path $f)) { throw "missing $f - лицензии обязательны при распространении" }
+                           'licenses/flowseal-MIT.txt','licenses/WinDivert-LGPLv3.txt',
+                           'licenses/zapret-custom-binaries-MIT.txt',
+                           'assets/fakes/fakes.json')) {
+            if (-not (Test-Path $f)) { throw "missing $f - обязательный файл поставки" }
           }
 
       # portable-архив: self-contained exe (.NET внутри) + loader + ассеты + ЛИЦЕНЗИИ
@@ -97,7 +99,6 @@ jobs:
 
           # ассеты и стратегии - часть продукта, без них приложение пустое
           Copy-Item 'assets' $stage -Recurse -Force
-
           # лицензии обязательны (MIT/LGPL требования)
           Copy-Item 'LICENSE'   $stage -Force
           Copy-Item 'licenses'  $stage -Recurse -Force
@@ -142,8 +143,10 @@ jobs:
             foreach ($need in @('AutoZapret/AutoZapret.exe',
                                 'AutoZapret/WebView2Loader.dll',
                                 'AutoZapret/assets/strategies/strategies.v1.json',
+                                'AutoZapret/assets/fakes/fakes.json',
                                 'AutoZapret/LICENSE',
                                 'AutoZapret/licenses/zapret-MIT.txt',
+                                'AutoZapret/licenses/zapret-custom-binaries-MIT.txt',
                                 'AutoZapret/licenses/WinDivert-LGPLv3.txt')) {
               if (-not ($names -contains $need)) { throw "в архиве нет $need" }
             }

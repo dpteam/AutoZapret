@@ -226,6 +226,81 @@ namespace AutoZapret.Diag
             return 0;
         }
 
+        /// <summary>--import-fakes: импортировать набор TLSpack в assets\fakes.</summary>
+        public static int RunImportFakes(string[] args)
+        {
+            string source = null;
+            string target = null;
+
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], "--import-fakes", StringComparison.OrdinalIgnoreCase) &&
+                    i + 1 < args.Length && !args[i + 1].StartsWith("--"))
+                    source = args[i + 1];
+
+                if (string.Equals(args[i], "--out", StringComparison.OrdinalIgnoreCase) &&
+                    i + 1 < args.Length)
+                    target = args[i + 1];
+            }
+
+            if (string.IsNullOrEmpty(source)) source = Payloads.PayloadImporter.FindSource();
+
+            Console.WriteLine("== импорт библиотеки фейков ==");
+            Console.WriteLine("источник: " + (source ?? "не найден"));
+            Console.WriteLine("куда:     " + (target ?? Paths.FakesDir));
+            Console.WriteLine();
+
+            if (source == null)
+            {
+                Console.WriteLine("ОШИБКА: набор не найден.");
+                Console.WriteLine("        Ожидается refs\\TLSpack (HatabaSS/zapret-custom-binaries).");
+                Console.WriteLine("        Скачать: git clone https://github.com/HatabaSS/zapret-custom-binaries refs/TLSpack");
+                return 1;
+            }
+
+            Payloads.PayloadImportResult result =
+                Payloads.PayloadImporter.Import(source, target, line => Console.WriteLine("  " + line));
+
+            Console.WriteLine();
+            if (!result.Ok)
+            {
+                Console.WriteLine("ОШИБКА: " + result.Message);
+                return 1;
+            }
+
+            Console.WriteLine("  просканировано: " + result.Scanned);
+            Console.WriteLine("  валидных:      " + result.Valid);
+            Console.WriteLine("  отбраковано:   " + result.SkippedInvalid);
+            Console.WriteLine("  дубликатов:    " + result.Duplicates);
+            Console.WriteLine("  импортировано: " + result.Imported);
+            Console.WriteLine();
+
+            // показываем по типам
+            int tls = 0, quic = 0, stun = 0;
+            foreach (string name in result.ImportedNames)
+            {
+                if (name.StartsWith("tls_", StringComparison.OrdinalIgnoreCase)) tls++;
+                else if (name.StartsWith("quic_", StringComparison.OrdinalIgnoreCase)) quic++;
+                else stun++;
+            }
+            Console.WriteLine("  TLS: " + tls + ", QUIC: " + quic + ", прочее: " + stun);
+
+            if (result.Problems.Count > 0)
+            {
+                Console.WriteLine();
+                Console.WriteLine("  проблемы:");
+                foreach (string p in result.Problems) Console.WriteLine("    " + p);
+            }
+
+            // проверяем, что библиотека теперь видит новые файлы
+            Payloads.PayloadLibrary library = new Payloads.PayloadLibrary();
+            int total = library.Scan();
+            Console.WriteLine();
+            Console.WriteLine("  библиотека видит: " + total + " фейков, валидных " + library.ValidCount);
+
+            return 0;
+        }
+
         /// <summary>
         /// --auto-once [strategyId]: один цикл автопилота (запустить обход, проверить,
         /// при провале переключиться). Нужны права администратора.

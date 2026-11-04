@@ -544,6 +544,18 @@
         bindAction("btn-update-exclude", "lists.updateExclude", "Дополняю…");
         bindAction("btn-update-ipset-exclude", "lists.updateIpsetExclude", "Восстанавливаю…");
         bindAction("btn-fakes-scan", "fakes.scan", "Сканирую…");
+
+        var search = document.getElementById("fakes-search");
+        if (search) {
+            var timer = null;
+            search.addEventListener("input", function () {
+                if (timer) clearTimeout(timer);
+                // дебаунс: библиотека на 1671 файл не должна искаться на каждую букву
+                timer = setTimeout(function () {
+                    send("fakes.search", { query: search.value });
+                }, 250);
+            });
+        }
     }
 
     function renderFakes(msg) {
@@ -552,10 +564,25 @@
         if (!summary || !list) return;
 
         var items = msg.items || [];
-        var valid = msg.valid || 0;
-        summary.textContent = "файлов: " + items.length + ", валидных: " + valid;
+        var total = msg.total || items.length;
+        var shown = msg.shown || items.length;
+
+        var text = "файлов: " + total + ", валидных: " + (msg.valid || 0);
+        if (shown < total) text += " · показано " + shown;
+        if (msg.query) text += " · поиск: «" + msg.query + "»";
+        summary.textContent = text;
 
         list.innerHTML = "";
+
+        if (items.length === 0) {
+            var empty = document.createElement("div");
+            empty.className = "diag-row";
+            empty.textContent = msg.query ? "ничего не найдено" : "фейков нет";
+            list.appendChild(empty);
+            list.style.display = "";
+            return;
+        }
+
         items.forEach(function (p) {
             var div = document.createElement("div");
             div.className = "diag-row";

@@ -357,7 +357,10 @@
             <div class="row-label">Библиотека .bin</div>
             <div class="row-hint" id="fakes-summary">—</div>
           </div>
-          <button class="btn" id="btn-fakes-scan">Проверить</button>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="text" id="fakes-search" placeholder="поиск по домену…" style="min-width:180px">
+            <button class="btn" id="btn-fakes-scan">Проверить</button>
+          </div>
         </div>
         <div id="fakes-list" class="diag-list" style="margin-top:10px;display:none"></div>
       </div>
