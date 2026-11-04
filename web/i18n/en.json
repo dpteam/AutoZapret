@@ -207,5 +207,7 @@
   "Пересоздать с нуля": "Recreate from scratch",
   "Оставить только 127.0.0.1 localhost. Помогает, когда файл уже испорчен прошлыми правками": "Keep only 127.0.0.1 localhost. Helps when the file is already damaged by earlier edits",
   "Пересоздать": "Recreate",
-  "Расширенный отчёт": "Extended report"
+  "Расширенный отчёт": "Extended report",
+  "Переподключать при смене стратегии": "Reconnect on strategy change",
+  "Выбрали другую стратегию — обход перезапустится на ней сразу. Старт занимает ~1.5 с и рвёт текущие соединения": "Picking another strategy restarts the bypass on it immediately. A start takes ~1.5 s and drops current connections"
 }

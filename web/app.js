@@ -423,6 +423,8 @@
         var channel = document.getElementById("set-update-channel");
         if (channel && s.updateChannel) channel.value = s.updateChannel;
 
+        setSwitch("set-reconnect", s.reconnectOnStrategy !== false);
+
         // о программе
         text("about-version", s.version);
         text("about-os", s.os);
@@ -628,6 +630,7 @@
             applySimpleMode(!simple.classList.contains("on"));
         });
         bindSwitch("set-auto-start", "autoStart");
+        bindSwitch("set-reconnect", "reconnectOnStrategy");
         bindSwitch("set-minimize-to-tray", "minimizeToTray");
         bindSwitch("set-start-minimized", "startMinimized");
         bindSwitch("set-update-engine", "updateEngine");

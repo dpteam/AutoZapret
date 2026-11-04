@@ -28,7 +28,9 @@ namespace AutoZapret.Core
         public string StrategyId = "flowseal.general";
         public string GameFilter = "tcp+udp";      // off | tcp | udp | tcp+udp
         public string IpsetMode = "loaded";        // off | loaded | any
-        public bool AutoStart = true;
+        public bool AutoStart = false;             // включать обход при запуске приложения
+        public bool AutoStartMigrated = false;     // разовая миграция: раньше было true
+        public bool ReconnectOnStrategy = true;    // перезапускать обход при смене стратегии
         public bool ServiceMode = false;           // запускать как службу, а не как процесс
         public bool AutoPilot = false;             // автоподбор стратегии в фоне
         public bool ProcessPresets = false;        // переключать стратегию под запущенное приложение
@@ -141,6 +143,17 @@ namespace AutoZapret.Core
                 s.GameFilter = Json.GetString(zapret, "gameFilter", s.GameFilter);
                 s.IpsetMode = Json.GetString(zapret, "ipsetMode", s.IpsetMode);
                 s.AutoStart = Json.GetBool(zapret, "autoStart", s.AutoStart);
+                s.AutoStartMigrated = Json.GetBool(zapret, "autoStartMigrated", s.AutoStartMigrated);
+                s.ReconnectOnStrategy = Json.GetBool(zapret, "reconnectOnStrategy", s.ReconnectOnStrategy);
+
+                // Разовая миграция: раньше «включать обход при старте» было
+                // включено по умолчанию, и приложение само лезло в сеть при
+                // каждом запуске. Кто этого хотел — включит обратно в настройках.
+                if (!s.AutoStartMigrated)
+                {
+                    s.AutoStart = false;
+                    s.AutoStartMigrated = true;
+                }
                 s.ServiceMode = Json.GetBool(zapret, "serviceMode", s.ServiceMode);
                 s.AutoPilot = Json.GetBool(zapret, "autoPilot", s.AutoPilot);
                 s.ProcessPresets = Json.GetBool(zapret, "processPresets", s.ProcessPresets);
@@ -210,6 +223,8 @@ namespace AutoZapret.Core
                 "gameFilter", GameFilter,
                 "ipsetMode", IpsetMode,
                 "autoStart", AutoStart,
+                "autoStartMigrated", AutoStartMigrated,
+                "reconnectOnStrategy", ReconnectOnStrategy,
                 "serviceMode", ServiceMode,
                 "autoPilot", AutoPilot,
                 "processPresets", ProcessPresets);

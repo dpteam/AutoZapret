@@ -233,10 +233,25 @@ namespace AutoZapret.App
             {
                 string id = Json.GetString(msg, "id", "");
                 if (string.IsNullOrEmpty(id)) return;
+                if (string.Equals(id, _settings.StrategyId, StringComparison.OrdinalIgnoreCase)) return;
+
                 _settings.StrategyId = id;
                 _settings.Save();
                 Log.Info("WINWS", "выбрана стратегия: " + id);
+
+                // Смена стратегии на лету: перезапускаем обход, иначе выбранная
+                // стратегия начнёт работать только после ручного выключения.
+                // Поведение настраиваемое — старт стоит ~1.5 с и рвёт соединения.
+                bool running = _zapret.State == ProtectionState.Running ||
+                               _zapret.State == ProtectionState.Starting;
+
+                if (running && _settings.ReconnectOnStrategy)
+                {
+                    RunInBackground("strategy-switch", () => ReconnectWithStrategy(id));
+                }
+
                 PushState();
+                PushStrategies();
             });
 
             bridge.Register("engine.select", msg =>
@@ -1869,6 +1884,36 @@ namespace AutoZapret.App
         /// меняем движок и поднимаем заново с первой стратегией нового движка.
         /// Стратегии разных движков несовместимы: у v2 другие аргументы и lua.
         /// </summary>
+        /// <summary>
+        /// Перезапуск обхода на выбранной стратегии. Вызывается при смене
+        /// стратегии, если включена настройка «переподключать».
+        /// </summary>
+        private void ReconnectWithStrategy(string strategyId)
+        {
+            Log.Info("WINWS", "переподключение на стратегию " + strategyId);
+
+            try
+            {
+                _zapret.Stop();
+                Thread.Sleep(1200);      // WinDivert должен выгрузиться
+
+                if (!RunPreflight(strategyId)) return;
+
+                string error = _zapret.Start(strategyId);
+                if (error != null)
+                {
+                    Log.Error("WINWS", "переподключение не удалось: " + error);
+                    _tray.Notify(AppInfo.Name, error, ToolTipIcon.Error);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Exception("WINWS", "переподключение", ex);
+            }
+
+            PushState();
+        }
+
         private void SwitchEngine(string kind)
         {
             bool wasRunning = _zapret.State == ProtectionState.Running ||
@@ -1984,6 +2029,7 @@ namespace AutoZapret.App
                 "updateChannel", _settings.UpdateChannel,
                 "language", _settings.Language,
                 "autoStartProtect", _settings.AutoStart,
+                "reconnectOnStrategy", _settings.ReconnectOnStrategy,
                 "processPresets", _settings.ProcessPresets,
                 "logFile", Log.CurrentFile ?? "");
 
@@ -2030,6 +2076,7 @@ namespace AutoZapret.App
             _settings.MinimizeToTray = Json.GetBool(msg, "minimizeToTray", _settings.MinimizeToTray);
             _settings.StartMinimized = Json.GetBool(msg, "startMinimized", _settings.StartMinimized);
             _settings.AutoStart = Json.GetBool(msg, "autoStart", _settings.AutoStart);
+            _settings.ReconnectOnStrategy = Json.GetBool(msg, "reconnectOnStrategy", _settings.ReconnectOnStrategy);
             _settings.Language = NormalizeLanguage(Json.GetString(msg, "language", _settings.Language));
             _settings.UpdateEngine = Json.GetBool(msg, "updateEngine", _settings.UpdateEngine);
             _settings.UpdateApp = Json.GetBool(msg, "updateApp", _settings.UpdateApp);

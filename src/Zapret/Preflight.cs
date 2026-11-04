@@ -159,20 +159,22 @@ namespace AutoZapret.Zapret
                 // фейки: winws не проверяет содержимое .bin и молча шлёт мусор
                 if (value.EndsWith(".bin", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (!File.Exists(value))
+                    string fakePath = NormalizePath(value);
+
+                    if (!File.Exists(fakePath))
                     {
                         problems.Add(Blocker("fake-missing",
                             "нет файла фейка",
-                            Path.GetFileName(value) + " — перекачайте движок"));
+                            Path.GetFileName(fakePath) + " — перекачайте движок"));
                         continue;
                     }
 
-                    Payload payload = PayloadValidator.Inspect(value);
+                    Payload payload = PayloadValidator.Inspect(fakePath);
                     if (!payload.Valid)
                     {
                         problems.Add(Blocker("fake-invalid",
                             "битый файл фейка",
-                            Path.GetFileName(value) + ": " + payload.InvalidReason));
+                            Path.GetFileName(fakePath) + ": " + payload.InvalidReason));
                     }
 
                     continue;
@@ -191,24 +193,52 @@ namespace AutoZapret.Zapret
 
                 if (isListFile)
                 {
-                    if (File.Exists(value)) continue;
+                    string listPath = NormalizePath(value);
 
-                    // пустой ipset-файл — не блокер, hostlist — блокер
-                    bool hostlist = option.StartsWith("--hostlist", StringComparison.Ordinal);
+                    if (!File.Exists(listPath))
+                    {
+                        // пустой ipset-файл — не блокер, hostlist — блокер
+                        bool hostlistMissing = option.StartsWith("--hostlist", StringComparison.Ordinal);
 
-                    problems.Add(hostlist
-                        ? Blocker("hostlist-missing", "нет файла списка доменов", Path.GetFileName(value))
-                        : Warning("ipset-missing", "нет файла списка IP", Path.GetFileName(value)));
+                        problems.Add(hostlistMissing
+                            ? Blocker("hostlist-missing", "нет файла списка доменов", Path.GetFileName(listPath))
+                            : Warning("ipset-missing", "нет файла списка IP", Path.GetFileName(listPath)));
+
+                        continue;
+                    }
+
+                    // Файл есть, но пустой — это ХУЖЕ отсутствующего: winws
+                    // запускается, фильтр не совпадает ни с чем, и все стратегии
+                    // выглядят «нерабочими» (0/4 у каждой). Встречалось вживую.
+                    try
+                    {
+                        long size = new FileInfo(listPath).Length;
+
+                        // list-*.txt с одним доменом — это ~10 байт, живой список — сотни
+                        long minSize = option.StartsWith("--hostlist", StringComparison.Ordinal) ? 32 : 1024;
+
+                        if (size < minSize)
+                        {
+                            problems.Add(Warning("list-empty",
+                                "список почти пуст: " + Path.GetFileName(listPath),
+                                size + " байт — обновите списки на экране «Списки», иначе обход не покроет трафик"));
+                        }
+                    }
+                    catch { }
 
                     continue;
                 }
 
-                // lua для zapret2
+                // lua для zapret2. Путь пишется как `--lua-init=@<файл>`: собака —
+// это префикс «читать из файла» в zapret2, а не часть пути. Без её
+// отбрасывания File.Exists всегда false и preflight врал «нет lua-скрипта».
                 if (option.IndexOf("lua", StringComparison.OrdinalIgnoreCase) >= 0 &&
                     value.EndsWith(".lua", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (!File.Exists(value))
-                        problems.Add(Blocker("lua-missing", "нет lua-скрипта", Path.GetFileName(value)));
+                    string luaPath = NormalizePath(value);
+
+                    if (!File.Exists(luaPath))
+                        problems.Add(Blocker("lua-missing", "нет lua-скрипта", Path.GetFileName(luaPath)));
                 }
             }
 
@@ -268,6 +298,24 @@ namespace AutoZapret.Zapret
         }
 
         // ------------------------------------------------------------ helpers
+
+        /// <summary>
+        /// Приводит значение аргумента к реальному пути.
+        ///
+        /// zapret2 пишет `--lua-init=@C:\...\blobs.lua`: `@` — префикс «читать из
+        /// файла», а не часть пути. Без его отбрасывания File.Exists всегда false,
+        /// и проверка ругалась на отсутствующие lua при наличии всех файлов.
+        /// </summary>
+        public static string NormalizePath(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return "";
+
+            string path = value.Trim();
+
+            while (path.StartsWith("@", StringComparison.Ordinal)) path = path.Substring(1);
+
+            return path;
+        }
 
         private static bool ElevationRequiredButMissing()
         {

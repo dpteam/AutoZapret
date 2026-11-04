@@ -1544,16 +1544,30 @@ namespace AutoZapret.App
 
                         foreach (AutoZapret.Zapret.PreflightProblem p in each)
                         {
-                            if (p.Code != "hostlist-missing") continue;
+                            // hostlist-*: домен вместо файла. lua: префикс `@`
+                            if (p.Code != "hostlist-missing" && p.Code != "lua-missing") continue;
                             falsePositives++;
-                            if (firstBad.Length == 0) firstBad = s.Id + ": " + p.Hint;
+                            if (firstBad.Length == 0) firstBad = s.Id + ": " + p.Code + " " + p.Hint;
                         }
                     }
 
-                    Check("preflight: --hostlist-domains не считается файлом",
+                    Check("preflight: без ложных «нет файла»",
                         falsePositives == 0,
                         falsePositives == 0 ? store.Count + " стратегий ok" : falsePositives + ", первая: " + firstBad);
                 }
+
+                // ---- префикс `@` в --lua-init=@<файл> — не часть пути
+                Check("путь: @ снят",
+                    AutoZapret.Zapret.Preflight.NormalizePath(@"@C:\x\blobs.lua") == @"C:\x\blobs.lua",
+                    AutoZapret.Zapret.Preflight.NormalizePath(@"@C:\x\blobs.lua"));
+
+                Check("путь: обычный не изменён",
+                    AutoZapret.Zapret.Preflight.NormalizePath(@"C:\x\blobs.lua") == @"C:\x\blobs.lua", "ok");
+
+                Check("путь: несколько @",
+                    AutoZapret.Zapret.Preflight.NormalizePath("@@C:\\x") == @"C:\x", "ok");
+
+                Check("путь: пустой", AutoZapret.Zapret.Preflight.NormalizePath("") == "", "ok");
             }
 
             // ---- логика сводки
