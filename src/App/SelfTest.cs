@@ -114,6 +114,9 @@ namespace AutoZapret.App
 
                 Section("автозапуск");
                 TestAutoStart();
+
+                Section("контрольные суммы");
+                TestChecksums();
             }
             catch (Exception ex)
             {
@@ -1156,6 +1159,154 @@ namespace AutoZapret.App
                     try { System.IO.File.Delete(savedPath); } catch { }
 
                 try { System.IO.Directory.Delete(dir, true); } catch { }
+            }
+        }
+
+        /// <summary>
+        /// Проверка SHA-256. Ключевое здесь — что ОТСУТСТВИЕ записи означает отказ,
+        /// а не «пропускаем»: иначе защита обходится тем, что файл не отдали.
+        /// </summary>
+        private static void TestChecksums()
+        {
+            // ---- известный вектор: sha256("") — эталон, который легко проверить
+            string emptyHash = AutoZapret.Update.Checksums.Sha256Text("");
+            Check("sha256 пустой строки",
+                emptyHash == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                emptyHash);
+
+            Check("sha256 'abc'",
+                AutoZapret.Update.Checksums.Sha256Text("abc") ==
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                "ok");
+
+            // ---- файл: хеш файла должен совпасть с хешем его содержимого
+            string dir = System.IO.Path.Combine(Paths.DataDir, "selftest-checksums");
+
+            try
+            {
+                Directory.CreateDirectory(dir);
+
+                string file = System.IO.Path.Combine(dir, "sample.bin");
+                byte[] bytes = Encoding.UTF8.GetBytes("AutoZapret integrity test");
+                File.WriteAllBytes(file, bytes);
+
+                string fileHash = AutoZapret.Update.Checksums.Sha256File(file);
+                Check("sha256 файла посчитан", fileHash.Length == 64, fileHash);
+                Check("sha256 файла = 64 hex",
+                    AutoZapret.Update.Checksums.LooksLikeHash(fileHash), fileHash);
+
+                // ---- разбор формата sha256sum
+                Dictionary<string, string> map = AutoZapret.Update.Checksums.Parse(
+                    emptyHash + "  AutoZapret-portable.zip\n" +
+                    fileHash + "  sample.bin\n");
+
+                Check("разбор: две записи", map.Count == 2, map.Count + " шт.");
+                Check("разбор: имя в нижнем регистре",
+                    AutoZapret.Update.Checksums.Find(map, "SAMPLE.BIN") == fileHash, "ok");
+
+                // ---- звёздочка бинарного режима
+                Dictionary<string, string> binary = AutoZapret.Update.Checksums.Parse(
+                    fileHash + " *sample.bin\n");
+                Check("разбор: бинарный режим (*)", binary.Count == 1, binary.Count + " шт.");
+
+                // ---- BSD-формат
+                Dictionary<string, string> bsd = AutoZapret.Update.Checksums.Parse(
+                    "SHA256 (sample.bin) = " + fileHash + "\n");
+                Check("разбор: BSD-формат", bsd.Count == 1, bsd.Count + " шт.");
+
+                // ---- путь в имени файла
+                Dictionary<string, string> withPath = AutoZapret.Update.Checksums.Parse(
+                    fileHash + "  dist/sample.bin\n" +
+                    fileHash + "  .\\sample.bin\n");
+                Check("разбор: путь отброшен",
+                    AutoZapret.Update.Checksums.Find(withPath, "sample.bin") == fileHash,
+                    withPath.Count + " шт.");
+
+                // ---- комментарии и пустые строки
+                Dictionary<string, string> withComments = AutoZapret.Update.Checksums.Parse(
+                    "# это комментарий\n\n" + fileHash + "  sample.bin\n\n");
+                Check("разбор: комментарии пропущены", withComments.Count == 1,
+                    withComments.Count + " шт.");
+
+                // ---- мусор не превращается в записи
+                Check("разбор: мусор -> 0 записей",
+                    AutoZapret.Update.Checksums.Parse("не хеш и не файл\n").Count == 0, "ok");
+                Check("разбор: пустая строка -> 0 записей",
+                    AutoZapret.Update.Checksums.Parse("").Count == 0, "ok");
+
+                // ---- HTML вместо checksums.txt — это ошибка, а не «пусто»
+                bool threw = false;
+                try { AutoZapret.Update.Checksums.Parse("<!DOCTYPE html><html>login</html>"); }
+                catch (FormatException) { threw = true; }
+                Check("разбор: HTML отклонён", threw, threw ? "ok" : "принят как валидный");
+
+                // ---- дубликат: первая запись побеждает
+                string otherHash = AutoZapret.Update.Checksums.Sha256Text("other");
+                Dictionary<string, string> duplicates = AutoZapret.Update.Checksums.Parse(
+                    otherHash + "  sample.bin\n" + fileHash + "  sample.bin\n");
+                Check("разбор: дубликат -> первая запись",
+                    AutoZapret.Update.Checksums.Find(duplicates, "sample.bin") == otherHash,
+                    duplicates.Count + " шт.");
+
+                // ---- сверка: совпадение
+                AutoZapret.Update.ChecksumResult good =
+                    AutoZapret.Update.Checksums.Verify(file, map, "AutoZapret-portable.zip");
+                Check("сверка: чужое имя -> отказ", !good.Ok, good.Text());
+
+                AutoZapret.Update.ChecksumResult ok =
+                    AutoZapret.Update.Checksums.Verify(file, map);
+                Check("сверка: совпало", ok.Ok, ok.Text());
+                Check("сверка: ожидаемый хеш заполнен", ok.Expected.Length == 64, ok.Expected);
+                Check("сверка: полученный хеш заполнен", ok.Actual.Length == 64, ok.Actual);
+
+                // ---- сверка: несовпадение
+                Dictionary<string, string> wrong = AutoZapret.Update.Checksums.Parse(
+                    otherHash + "  sample.bin\n");
+                AutoZapret.Update.ChecksumResult bad =
+                    AutoZapret.Update.Checksums.Verify(file, wrong);
+                Check("сверка: несовпадение поймано", !bad.Ok, bad.Text());
+                Check("сверка: в тексте есть оба хеша",
+                    bad.Text().IndexOf("ожидался", StringComparison.Ordinal) >= 0, bad.Text());
+
+                // ---- сверка: записи нет -> ОТКАЗ (не «пропущено»)
+                AutoZapret.Update.ChecksumResult missing =
+                    AutoZapret.Update.Checksums.Verify(file,
+                        AutoZapret.Update.Checksums.Parse(""), "sample.bin");
+                Check("сверка: нет записи -> отказ", !missing.Ok, missing.Text());
+                Check("сверка: текст говорит про отсутствие записи",
+                    missing.Text().IndexOf("нет записи", StringComparison.Ordinal) >= 0,
+                    missing.Text());
+
+                // ---- сверка: файла нет
+                AutoZapret.Update.ChecksumResult noFile =
+                    AutoZapret.Update.Checksums.Verify(System.IO.Path.Combine(dir, "nope.bin"), map);
+                Check("сверка: файла нет -> отказ", !noFile.Ok, noFile.Text());
+
+                // ---- валидация формата хеша
+                Check("LooksLikeHash: 64 hex", AutoZapret.Update.Checksums.LooksLikeHash(
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"), "ok");
+                Check("LooksLikeHash: 63 символа", !AutoZapret.Update.Checksums.LooksLikeHash(
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde"), "ok");
+                Check("LooksLikeHash: не-hex", !AutoZapret.Update.Checksums.LooksLikeHash(
+                    "g123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"), "ok");
+                Check("LooksLikeHash: пусто",
+                    !AutoZapret.Update.Checksums.LooksLikeHash(""), "ok");
+
+                // ---- ссылки на checksums.txt согласованы с именем архива
+                string zipUrl = AutoZapret.Update.SelfUpdater.PortableZipUrl("1.2.3");
+                string sumsUrl = AutoZapret.Update.SelfUpdater.ChecksumsUrl("1.2.3");
+
+                Check("URL архива содержит имя архива",
+                    zipUrl.EndsWith("/" + AutoZapret.Update.SelfUpdater.PortableZipName,
+                        StringComparison.Ordinal), zipUrl);
+                Check("URL сумм того же релиза",
+                    sumsUrl.EndsWith("/checksums.txt", StringComparison.Ordinal) &&
+                    sumsUrl.IndexOf("v1.2.3", StringComparison.Ordinal) >= 0, sumsUrl);
+            }
+            finally
+            {
+                try { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+                catch { }
             }
         }
 

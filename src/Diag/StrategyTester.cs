@@ -403,6 +403,68 @@ namespace AutoZapret.Diag
             return result;
         }
 
+        /// <summary>--sha256 &lt;файл&gt;: посчитать хеш и сверить с checksums.txt рядом, если он есть.</summary>
+        public static int RunSha256(string[] args)
+        {
+            string path = null;
+
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (!string.Equals(args[i], "--sha256", StringComparison.OrdinalIgnoreCase)) continue;
+                if (i + 1 < args.Length && !args[i + 1].StartsWith("--")) path = args[i + 1];
+            }
+
+            if (string.IsNullOrEmpty(path))
+            {
+                Console.WriteLine("использование: AutoZapret.exe --sha256 <файл>");
+                return 1;
+            }
+
+            string full = System.IO.Path.GetFullPath(path);
+
+            if (!System.IO.File.Exists(full))
+            {
+                Console.WriteLine("файл не найден: " + full);
+                return 1;
+            }
+
+            string hash = AutoZapret.Update.Checksums.Sha256File(full);
+
+            if (hash.Length == 0)
+            {
+                Console.WriteLine("не удалось посчитать SHA-256");
+                return 1;
+            }
+
+            Console.WriteLine("файл:   " + System.IO.Path.GetFileName(full));
+            Console.WriteLine("размер: " + new System.IO.FileInfo(full).Length + " байт");
+            Console.WriteLine("sha256: " + hash);
+
+            // если рядом лежит checksums.txt — сразу сверяем
+            string checksumsPath = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(full), "checksums.txt");
+
+            if (System.IO.File.Exists(checksumsPath))
+            {
+                try
+                {
+                    System.Collections.Generic.Dictionary<string, string> map =
+                        AutoZapret.Update.Checksums.Parse(System.IO.File.ReadAllText(checksumsPath));
+
+                    AutoZapret.Update.ChecksumResult result =
+                        AutoZapret.Update.Checksums.Verify(full, map);
+
+                    Console.WriteLine("сверка: " + result.Text());
+                    return result.Ok ? 0 : 2;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("checksums.txt не прочитан: " + ex.Message);
+                }
+            }
+
+            return 0;
+        }
+
         /// <summary>--presets: показать пресеты по процессам и что совпадает сейчас.</summary>
         public static int RunPresets(string[] args)
         {

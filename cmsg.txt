@@ -1,45 +1,37 @@
-﻿feat(P9): Windows autostart via Task Scheduler, with registry fallback
+feat(P5): verify SHA-256 of the update archive against release checksums
 
-Two ways to start with Windows, and the choice is not cosmetic:
+SelfUpdater downloaded AutoZapret-portable.zip and then ran it through a
+replacement script - with no integrity check at all. One spoofed response
+was enough to execute someone else's code with our privileges. AGENTS.md
+required this check; it simply was not implemented.
 
-- Task Scheduler with /sc onlogon /rl HIGHEST starts the app ALREADY
-  elevated. No UAC prompt. This is the only way autostart of a DPI
-  bypass is tolerable: otherwise the user clicks Yes on every logon.
-- HKCU\...\Run needs no rights to install, but winws still asks for UAC
-  every single time the app enables the bypass.
+Now: fetch checksums.txt from the same release tag, find the entry for
+AutoZapret-portable.zip, compare before extracting. release.yml already
+publishes checksums.txt, so the two halves finally meet.
 
-So Enable() tries the task first and says honestly when rights are
-missing instead of silently installing the weaker option. The GUI asks
-the user, and if they decline, the registry path is used - declining
-elevation is not the same as declining autostart.
+The important decision is failing CLOSED. A soft mode ('no hash, carry
+on') defeats the entire point: an attacker just withholds checksums.txt
+and the check silently disappears. So a missing file, an unparsable
+file, an empty file, or a missing entry all abort the update with a
+reason the user can read.
 
-Rights are raised for ONE operation, per AGENTS.md: creating the task
-runs a short-lived child process ('--autostart enable') through UAC; the
-GUI itself stays asInvoker and keeps no privileges afterwards.
+Parser handles the two formats found in the wild:
+  sha256sum: '<64 hex>  <name>' (also the '*' binary marker)
+  BSD:       'SHA256 (<name>) = <64 hex>'
+Name matching strips any directory part ('.\x.zip', 'dist/x.zip') and
+ignores case, because release assets are named inconsistently. Duplicate
+entries keep the FIRST value - overwriting with the second would let a
+tampered trailing line win.
 
-'/delay 0000:30' on the task: network and the WinDivert driver need a
-moment after logon, and a 0s start fails intermittently.
+HTML instead of checksums throws rather than parsing to zero entries:
+that is what a redirect to a login page looks like, and 'zero entries'
+would otherwise be reported as a generic parse failure.
 
-Stale detection: a portable build can be moved to another folder while
-the task keeps pointing at the old path. Query() compares the configured
-target with the current exe and the UI shows a warning with both paths.
-A silently broken autostart is worse than no autostart.
+CLI: --sha256 <file> prints hash, size and, if checksums.txt sits next to
+it, the comparison verdict (exit 0 match, 2 mismatch).
+selftest: 26 checks - known SHA-256 vectors for '' and 'abc', file hash,
+both formats, path stripping, comments, duplicates, HTML rejection, the
+missing-entry refusal, and URL consistency with PortableZipName.
 
-Detection relies on the exit code of schtasks, never on its output text -
-schtasks is localised and would parse differently on every Windows
-language (same reason as the chcp 437 rule for netsh/sc).
-
-Also wires settings.zapret.autoStart, which existed since P1 but was
-never read: it now enables the bypass at launch. Without admin it is
-skipped with a log line instead of raising UAC at logon, and the tray
-notification appears only when the app was launched minimized (i.e. from
-autostart), not on every manual launch.
-
-CLI: --autostart status|enable|enable-run|disable (0 ok, 1 error,
-2 needs elevation)
-UI: 'Запуск' card with stale warning and a separate 'enable bypass at
-start' switch
-selftest: 15 checks, none of which touch the system - autostart is
-verified end-to-end manually instead (enable-run, stale path, disable).
-The registry value is written as quoted-path plus --minimized, status
-detects it, a bogus path is reported as stale, disable removes it.
+Verified by hand: a real exe with a correct checksums.txt returns 0, a
+falsified hash returns 2 and prints both values.

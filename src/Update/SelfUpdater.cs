@@ -201,6 +201,12 @@ namespace AutoZapret.Update
                 if (size < 100 * 1024)
                     return "архив подозрительно мал (" + size + " байт)";
 
+                // ---- проверка целостности. ОБЯЗАТЕЛЬНА, без «нет хеша — пропускаем»:
+                //      иначе достаточно не отдать checksums.txt, и защиты нет.
+                Report("проверяю SHA-256…");
+                string integrityError = VerifyArchive(archive, version);
+                if (integrityError != null) return integrityError;
+
                 Report("распаковываю…");
                 string extract = Path.Combine(temp, "new");
                 Directory.CreateDirectory(extract);
@@ -292,6 +298,48 @@ namespace AutoZapret.Update
             catch { return Process.GetCurrentProcess().MainModule.FileName; }
         }
 
+        /// <summary>
+        /// Скачивает checksums.txt релиза и сверяет хеш архива.
+        /// Возвращает null при успехе или текстовую причину отказа.
+        /// </summary>
+        private string VerifyArchive(string archive, string version)
+        {
+            string checksumsPath = Path.Combine(Path.GetDirectoryName(archive), "checksums.txt");
+
+            string downloadError = DownloadFile(ChecksumsUrl(version), checksumsPath);
+            if (downloadError != null)
+            {
+                Log.Warn("UPD", "checksums.txt недоступен: " + downloadError);
+                return "не удалось скачать контрольные суммы релиза — обновление отменено";
+            }
+
+            Dictionary<string, string> map;
+
+            try
+            {
+                map = Checksums.Parse(File.ReadAllText(checksumsPath, Encoding.UTF8));
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("UPD", "checksums.txt не разобран: " + ex.Message);
+                return "файл контрольных сумм повреждён — обновление отменено";
+            }
+
+            if (map.Count == 0)
+                return "в контрольных суммах нет ни одной записи — обновление отменено";
+
+            ChecksumResult result = Checksums.Verify(archive, map, PortableZipName);
+
+            if (!result.Ok)
+            {
+                Log.Error("UPD", "проверка SHA-256 не прошла: " + result.Text());
+                return "проверка целостности не прошла: " + result.Text();
+            }
+
+            Log.Info("UPD", "SHA-256 архива совпал: " + result.Actual.Substring(0, 16) + "…");
+            return null;
+        }
+
         private static string DownloadFile(string url, string target)
         {
             try
@@ -346,6 +394,16 @@ namespace AutoZapret.Update
         {
             return "https://github.com/" + Owner + "/" + Repo + "/releases/download/v" + version +
                    "/AutoZapret-portable.zip";
+        }
+
+        /// <summary>Имя архива в релизе. Нужно, чтобы найти его хеш в checksums.txt.</summary>
+        public const string PortableZipName = "AutoZapret-portable.zip";
+
+        /// <summary>Ссылка на файл контрольных сумм релиза.</summary>
+        public static string ChecksumsUrl(string version)
+        {
+            return "https://github.com/" + Owner + "/" + Repo + "/releases/download/v" + version +
+                   "/checksums.txt";
         }
 
         private void Report(string message)
