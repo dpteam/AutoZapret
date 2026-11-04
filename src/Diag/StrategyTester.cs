@@ -750,6 +750,9 @@ namespace AutoZapret.Diag
                     if (name == "multisplit") options.Technique.Kind = AutoZapret.Zapret.Own.Technique.MultiSplit;
                     else if (name == "multidisorder") options.Technique.Kind = AutoZapret.Zapret.Own.Technique.MultiDisorder;
                     else if (name == "hostfakesplit") options.Technique.Kind = AutoZapret.Zapret.Own.Technique.HostFakeSplit;
+                    else if (name == "syndata") options.Technique.Kind = AutoZapret.Zapret.Own.Technique.SynData;
+                    else if (name == "oob") options.Technique.Kind = AutoZapret.Zapret.Own.Technique.Oob;
+                    else if (name == "wsize") options.Technique.Kind = AutoZapret.Zapret.Own.Technique.WindowSize;
                     else if (name == "fake") options.Technique.Kind = AutoZapret.Zapret.Own.Technique.Fake;
                     else if (name == "fakedsplit") options.Technique.Kind = AutoZapret.Zapret.Own.Technique.FakeSplit;
                     else if (name == "off") options.Technique.Kind = AutoZapret.Zapret.Own.Technique.Off;

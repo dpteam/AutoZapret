@@ -3721,6 +3721,117 @@ namespace AutoZapret.App
                 }
             }
 
+            // ---- syndata: SYN с данными, затем настоящий
+            AutoZapret.Zapret.Own.TechniqueOptions syndata =
+                new AutoZapret.Zapret.Own.TechniqueOptions
+                {
+                    Kind = AutoZapret.Zapret.Own.Technique.SynData
+                };
+
+            System.Collections.Generic.List<AutoZapret.Zapret.Own.Desync.Outgoing> synPackets =
+                AutoZapret.Zapret.Own.Desync.Build(tcp, syndata, out error);
+
+            Check("syndata: два пакета", synPackets.Count == 2, synPackets.Count + " шт.");
+
+            if (synPackets.Count == 2)
+            {
+                AutoZapret.Zapret.Own.TcpPacket syn =
+                    AutoZapret.Zapret.Own.TcpPacket.Parse(synPackets[0].Data, synPackets[0].Length);
+
+                Check("syndata: стоит флаг SYN", syn != null && (syn.Flags & 0x02) != 0,
+                    syn == null ? "?" : syn.Flags.ToString("X2"));
+
+                Check("syndata: ACK снят", syn != null && (syn.Flags & 0x10) == 0,
+                    syn == null ? "?" : syn.Flags.ToString("X2"));
+
+                Check("syndata: данные внутри SYN",
+                    syn != null && syn.PayloadLength == tcp.PayloadLength,
+                    syn == null ? "?" : syn.PayloadLength + " vs " + tcp.PayloadLength);
+
+                Check("syndata: seq на единицу меньше (ISN)",
+                    syn != null && syn.Seq == unchecked(tcp.Seq - 1),
+                    syn == null ? "?" : syn.Seq.ToString());
+
+                Check("syndata: суммы верны",
+                    syn != null &&
+                    AutoZapret.Zapret.Own.TcpPacket.VerifyIpChecksum(synPackets[0].Data, synPackets[0].Length) &&
+                    AutoZapret.Zapret.Own.TcpPacket.VerifyTcpChecksum(
+                        synPackets[0].Data, syn.TcpOffset, synPackets[0].Length - syn.TcpOffset),
+                    "ok");
+            }
+
+            // ---- oob: один срочный байт, затем настоящий
+            AutoZapret.Zapret.Own.TechniqueOptions oob =
+                new AutoZapret.Zapret.Own.TechniqueOptions
+                {
+                    Kind = AutoZapret.Zapret.Own.Technique.Oob
+                };
+
+            System.Collections.Generic.List<AutoZapret.Zapret.Own.Desync.Outgoing> oobPackets =
+                AutoZapret.Zapret.Own.Desync.Build(tcp, oob, out error);
+
+            Check("oob: два пакета", oobPackets.Count == 2, oobPackets.Count + " шт.");
+
+            if (oobPackets.Count == 2)
+            {
+                AutoZapret.Zapret.Own.TcpPacket urgent =
+                    AutoZapret.Zapret.Own.TcpPacket.Parse(oobPackets[0].Data, oobPackets[0].Length);
+
+                Check("oob: стоит флаг URG", urgent != null && (urgent.Flags & 0x20) != 0,
+                    urgent == null ? "?" : urgent.Flags.ToString("X2"));
+
+                Check("oob: ровно один байт", urgent != null && urgent.PayloadLength == 1,
+                    urgent == null ? "?" : urgent.PayloadLength.ToString());
+
+                Check("oob: срочный указатель = 1",
+                    urgent != null && oobPackets[0].Data[urgent.TcpOffset + 18] == 0x00 &&
+                    oobPackets[0].Data[urgent.TcpOffset + 19] == 0x01,
+                    "ok");
+
+                AutoZapret.Zapret.Own.TcpPacket afterOob =
+                    AutoZapret.Zapret.Own.TcpPacket.Parse(oobPackets[1].Data, oobPackets[1].Length);
+
+                Check("oob: настоящий пакет цел",
+                    afterOob != null && afterOob.PayloadLength == tcp.PayloadLength &&
+                    afterOob.Seq == tcp.Seq,
+                    afterOob == null ? "?" : afterOob.PayloadLength + " байт");
+            }
+
+            // ---- wsize: копия с крошечным окном, затем настоящий
+            AutoZapret.Zapret.Own.TechniqueOptions wsize =
+                new AutoZapret.Zapret.Own.TechniqueOptions
+                {
+                    Kind = AutoZapret.Zapret.Own.Technique.WindowSize
+                };
+
+            System.Collections.Generic.List<AutoZapret.Zapret.Own.Desync.Outgoing> winPackets =
+                AutoZapret.Zapret.Own.Desync.Build(tcp, wsize, out error);
+
+            Check("wsize: два пакета", winPackets.Count == 2, winPackets.Count + " шт.");
+
+            if (winPackets.Count == 2)
+            {
+                int originalWindow = (packet[tcp.TcpOffset + 14] << 8) | packet[tcp.TcpOffset + 15];
+                int tinyWindow = (winPackets[0].Data[tcp.TcpOffset + 14] << 8) |
+                                  winPackets[0].Data[tcp.TcpOffset + 15];
+
+                Check("wsize: окно уменьшено", tinyWindow < originalWindow || tinyWindow == 1,
+                    tinyWindow + " vs " + originalWindow);
+
+                AutoZapret.Zapret.Own.TcpPacket winTcp =
+                    AutoZapret.Zapret.Own.TcpPacket.Parse(winPackets[0].Data, winPackets[0].Length);
+
+                Check("wsize: данные в копии те же",
+                    winTcp != null && winTcp.PayloadLength == tcp.PayloadLength,
+                    winTcp == null ? "?" : winTcp.PayloadLength.ToString());
+
+                Check("wsize: суммы верны",
+                    winTcp != null &&
+                    AutoZapret.Zapret.Own.TcpPacket.VerifyTcpChecksum(
+                        winPackets[0].Data, winTcp.TcpOffset, winPackets[0].Length - winTcp.TcpOffset),
+                    "ok");
+            }
+
             // ---- fake: подставной seq отличается, настоящий идёт последним
             AutoZapret.Zapret.Own.TechniqueOptions fake =
                 new AutoZapret.Zapret.Own.TechniqueOptions

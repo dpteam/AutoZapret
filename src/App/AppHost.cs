@@ -2265,6 +2265,9 @@ namespace AutoZapret.App
             else if (kind == "hostfakesplit") technique.Kind = Zapret.Own.Technique.HostFakeSplit;
             else if (kind == "fake") technique.Kind = Zapret.Own.Technique.Fake;
             else if (kind == "fakedsplit") technique.Kind = Zapret.Own.Technique.FakeSplit;
+            else if (kind == "syndata") technique.Kind = Zapret.Own.Technique.SynData;
+            else if (kind == "oob") technique.Kind = Zapret.Own.Technique.Oob;
+            else if (kind == "wsize") technique.Kind = Zapret.Own.Technique.WindowSize;
             else technique.Kind = Zapret.Own.Technique.Split;
 
             technique.Position = Math.Max(1, Json.GetInt(msg, "position", 1));

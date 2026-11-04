@@ -27,7 +27,16 @@ namespace AutoZapret.Zapret.Own
         MultiDisorder = 5,
 
         /// <summary>Разрезать ровно перед именем в SNI, чтобы DPI не прочитал хост.</summary>
-        HostFakeSplit = 6
+        HostFakeSplit = 6,
+
+        /// <summary>ClientHello внутри SYN: DPI часто не разбирает payload у SYN.</summary>
+        SynData = 7,
+
+        /// <summary>Срочный байт (URG) — выбивает DPI из потока.</summary>
+        Oob = 8,
+
+        /// <summary>Маленькое окно в копии: DPI думает, что поток закрыт.</summary>
+        WindowSize = 9
     }
 
     /// <summary>
@@ -78,6 +87,9 @@ namespace AutoZapret.Zapret.Own
                 case Technique.MultiSplit: return "multisplit pos=" + string.Join(",", Positions.ToArray());
                 case Technique.MultiDisorder: return "multidisorder pos=" + string.Join(",", Positions.ToArray());
                 case Technique.HostFakeSplit: return "hostfakesplit overlap=" + Overlap;
+                case Technique.SynData: return "syndata";
+                case Technique.Oob: return "oob";
+                case Technique.WindowSize: return "wsize";
                 case Technique.Fake: return "fake seq=" + FakeSeqOffset + (BadSum ? " badsum" : "") + " x" + Repeats;
                 case Technique.FakeSplit: return "fakedsplit pos=" + Position + " seq=" + FakeSeqOffset;
                 default: return "выключено";
@@ -234,6 +246,52 @@ namespace AutoZapret.Zapret.Own
 
                     result.Add(Segment(tcp, 0, pos, 0, "часть 1"));
                     result.Add(Segment(tcp, pos, tcp.PayloadLength, pos, "часть 2"));
+                    break;
+                }
+
+                case Technique.SynData:
+                {
+                    // ClientHello внутри SYN. Настоящий сервер такой пакет
+                    // отбросит (данные в SYN не по стандарту), а DPI часто
+                    // не разбирает payload у SYN вовсе — и «теряет» начало
+                    // соединения. Затем настоящий пакет уходит как обычно.
+                    byte[] payload = tcp.PayloadCopy();
+                    if (payload.Length == 0) { error = "нет данных"; break; }
+
+                    int synLen;
+                    byte[] syn = tcp.BuildSynWithPayload(payload, unchecked(tcp.Seq - 1), out synLen);
+
+                    result.Add(new Outgoing { Data = syn, Length = synLen, Note = "SYN с данными" });
+                    result.Add(Segment(tcp, 0, tcp.PayloadLength, 0, "настоящий"));
+                    break;
+                }
+
+                case Technique.Oob:
+                {
+                    // Один срочный байт перед настоящими данными. Сдвиг seq назад,
+                    // чтобы получатель счёл его уже принятым и выбросил, — данные
+                    // не портятся.
+                    byte[] payload = tcp.PayloadCopy();
+                    if (payload.Length == 0) { error = "нет данных"; break; }
+
+                    int oobLen;
+                    byte[] urgent = tcp.BuildUrgentByte(payload[0], -1, out oobLen);
+
+                    result.Add(new Outgoing { Data = urgent, Length = oobLen, Note = "срочный байт" });
+                    result.Add(Segment(tcp, 0, tcp.PayloadLength, 0, "настоящий"));
+                    break;
+                }
+
+                case Technique.WindowSize:
+                {
+                    // Копия с крошечным окном. Payload тот же, поэтому получатель
+                    // получит правильные данные в любом случае: если примет копию,
+                    // второй пакет будет дублем и отбросится.
+                    int winLen;
+                    byte[] tiny = tcp.BuildWithWindow(1, out winLen);
+
+                    result.Add(new Outgoing { Data = tiny, Length = winLen, Note = "окно 1" });
+                    result.Add(Segment(tcp, 0, tcp.PayloadLength, 0, "настоящий"));
                     break;
                 }
             }

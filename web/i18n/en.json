@@ -284,5 +284,8 @@
   "Остановить": "Stop",
   "Работает…": "Running…",
   "Запускаю…": "Starting…",
-  "Останавливаю…": "Stopping…"
+  "Останавливаю…": "Stopping…",
+  "syndata — ClientHello внутри SYN": "syndata - ClientHello inside SYN",
+  "oob — срочный байт": "oob - urgent byte",
+  "wsize — маленькое окно": "wsize - tiny window"
 }

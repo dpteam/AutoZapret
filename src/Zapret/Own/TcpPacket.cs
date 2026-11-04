@@ -154,6 +154,100 @@ namespace AutoZapret.Zapret.Own
             packet[tcpOffset + 17] = (byte)(packet[tcpOffset + 17] ^ 0xFF);
         }
 
+        /// <summary>Копия payload — для техник, которым нужны сами данные.</summary>
+        public byte[] PayloadCopy()
+        {
+            if (!HasPayload) return new byte[0];
+
+            byte[] result = new byte[PayloadLength];
+            Array.Copy(_packet, PayloadOffset, result, 0, PayloadLength);
+
+            return result;
+        }
+
+        /// <summary>
+        /// SYN с данными внутри (техника `syndata`).
+        ///
+        /// Идея: DPI ожидает, что SYN приходит пустым, и часто не разбирает
+        /// payload у SYN-пакетов вовсе. Настоящий сервер такой SYN тоже
+        /// отбросит (данные в SYN не по стандарту), а DPI уже увидел
+        /// ClientHello и «запомнил» его как начало соединения.
+        ///
+        /// Заголовки берём от настоящего пакета, но флаги и seq подменяем:
+        /// ACK снимаем, ставим SYN, seq = isn. Контрольные суммы пересчитываем —
+        /// без этого пакет отбросят все, включая DPI.
+        /// </summary>
+        public byte[] BuildSynWithPayload(byte[] payload, uint isn, out int outLength)
+        {
+            int payloadSize = payload == null ? 0 : payload.Length;
+            int size = PayloadOffset + payloadSize;
+
+            byte[] result = new byte[size];
+            Array.Copy(_packet, 0, result, 0, PayloadOffset);
+
+            if (payloadSize > 0)
+                Array.Copy(payload, 0, result, PayloadOffset, payloadSize);
+
+            result[2] = (byte)(size >> 8);
+            result[3] = (byte)(size & 0xFF);
+
+            // seq = ISN, ack = 0: это начало соединения, а не продолжение
+            WriteU32(result, TcpOffset + 4, isn);
+            WriteU32(result, TcpOffset + 8, 0);
+
+            // флаги: только SYN. ACK/PSH/FIN сняты — иначе это не SYN
+            result[TcpOffset + 13] = 0x02;
+
+            RecomputeChecksums(result, size, IpHeaderLength, TcpOffset, size - TcpOffset);
+
+            outLength = size;
+            return result;
+        }
+
+        /// <summary>
+        /// Один байт как срочные данные (техника `oob`, out-of-band).
+        ///
+        /// DPI, который собирает поток по порядку, спотыкается о срочный байт:
+        /// он вне обычного потока. Получатель его тоже отбросит — данных там нет.
+        /// </summary>
+        public byte[] BuildUrgentByte(byte b, int seqAdjust, out int outLength)
+        {
+            byte[] payload = new byte[] { b };
+            byte[] result = BuildWithPayload(payload, seqAdjust, out outLength);
+
+            // URG + ACK: срочные данные в обычном сегменте
+            result[TcpOffset + 13] = 0x30;
+
+            // urgent pointer = 1: срочный байт — первый в payload
+            result[TcpOffset + 18] = 0x00;
+            result[TcpOffset + 19] = 0x01;
+
+            RecomputeChecksums(result, outLength, IpHeaderLength, TcpOffset, outLength - TcpOffset);
+
+            return result;
+        }
+
+        /// <summary>
+        /// Копия пакета с другим размером окна (техника `wsize`).
+        ///
+        /// Окно — это сколько данных получатель готов принять. Маленькое окно
+        /// заставляет DPI считать, что поток почти закрыт, и он перестаёт
+        /// собирать данные для проверки. Получатель настоящий пакет всё равно
+        /// получит: окно мы меняем только в копии, оригинал не трогаем.
+        /// </summary>
+        public byte[] BuildWithWindow(ushort window, out int outLength)
+        {
+            byte[] result = (byte[])_packet.Clone();
+            outLength = TotalLength;
+
+            result[TcpOffset + 14] = (byte)(window >> 8);
+            result[TcpOffset + 15] = (byte)(window & 0xFF);
+
+            RecomputeChecksums(result, outLength, IpHeaderLength, TcpOffset, outLength - TcpOffset);
+
+            return result;
+        }
+
         // ---------------------------------------------------------- контрольные суммы
 
         /// <summary>
