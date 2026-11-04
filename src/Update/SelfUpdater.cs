@@ -33,22 +33,37 @@ namespace AutoZapret.Update
         private static DateTime _lastCheck = DateTime.MinValue;
         private static UpdateCheck _lastResult;
 
+        /// <summary>Канал обновлений: `stable` или `beta`. Ставится из настроек перед Check().</summary>
+        public string Channel = "stable";
+
+        private bool IsBeta
+        {
+            get { return string.Equals(Channel, "beta", StringComparison.OrdinalIgnoreCase); }
+        }
+
         public event Action<string> Progress;
 
         /// <summary>Проверяет наличие новой версии (с кэшем на час).</summary>
         public UpdateCheck Check(bool force = false)
         {
+            if (!force && _lastResult != null && DateTime.UtcNow - _lastCheck < CacheTtl
+                && !string.Equals(_lastResult.Channel, Channel, StringComparison.OrdinalIgnoreCase))
+            {
+                // канал сменился — кэш от другого канала не годится
+                force = true;
+            }
+
             if (!force && _lastResult != null && DateTime.UtcNow - _lastCheck < CacheTtl)
                 return _lastResult;
 
-            UpdateCheck check = new UpdateCheck { CurrentVersion = AppInfo.Version };
+            UpdateCheck check = new UpdateCheck { CurrentVersion = AppInfo.Version, Channel = Channel };
 
-            Report("проверяю обновления приложения…");
+            Report("проверяю обновления приложения… (" + Channel + ")");
 
             string tag = null;
 
             // 1) GitHub API
-            tag = TryApi();
+            tag = IsBeta ? TryApiList() : TryApi();
 
             // 2) Atom-лента как резерв (API отдаёт 403 при исчерпании лимита)
             if (tag == null)
@@ -67,6 +82,7 @@ namespace AutoZapret.Update
 
             check.Ok = true;
             check.LatestVersion = tag;
+            check.Prerelease = UpdateCheck.IsPrerelease(tag);
             check.Url = "https://github.com/" + Owner + "/" + Repo + "/releases/latest";
             check.Message = check.HasUpdate
                 ? "доступна версия " + tag + " (сейчас " + AppInfo.Version + ")"
@@ -79,32 +95,92 @@ namespace AutoZapret.Update
             return check;
         }
 
-        private static string TryApi()
+        private string TryApi()
         {
             try
             {
                 string url = "https://api.github.com/repos/" + Owner + "/" + Repo + "/releases/latest";
 
-                ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
-                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
-                request.UserAgent = "AutoZapret/" + AppInfo.Version;
-                request.Accept = "application/vnd.github+json";
-                request.Timeout = 10000;
+                string json = GetJson(url);
+                if (json == null) return null;
 
-                string token = Environment.GetEnvironmentVariable("GH_TOKEN");
-                if (string.IsNullOrEmpty(token)) token = Environment.GetEnvironmentVariable("GITHUB_TOKEN");
-                if (!string.IsNullOrEmpty(token)) request.Headers.Add("Authorization", "Bearer " + token);
+                Dictionary<string, object> root = Json.ParseObjectSafe(json);
+                if (root == null) return null;
 
+                string tag = Json.GetString(root, "tag_name", "");
+                return SanitizeTag(tag, false);
+            }
+            catch (Exception ex)
+            {
+                Log.Debug("UPD", "API: " + ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Канал beta: списком релизов, включая пре-релизы.
+        /// `/releases/latest` пре-релизы не отдаёт вообще, поэтому нужен отдельный путь.
+        /// Берём не «первый в списке» (порядок — по дате создания, а не по версии),
+        /// а максимальную версию.
+        /// </summary>
+        private string TryApiList()
+        {
+            try
+            {
+                string url = "https://api.github.com/repos/" + Owner + "/" + Repo + "/releases?per_page=30";
+
+                string json = GetJson(url);
+                if (json == null) return null;
+
+                object parsed = Json.ParseSafe(json);
+                List<object> items = parsed as List<object>;
+                if (items == null) return null;
+
+                string best = null;
+
+                foreach (object item in items)
+                {
+                    Dictionary<string, object> release = item as Dictionary<string, object>;
+                    if (release == null) continue;
+
+                    if (Json.GetBool(release, "draft", false)) continue;
+
+                    string tag = SanitizeTag(Json.GetString(release, "tag_name", ""), true);
+                    if (tag == null) continue;
+
+                    if (best == null || UpdateCheck.CompareVersions(tag, best) > 0) best = tag;
+                }
+
+                return best;
+            }
+            catch (Exception ex)
+            {
+                Log.Debug("UPD", "список релизов: " + ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>GET JSON/текст с учётом токена и Tls12. null при ошибке.</summary>
+        private static string GetJson(string url)
+        {
+            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+            request.UserAgent = "AutoZapret/" + AppInfo.Version;
+            request.Accept = "application/vnd.github+json";
+            request.Timeout = 10000;
+
+            string token = Environment.GetEnvironmentVariable("GH_TOKEN");
+            if (string.IsNullOrEmpty(token)) token = Environment.GetEnvironmentVariable("GITHUB_TOKEN");
+            if (!string.IsNullOrEmpty(token)) request.Headers.Add("Authorization", "Bearer " + token);
+
+            try
+            {
                 using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
                 using (Stream stream = response.GetResponseStream())
                 using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
                 {
-                    string json = reader.ReadToEnd();
-                    Dictionary<string, object> root = Json.ParseObjectSafe(json);
-                    if (root == null) return null;
-
-                    string tag = Json.GetString(root, "tag_name", "");
-                    return SanitizeTag(tag);
+                    return reader.ReadToEnd();
                 }
             }
             catch (WebException ex)
@@ -117,36 +193,30 @@ namespace AutoZapret.Update
                 }
                 return null;
             }
-            catch (Exception ex)
-            {
-                Log.Debug("UPD", "API: " + ex.Message);
-                return null;
-            }
         }
 
-        private static string TryAtom()
+        private string TryAtom()
         {
             try
             {
                 string url = "https://github.com/" + Owner + "/" + Repo + "/releases.atom";
 
-                ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
-                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
-                request.UserAgent = "AutoZapret/" + AppInfo.Version;
-                request.Timeout = 10000;
+                string xml = GetJson(url);
+                if (xml == null) return null;
 
-                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-                using (Stream stream = response.GetResponseStream())
-                using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+                // в ленте несколько <entry>; берём максимальную версию, а не первую:
+                // порядок в Atom — по дате, а не по номеру
+                string best = null;
+
+                foreach (Match match in Regex.Matches(xml, @"<id>tag:github\.com[^<]*?/(v?[\d][^<]*)</id>"))
                 {
-                    string xml = reader.ReadToEnd();
+                    string tag = SanitizeTag(match.Groups[1].Value, IsBeta);
+                    if (tag == null) continue;
 
-                    // первый <entry><id>tag:github.com,2008:Repository/123/v1.4.1</id>
-                    Match match = Regex.Match(xml, @"<id>tag:github\.com[^<]*?/(v?[\d][^<]*)</id>");
-                    if (!match.Success) return null;
-
-                    return SanitizeTag(match.Groups[1].Value);
+                    if (best == null || UpdateCheck.CompareVersions(tag, best) > 0) best = tag;
                 }
+
+                return best;
             }
             catch (Exception ex)
             {
@@ -158,24 +228,43 @@ namespace AutoZapret.Update
         /// <summary>
         /// Отбраковывает форки, пре-релизы и мусорные теги.
         /// Иначе «v1.2.3-custom-fork» станет «обновлением».
+        ///
+        /// allowPrerelease = true только для канала beta: там `-betaN` и `-rcN`
+        /// допустимы, но `<мусор>` после дефиса — всё равно нет.
+        ///
+        /// Публичный, потому что это единственный барьер между «обновиться»
+        /// и «поставить чужую сборку»; его проверяет selftest.
         /// </summary>
-        private static string SanitizeTag(string tag)
+        public static string SanitizeTag(string tag, bool allowPrerelease)
         {
             if (string.IsNullOrEmpty(tag)) return null;
 
             string value = tag.Trim();
 
-            // пре-релизы и форки
-            if (value.Contains("-")) return null;
             if (value.IndexOf("fork", StringComparison.OrdinalIgnoreCase) >= 0) return null;
             if (value.IndexOf("custom", StringComparison.OrdinalIgnoreCase) >= 0) return null;
-            if (value.IndexOf("beta", StringComparison.OrdinalIgnoreCase) >= 0) return null;
 
             string digits = value.TrimStart('v', 'V');
             if (digits.Length == 0) return null;
             if (!char.IsDigit(digits[0])) return null;
 
-            return digits;
+            int cut = digits.IndexOfAny(new[] { '-', '+' });
+
+            if (cut < 0) return digits;             // обычный релиз
+
+            if (!allowPrerelease) return null;      // стабильный канал пре-релизы не видит
+
+            string suffix = digits.Substring(cut + 1).ToLowerInvariant();
+            if (suffix.Length == 0) return null;
+
+            // пускаем только осмысленные метки: beta / rc / alpha / pre
+            bool known =
+                suffix.StartsWith("beta", StringComparison.Ordinal) ||
+                suffix.StartsWith("rc", StringComparison.Ordinal) ||
+                suffix.StartsWith("alpha", StringComparison.Ordinal) ||
+                suffix.StartsWith("pre", StringComparison.Ordinal);
+
+            return known ? digits : null;
         }
 
         // ---------------------------------------------------------------- install

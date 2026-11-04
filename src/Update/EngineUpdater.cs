@@ -19,13 +19,34 @@ namespace AutoZapret.Update
         public string Message = "";
         public string Url = "";
 
+        /// <summary>Предлагается тестовая сборка, а не стабильный релиз.</summary>
+        public bool Prerelease;
+
+        /// <summary>По какому каналу получен результат. Кэш от другого канала непригоден.</summary>
+        public string Channel = "stable";
+
         public bool HasUpdate
         {
             get
             {
                 if (string.IsNullOrEmpty(LatestVersion) || string.IsNullOrEmpty(CurrentVersion)) return false;
-                return CompareVersions(LatestVersion, CurrentVersion) > 0;
+
+                int compare = CompareVersions(LatestVersion, CurrentVersion);
+                if (compare > 0) return true;
+
+                // 1.3.0-beta1 -> 1.3.0: численно равно, но финальный релиз новее.
+                // Без этой ветки бета-пользователь никогда не получит стабильную версию.
+                if (compare == 0 && IsPrerelease(CurrentVersion) && !IsPrerelease(LatestVersion)) return true;
+
+                return false;
             }
+        }
+
+        /// <summary>Есть ли в версии суффикс -beta / -rc / +build.</summary>
+        public static bool IsPrerelease(string version)
+        {
+            if (string.IsNullOrEmpty(version)) return false;
+            return version.IndexOfAny(new[] { '-', '+' }) > 0;
         }
 
         /// <summary>Сравнение версий вида «1.10.4» / «1.9» / «v1.2.3».</summary>

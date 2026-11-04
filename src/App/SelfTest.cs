@@ -117,6 +117,9 @@ namespace AutoZapret.App
 
                 Section("контрольные суммы");
                 TestChecksums();
+
+                Section("каналы обновлений");
+                TestUpdateChannels();
             }
             catch (Exception ex)
             {
@@ -1160,6 +1163,99 @@ namespace AutoZapret.App
 
                 try { System.IO.Directory.Delete(dir, true); } catch { }
             }
+        }
+
+        /// <summary>
+        /// Каналы обновлений. Барьер здесь один и он критичный: на стабильном канале
+        /// пре-релиз не должен считаться обновлением, иначе пользователь получит
+        /// сырую сборку, ничего не нажимая.
+        /// </summary>
+        private static void TestUpdateChannels()
+        {
+            // ---- стабильный канал: пре-релизы отбрасываются
+            Check("stable: v1.2.3 -> 1.2.3",
+                AutoZapret.Update.SelfUpdater.SanitizeTag("v1.2.3", false) == "1.2.3", "ok");
+            Check("stable: 1.2.3 -> 1.2.3",
+                AutoZapret.Update.SelfUpdater.SanitizeTag("1.2.3", false) == "1.2.3", "ok");
+            Check("stable: V1.2.3 -> 1.2.3",
+                AutoZapret.Update.SelfUpdater.SanitizeTag("V1.2.3", false) == "1.2.3", "ok");
+
+            Check("stable: beta отброшена",
+                AutoZapret.Update.SelfUpdater.SanitizeTag("v1.2.3-beta1", false) == null, "null");
+            Check("stable: rc отброшен",
+                AutoZapret.Update.SelfUpdater.SanitizeTag("v1.2.3-rc2", false) == null, "null");
+
+            // ---- бета-канал: пре-релизы допустимы
+            Check("beta: beta принята",
+                AutoZapret.Update.SelfUpdater.SanitizeTag("v1.2.3-beta1", true) == "1.2.3-beta1", "ok");
+            Check("beta: rc принят",
+                AutoZapret.Update.SelfUpdater.SanitizeTag("v1.2.3-rc2", true) == "1.2.3-rc2", "ok");
+            Check("beta: alpha принят",
+                AutoZapret.Update.SelfUpdater.SanitizeTag("1.3.0-alpha3", true) == "1.3.0-alpha3", "ok");
+
+            // ---- мусор отбрасывается на ЛЮБОМ канале
+            Check("beta: custom-fork отброшен",
+                AutoZapret.Update.SelfUpdater.SanitizeTag("v1.2.3-custom-fork", true) == null, "null");
+            Check("stable: fork отброшен",
+                AutoZapret.Update.SelfUpdater.SanitizeTag("v1.2.3-fork", false) == null, "null");
+            Check("beta: неизвестный суффикс отброшен",
+                AutoZapret.Update.SelfUpdater.SanitizeTag("v1.2.3-whatever", true) == null, "null");
+            Check("beta: пустой суффикс отброшен",
+                AutoZapret.Update.SelfUpdater.SanitizeTag("v1.2.3-", true) == null, "null");
+
+            // ---- не-версии
+            Check("пустой тег отброшен",
+                AutoZapret.Update.SelfUpdater.SanitizeTag("", true) == null, "null");
+            Check("тег без цифр отброшен",
+                AutoZapret.Update.SelfUpdater.SanitizeTag("v", true) == null, "null");
+            Check("тег со словом отброшен",
+                AutoZapret.Update.SelfUpdater.SanitizeTag("latest", true) == null, "null");
+            Check("null-тег отброшен",
+                AutoZapret.Update.SelfUpdater.SanitizeTag(null, true) == null, "null");
+
+            // ---- HasUpdate с учётом пре-релизов
+            AutoZapret.Update.UpdateCheck newer = new AutoZapret.Update.UpdateCheck
+            {
+                CurrentVersion = "1.2.3",
+                LatestVersion = "1.3.0"
+            };
+            Check("HasUpdate: 1.3.0 > 1.2.3", newer.HasUpdate, "ok");
+
+            AutoZapret.Update.UpdateCheck same = new AutoZapret.Update.UpdateCheck
+            {
+                CurrentVersion = "1.2.3",
+                LatestVersion = "1.2.3"
+            };
+            Check("HasUpdate: равные версии -> нет", !same.HasUpdate, "ok");
+
+            // бета-пользователь должен получить финальный релиз той же версии
+            AutoZapret.Update.UpdateCheck betaToRelease = new AutoZapret.Update.UpdateCheck
+            {
+                CurrentVersion = "1.3.0-beta1",
+                LatestVersion = "1.3.0"
+            };
+            Check("HasUpdate: бета -> релиз той же версии", betaToRelease.HasUpdate, "ok");
+
+            // но не наоборот: стабильный пользователь не откатывается на бету
+            AutoZapret.Update.UpdateCheck releaseToBeta = new AutoZapret.Update.UpdateCheck
+            {
+                CurrentVersion = "1.3.0",
+                LatestVersion = "1.3.0-beta1"
+            };
+            Check("HasUpdate: релиз -> бета не предлагается", !releaseToBeta.HasUpdate, "ok");
+
+            // числовое сравнение: 1.10 > 1.9
+            AutoZapret.Update.UpdateCheck numeric = new AutoZapret.Update.UpdateCheck
+            {
+                CurrentVersion = "1.9",
+                LatestVersion = "1.10.0"
+            };
+            Check("HasUpdate: 1.10.0 > 1.9 (не по строке)", numeric.HasUpdate, "ok");
+
+            // пре-релиз определяется по суффиксу
+            Check("IsPrerelease: beta", AutoZapret.Update.UpdateCheck.IsPrerelease("1.3.0-beta1"), "ok");
+            Check("IsPrerelease: обычная версия",
+                !AutoZapret.Update.UpdateCheck.IsPrerelease("1.3.0"), "ok");
         }
 
         /// <summary>

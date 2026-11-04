@@ -196,6 +196,9 @@
         setSwitch("set-update-app", s.updateApp);
         setSwitch("set-update-lists", s.updateLists);
 
+        var channel = document.getElementById("set-update-channel");
+        if (channel && s.updateChannel) channel.value = s.updateChannel;
+
         // о программе
         text("about-version", s.version);
         text("about-os", s.os);
@@ -1020,6 +1023,19 @@
             install.textContent = "Обновляю…";
             send("upd.engine.install");
         });
+
+        var appInstall = document.getElementById("btn-upd-app-install");
+        if (appInstall) appInstall.addEventListener("click", function () {
+            if (!confirm("Программа закроется, обновится и запустится снова. Продолжить?")) return;
+            appInstall.disabled = true;
+            appInstall.textContent = "Обновляю…";
+            send("upd.app.install");
+        });
+
+        var channel = document.getElementById("set-update-channel");
+        if (channel) channel.addEventListener("change", function () {
+            queueSave({ updateChannel: channel.value });
+        });
     }
 
     function renderUpdateState(msg) {
@@ -1029,13 +1045,11 @@
         el.textContent = msg.message || "";
         el.className = "row-hint " + (msg.ok ? (msg.hasUpdate ? "diag-warn" : "diag-ok") : "diag-bad");
 
-        if (msg.target === "engine") {
-            var install = document.getElementById("btn-upd-engine-install");
-            if (install) {
-                install.style.display = msg.hasUpdate ? "" : "none";
-                install.disabled = false;
-                install.textContent = "Обновить";
-            }
+        var install = document.getElementById("btn-upd-" + msg.target + "-install");
+        if (install) {
+            install.style.display = msg.hasUpdate ? "" : "none";
+            install.disabled = false;
+            install.textContent = "Обновить";
         }
     }
 

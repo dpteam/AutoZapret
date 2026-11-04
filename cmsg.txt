@@ -1,37 +1,35 @@
-feat(P5): verify SHA-256 of the update archive against release checksums
+feat(P5): update channels, start-up check, and the missing app install button
 
-SelfUpdater downloaded AutoZapret-portable.zip and then ran it through a
-replacement script - with no integrity check at all. One spoofed response
-was enough to execute someone else's code with our privileges. AGENTS.md
-required this check; it simply was not implemented.
+Three gaps in the self-update path:
 
-Now: fetch checksums.txt from the same release tag, find the entry for
-AutoZapret-portable.zip, compare before extracting. release.yml already
-publishes checksums.txt, so the two halves finally meet.
+1. settings.updates.channel existed but nothing read it. Now
+   SelfUpdater.Channel drives the lookup. Stable uses /releases/latest,
+   which never returns pre-releases at all, so a stable user cannot be
+   handed a beta by accident. Beta fetches the release list and picks
+   the MAXIMUM version - the list is ordered by creation date, so
+   'first entry' would offer an old hotfix tag over a newer release.
 
-The important decision is failing CLOSED. A soft mode ('no hash, carry
-on') defeats the entire point: an attacker just withholds checksums.txt
-and the check silently disappears. So a missing file, an unparsable
-file, an empty file, or a missing entry all abort the update with a
-reason the user can read.
+2. SanitizeTag used to reject any tag containing a hyphen. That is
+   correct for stable and wrong for beta. It now takes allowPrerelease:
+   -beta/-rc/-alpha/-pre pass only on the beta channel, while
+   -fork/-custom/-anything-else is rejected on both. The rule the code
+   exists for is unchanged: a fork tag must never look like an update.
 
-Parser handles the two formats found in the wild:
-  sha256sum: '<64 hex>  <name>' (also the '*' binary marker)
-  BSD:       'SHA256 (<name>) = <64 hex>'
-Name matching strips any directory part ('.\x.zip', 'dist/x.zip') and
-ignores case, because release assets are named inconsistently. Duplicate
-entries keep the FIRST value - overwriting with the second would let a
-tampered trailing line win.
+3. There was no 'upd.app.install' handler and no button. The app could
+   check for updates and then had no way to apply one - the whole
+   self-update mechanism was reachable only from the CLI. Now it stops
+   the bypass first (xcopy silently skips files locked by WinDivert),
+   installs, and exits so the replacer can swap the exe.
 
-HTML instead of checksums throws rather than parsing to zero entries:
-that is what a redirect to a login page looks like, and 'zero entries'
-would otherwise be reported as a generic parse failure.
+HasUpdate now also handles the beta -> release transition: 1.3.0-beta1
+to 1.3.0 compares equal numerically, so without an explicit check a beta
+user would never be offered the final build. The reverse (release ->
+beta) stays off.
 
-CLI: --sha256 <file> prints hash, size and, if checksums.txt sits next to
-it, the comparison verdict (exit 0 match, 2 mismatch).
-selftest: 26 checks - known SHA-256 vectors for '' and 'abc', file hash,
-both formats, path stripping, comments, duplicates, HTML rejection, the
-missing-entry refusal, and URL consistency with PortableZipName.
+Auto-check on start is quiet by design: it asks, and if something newer
+exists only notifies. Installing without a click would restart the app
+under the user's hands.
 
-Verified by hand: a real exe with a correct checksums.txt returns 0, a
-falsified hash returns 2 and prints both values.
+UI: 'Обновить' next to the app, and a channel selector.
+selftest: 25 checks on the channel barrier, including the two
+transitions above and 1.10.0 > 1.9 ordering.

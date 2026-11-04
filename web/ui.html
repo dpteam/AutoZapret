@@ -599,7 +599,21 @@
             <div class="row-label">Приложение</div>
             <div class="row-hint" id="upd-app-state">проверка не выполнялась</div>
           </div>
-          <button class="btn" id="btn-upd-app-check">Проверить</button>
+          <div style="display:flex;gap:8px">
+            <button class="btn" id="btn-upd-app-check">Проверить</button>
+            <button class="btn primary" id="btn-upd-app-install" style="display:none">Обновить</button>
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Канал обновлений</div>
+            <div class="row-hint">beta — тестовые сборки, могут ломаться</div>
+          </div>
+          <select id="set-update-channel">
+            <option value="stable">Стабильный</option>
+            <option value="beta">Бета</option>
+          </select>
         </div>
 
         <div id="upd-progress" class="row-hint" style="margin-top:10px;display:none"></div>

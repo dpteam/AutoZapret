@@ -218,6 +218,7 @@ namespace AutoZapret.App
                 PushPresets();
                 PushAutoStart();
                 TryAutoStartProtection();
+                CheckUpdatesOnStart();
             });
 
             bridge.Register("state", msg => PushState());
@@ -481,6 +482,7 @@ namespace AutoZapret.App
             bridge.Register("upd.engine.check", msg => RunInBackground("upd-engine", CheckEngineUi));
             bridge.Register("upd.engine.install", msg => RunInBackground("upd-install", InstallEngineUi));
             bridge.Register("upd.app.check", msg => RunInBackground("upd-app", CheckAppUi));
+            bridge.Register("upd.app.install", msg => RunInBackground("upd-app-install", InstallAppUi));
         }
 
         // --------------------------------------------------------------- updates
@@ -529,7 +531,7 @@ namespace AutoZapret.App
 
         private void CheckAppUi()
         {
-            SelfUpdater updater = new SelfUpdater();
+            SelfUpdater updater = new SelfUpdater { Channel = _settings.UpdateChannel };
             updater.Progress += line => SendUpdateProgress(line, false, true);
 
             UpdateCheck check = updater.Check(true);
@@ -540,7 +542,97 @@ namespace AutoZapret.App
                 "hasUpdate", check.HasUpdate,
                 "current", check.CurrentVersion ?? "",
                 "latest", check.LatestVersion ?? "",
+                "prerelease", check.Prerelease,
                 "message", check.Message ?? ""));
+        }
+
+        /// <summary>
+        /// Установка обновления приложения.
+        ///
+        /// Обход обязательно выключается заранее: скрипт-заменщик всё равно гасит
+        /// winws, но если тот держит WinDivert в момент копирования, xcopy тихо
+        /// не перезапишет часть файлов. Лучше остановить сами и дождаться.
+        /// </summary>
+        private void InstallAppUi()
+        {
+            SelfUpdater updater = new SelfUpdater { Channel = _settings.UpdateChannel };
+            updater.Progress += line => SendUpdateProgress(line, false, true);
+
+            UpdateCheck check = updater.Check(true);
+
+            if (!check.Ok || !check.HasUpdate)
+            {
+                SendUpdateProgress("обновлять нечего", true, true);
+                return;
+            }
+
+            if (_zapret.State == ProtectionState.Running || _zapret.State == ProtectionState.Starting)
+            {
+                SendUpdateProgress("останавливаю обход…", false, false);
+                try { _zapret.Stop(); } catch { }
+                Thread.Sleep(1500);
+            }
+
+            string error = updater.Install(check.LatestVersion,
+                SelfUpdater.PortableZipUrl(check.LatestVersion));
+
+            if (error != null)
+            {
+                SendUpdateProgress("ошибка: " + error, true, false);
+                _tray.Notify(AppInfo.Name, "Обновление не удалось: " + error, ToolTipIcon.Error);
+                return;
+            }
+
+            SendUpdateProgress("обновление запущено, перезапускаюсь…", true, true);
+            _tray.Notify(AppInfo.Name, "Обновление " + check.LatestVersion + " устанавливается",
+                ToolTipIcon.Info);
+
+            // заменщик ждёт именно нашего завершения
+            RequestExit();
+        }
+
+        /// <summary>
+        /// Тихая проверка обновлений при старте (P5). Ничего не устанавливает —
+        /// только сообщает, что есть новая версия: молчаливое обновление
+        /// под пользователем недопустимо.
+        /// </summary>
+        private void CheckUpdatesOnStart()
+        {
+            if (!_settings.UpdateApp && !_settings.UpdateEngine) return;
+
+            RunInBackground("upd-start", () =>
+            {
+                List<string> found = new List<string>();
+
+                if (_settings.UpdateApp)
+                {
+                    try
+                    {
+                        SelfUpdater updater = new SelfUpdater { Channel = _settings.UpdateChannel };
+                        UpdateCheck check = updater.Check();
+                        if (check.Ok && check.HasUpdate)
+                            found.Add("программа " + check.LatestVersion);
+                    }
+                    catch (Exception ex) { Log.Debug("UPD", "автопроверка приложения: " + ex.Message); }
+                }
+
+                if (_settings.UpdateEngine)
+                {
+                    try
+                    {
+                        UpdateCheck check = new EngineUpdater().Check();
+                        if (check.Ok && check.HasUpdate)
+                            found.Add("движок " + check.LatestVersion);
+                    }
+                    catch (Exception ex) { Log.Debug("UPD", "автопроверка движка: " + ex.Message); }
+                }
+
+                if (found.Count == 0) return;
+
+                string text = "Доступно обновление: " + string.Join(", ", found.ToArray());
+                Log.Info("UPD", text);
+                _tray.Notify(AppInfo.Name, text, ToolTipIcon.Info);
+            });
         }
 
         private void SendUpdateProgress(string line, bool done, bool ok)
@@ -1417,6 +1509,9 @@ namespace AutoZapret.App
                 "updateEngine", _settings.UpdateEngine,
                 "updateApp", _settings.UpdateApp,
                 "updateLists", _settings.UpdateLists,
+                "updateChannel", _settings.UpdateChannel,
+                "autoStartProtect", _settings.AutoStart,
+                "processPresets", _settings.ProcessPresets,
                 "logFile", Log.CurrentFile ?? "");
 
             _form.Bridge.Send(state);
@@ -1465,6 +1560,9 @@ namespace AutoZapret.App
             _settings.UpdateEngine = Json.GetBool(msg, "updateEngine", _settings.UpdateEngine);
             _settings.UpdateApp = Json.GetBool(msg, "updateApp", _settings.UpdateApp);
             _settings.UpdateLists = Json.GetBool(msg, "updateLists", _settings.UpdateLists);
+            _settings.UpdateChannel = Json.GetString(msg, "updateChannel", _settings.UpdateChannel);
+            if (_settings.UpdateChannel != "beta" && _settings.UpdateChannel != "stable")
+                _settings.UpdateChannel = "stable";
 
             _settings.Save();
             Log.Info("APP", "настройки сохранены");
