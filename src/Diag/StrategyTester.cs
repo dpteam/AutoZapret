@@ -664,6 +664,54 @@ namespace AutoZapret.Diag
         }
 
         /// <summary>
+        /// --stages [host...]: пошагово DNS -> TCP -> TLS по целям.
+        ///
+        /// Отвечает на вопрос, который проба через curl не различает: не работает
+        /// DNS, не соединяется TCP (блокировка по IP) или рвётся TLS (DPI).
+        /// Без движка и без прав — это чистая проверка сети.
+        /// </summary>
+        public static int RunStages(string[] args)
+        {
+            List<string> hosts = new List<string>();
+
+            foreach (string a in args)
+            {
+                if (a.StartsWith("--", StringComparison.Ordinal)) continue;
+                if (a.Length > 3 && a.IndexOf('.') > 0) hosts.Add(a);
+            }
+
+            if (hosts.Count == 0)
+            {
+                hosts.Add("www.youtube.com");
+                hosts.Add("discord.com");
+                hosts.Add("www.google.com");
+            }
+
+            Console.WriteLine("== по шагам: DNS -> TCP -> TLS ==");
+            Console.WriteLine();
+
+            List<ProbeTarget> targets = new List<ProbeTarget>();
+            foreach (string h in hosts) targets.Add(new ProbeTarget(h, "https://" + h));
+
+            List<TargetStage> stages = TargetDiagnosis.Run(targets, 6000);
+
+            foreach (TargetStage s in stages)
+            {
+                Console.WriteLine(s.Name);
+                Console.WriteLine("  DNS: " + s.Dns);
+                Console.WriteLine("  TCP: " + s.Tcp);
+                Console.WriteLine("  TLS: " + s.Tls);
+                Console.WriteLine("  итог: " + s.Verdict());
+                Console.WriteLine();
+            }
+
+            int broken = 0;
+            foreach (TargetStage s in stages) if (!s.TlsOk) broken++;
+
+            return broken == 0 ? 0 : 2;
+        }
+
+        /// <summary>
         /// --preflight [стратегия]: проверить готовность перед запуском.
         /// Без аргумента проверяется окружение без привязки к стратегии.
         /// </summary>

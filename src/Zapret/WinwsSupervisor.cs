@@ -51,7 +51,7 @@ namespace AutoZapret.Zapret
         /// что на деле он мог ничего не перехватывать.
         /// </summary>
         private readonly Queue<string> _output = new Queue<string>();
-        private const int OutputLimit = 600;
+        private const int OutputLimit = 2000;
 
         /// <summary>Сколько строк stdout уже выведено в Info: защита от потока отладки.</summary>
         private int _outputLines;

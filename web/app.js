@@ -1077,6 +1077,38 @@
                   "(не совпал фильтр) либо он не считает это ошибкой";
         }
 
+        var stages = document.getElementById("diag-explain-stages");
+        if (stages) {
+            stages.innerHTML = "";
+
+            // «до» — чтобы видеть вклад обхода, а не гадать
+            var before = msg.stagesBefore || [];
+            if (before.length > 0) {
+                var head = document.createElement("div");
+                head.className = "row-hint";
+                head.textContent = "без обхода: " + before.map(function (b) {
+                    return b.name + " — " + b.verdict;
+                }).join(" · ");
+                stages.appendChild(head);
+            }
+
+            (msg.stages || []).forEach(function (s) {
+                var div = document.createElement("div");
+                div.className = "diag-row";
+
+                var cls = s.tlsOk ? "ok" : (s.tcpOk ? "bad" : "warn");
+
+                div.innerHTML =
+                    '<span class="badge ' + cls + '">' + (s.tlsOk ? "OK" : "!") + '</span>' +
+                    '<span class="name">' + s.name + '</span>' +
+                    '<span class="verdict ' + (s.tlsOk ? "diag-ok" : "diag-bad") + '">' + s.verdict + '</span>' +
+                    '<span class="detail">DNS: ' + (s.dns || "?") +
+                        ' · TCP: ' + (s.tcp || "?") + ' · TLS: ' + (s.tls || "?") + '</span>';
+
+                stages.appendChild(div);
+            });
+        }
+
         box.style.display = "";
     }
 

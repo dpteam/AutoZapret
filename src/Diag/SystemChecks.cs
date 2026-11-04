@@ -214,6 +214,22 @@ namespace AutoZapret.Diag
         {
             CheckResult r = new CheckResult { Name = "Системный прокси" };
 
+            // Переменные окружения проверяем ПЕРВЫМИ: их ставят VPN/прокси-клиенты
+            // (Hiddify, v2rayN, clash) и забывают. curl.exe их уважает, а значит
+            // проба уходила в чужой прокси и врала «нет соединения» — при том что
+            // браузер открывал сайт. В настройках Windows при этом «прокси выключен».
+            string envProxy = ProxyEnvironment();
+
+            if (envProxy.Length > 0)
+            {
+                r.Status = CheckStatus.Warn;
+                r.Detail = envProxy;
+                r.Advice = "Переменные прокси в окружении. Пробы их теперь игнорируют, но другие " +
+                           "программы — нет. Если что-то не работает, уберите их: " +
+                           "setx http_proxy \"\" и перезайдите в систему.";
+                return r;
+            }
+
             try
             {
                 using (RegistryKey key = Registry.CurrentUser.OpenSubKey(
@@ -250,6 +266,29 @@ namespace AutoZapret.Diag
             }
 
             return r;
+        }
+
+        /// <summary>
+        /// Прокси из переменных окружения: http_proxy, https_proxy, all_proxy.
+        /// Их ставят VPN-клиенты, и curl.exe (наша проба) их уважает — соединение
+        /// уходит в чужой прокси, а результат выглядит как «обход не работает».
+        /// </summary>
+        private static string ProxyEnvironment()
+        {
+            string[] names = { "http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY" };
+
+            List<string> found = new List<string>();
+            foreach (string name in names)
+            {
+                string value = Environment.GetEnvironmentVariable(name);
+
+                if (string.IsNullOrEmpty(value)) continue;
+                if (found.Contains(value)) continue;
+
+                found.Add(value);
+            }
+
+            return found.Count == 0 ? "" : string.Join(", ", found.ToArray());
         }
 
         private static CheckResult CheckHosts()

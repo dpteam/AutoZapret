@@ -2152,11 +2152,41 @@ namespace AutoZapret.App
                 Log.Warn("DIAG", "отладка " + strategyId + ": winws не сказал ни слова");
             }
 
+            // Пробы и шаги — тоже в лог: без них архив отвечает «0/4» и молчит
+            foreach (string p in result.Probes) Log.Info("DIAG", "проба " + p);
+
             List<object> engine = new List<object>();
             foreach (string line in result.Engine) engine.Add(line);
 
             List<object> probes = new List<object>();
             foreach (string line in result.Probes) probes.Add(line);
+
+            List<object> stages = new List<object>();
+            foreach (TargetStage s in result.Stages)
+            {
+                stages.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    { "name", s.Name },
+                    { "dns", s.Dns ?? "" },
+                    { "tcp", s.Tcp ?? "" },
+                    { "tls", s.Tls ?? "" },
+                    { "verdict", s.Verdict() },
+                    { "dnsOk", s.DnsOk },
+                    { "tcpOk", s.TcpOk },
+                    { "tlsOk", s.TlsOk }
+                });
+            }
+
+            List<object> stagesBefore = new List<object>();
+            foreach (TargetStage s in result.StagesBefore)
+            {
+                stagesBefore.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    { "name", s.Name },
+                    { "verdict", s.Verdict() },
+                    { "tlsOk", s.TlsOk }
+                });
+            }
 
             _form.Bridge.Send(WebBridge.Msg("diag.explain",
                 "ok", result.Ok,
@@ -2167,6 +2197,8 @@ namespace AutoZapret.App
                 "total", (long)result.Total,
                 "engine", engine,
                 "probes", probes,
+                "stages", stages,
+                "stagesBefore", stagesBefore,
                 "file", result.FileName ?? ""));
         }
 

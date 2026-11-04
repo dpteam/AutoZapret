@@ -236,7 +236,7 @@ namespace AutoZapret.Diag
                     // все проверки падают, хотя браузер открывает сайт.
                     // errormsg + код возврата: «none соединения» не говорит ничего,
                     // а «DNS» / «таймаут» / «TLS» сразу ведут к причине.
-                    Arguments = "-4 -s -o NUL --max-time " + timeoutSec +
+                    Arguments = "-4 -s -o NUL --noproxy \"*\" --max-time " + timeoutSec +
                                 " -w \"%{http_code}|%{time_total}|%{errormsg}\" \"" + target.Url + "\"",
                     UseShellExecute = false,
                     CreateNoWindow = true,
