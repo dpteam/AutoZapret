@@ -169,6 +169,7 @@
             // иначе кнопки выглядят свободными, а нажатие молча отклоняется
             send("diag.state");
             send("browser.doh.get");
+            send("sysdns.get");
         }
 
         // скорость сети нужна только на главной: опрос раз в секунду
@@ -783,6 +784,50 @@
             dohOff.textContent = "Выключаю…";
             send("browser.doh.disable");
         });
+
+        var sysOn = document.getElementById("btn-sysdns-on");
+        if (sysOn) sysOn.addEventListener("click", function () {
+            if (!window.confirm(
+                "Системный DNS будет переключён на 127.0.0.1 (наш резолвер с DoH).\n\n" +
+                "Нужны права администратора. Прежние настройки запомнятся,\n" +
+                "вернуть можно кнопкой «Вернуть DNS».")) return;
+
+            sysOn.disabled = true;
+            sysOn.textContent = "Включаю…";
+            send("sysdns.enable");
+        });
+
+        var sysOff = document.getElementById("btn-sysdns-off");
+        if (sysOff) sysOff.addEventListener("click", function () {
+            sysOff.disabled = true;
+            sysOff.textContent = "Возвращаю…";
+            send("sysdns.disable");
+        });
+    }
+
+    function renderSystemDns(msg) {
+        var on = document.getElementById("btn-sysdns-on");
+        if (on) { on.disabled = false; on.textContent = "Включить"; }
+
+        var off = document.getElementById("btn-sysdns-off");
+        if (off) { off.disabled = false; off.textContent = "Вернуть DNS"; }
+
+        var status = document.getElementById("sysdns-status");
+        if (!status) return;
+
+        if (!msg.ok) {
+            status.textContent = msg.error || "не получилось";
+            status.className = "row-hint diag-bad";
+            return;
+        }
+
+        var parts = [];
+        parts.push(msg.pointed ? msg.target : "системный DNS: провайдера (не переключён)");
+        parts.push("резолвер: " + (msg.status || "—"));
+        if (msg.upstream) parts.push("DoH: " + msg.upstream);
+
+        status.textContent = parts.join(" · ");
+        status.className = "row-hint " + (msg.enabled ? "diag-ok" : "");
     }
 
     // ------------------------------------------------------------ Secure DNS браузеров
@@ -2122,6 +2167,10 @@
 
             case "browser.doh":
                 renderBrowserDoh(msg);
+                break;
+
+            case "sysdns":
+                renderSystemDns(msg);
                 break;
 
             case "diag.busy":

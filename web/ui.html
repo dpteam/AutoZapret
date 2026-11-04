@@ -6,6 +6,7 @@
 <meta http-equiv="Content-Security-Policy"
       content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:;">
 <title>AutoZapret</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='8'%20fill='%234c6ef5'/%3E%3Cpath%20d='M19%206L9%2019h6l-1%207%2010-13h-6z'%20fill='%23ffffff'/%3E%3C/svg%3E">
 <style>
 /*{{THEME}}*/
 </style>
@@ -17,7 +18,12 @@
   <!-- ---------------------------------------------------------- сайдбар -->
   <nav class="sidebar">
     <div class="brand">
-      <div class="brand-mark"></div>
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M13 3 5 14h6l-1 7 8-11h-6z" fill="currentColor" stroke="none" />
+        </svg>
+      </div>
       <div class="brand-text">
         <span class="brand-name">AutoZapret</span>
         <span class="brand-version">v{{VERSION}}</span>
@@ -197,6 +203,23 @@
         </div>
         <div class="diag-list" id="browser-doh-list" style="margin-top:10px"></div>
         <div class="row-hint" id="browser-doh-status"></div>
+
+        <div class="row" style="margin-top:16px">
+          <div>
+            <div class="row-label">Системный DNS через DoH (все программы)</div>
+            <div class="row-hint">
+              В Windows 10 своего DoH нет. Включаем локальный резолвер на 127.0.0.1,
+              который ходит в DoH, и переключаем на него адаптер с интернетом —
+              так Discord, игры и Telegram перестают попадать на заглушку 198.18.x.
+              Обратимо: «Вернуть» восстанавливает прежние серверы
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn primary" id="btn-sysdns-on">Включить</button>
+            <button class="btn" id="btn-sysdns-off">Вернуть DNS</button>
+          </div>
+        </div>
+        <div class="row-hint" id="sysdns-status"></div>
 
         <div class="row" style="margin-top:14px">
           <div>

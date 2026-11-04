@@ -26,6 +26,7 @@ namespace AutoZapret.App
         private readonly Settings _settings;
         private readonly ZapretService _zapret;
         private readonly TgProxyServer _proxy;
+        private readonly Core.LocalDns _localDns = new Core.LocalDns();
         private readonly AutoPilot _autoPilot;
         private readonly ScoreStore _scores;
         private readonly ProcessPresetWatcher _presets;
@@ -221,6 +222,7 @@ namespace AutoZapret.App
                 PushPresets();
                 PushAutoStart();
                 TryAutoUpdateLists();
+                TryStartSystemDns();
                 TryAutoStartProtection();
                 CheckUpdatesOnStart();
             });
@@ -401,6 +403,81 @@ namespace AutoZapret.App
 
                 bridge.Send(WebBridge.Msg("browser.doh", "report", report, "changed", true));
                 SendBrowserDoh();
+            });
+
+            // ---- системный DNS через свой локальный резолвер
+            //
+            // Windows 10 системного DoH не умеет, поэтому «включить DoH для всех
+            // программ» = поднять локальный DNS, который ходит в DoH, и переключить
+            // на него адаптер с интернетом. Discord и прочие приложения перестают
+            // попадать на заглушку 198.18.x.
+            bridge.Register("sysdns.get", msg => SendSystemDns());
+
+            bridge.Register("sysdns.enable", msg =>
+            {
+                if (!EnsureElevation())
+                {
+                    bridge.Send(WebBridge.Msg("sysdns", "ok", false,
+                        "error", "нужны права администратора: смена системного DNS"));
+                    return;
+                }
+
+                RunInBackground("sysdns-on", () =>
+                {
+                    string error = _localDns.Start();
+
+                    if (error != null)
+                    {
+                        bridge.Send(WebBridge.Msg("sysdns", "ok", false, "error", error));
+                        return;
+                    }
+
+                    string dnsError = Core.SystemDns.Enable();
+
+                    if (dnsError != null)
+                    {
+                        _localDns.Stop();
+                        bridge.Send(WebBridge.Msg("sysdns", "ok", false, "error", dnsError));
+                        return;
+                    }
+
+                    _settings.SystemDns = true;
+                    _settings.Save();
+
+                    Log.Info("DNS", "системный DoH включён: " + _localDns.StatusLine());
+                    _tray.Notify(AppInfo.Name, "Системный DNS переключён на DoH", ToolTipIcon.Info);
+
+                    SendSystemDns();
+                });
+            });
+
+            bridge.Register("sysdns.disable", msg =>
+            {
+                if (!EnsureElevation())
+                {
+                    bridge.Send(WebBridge.Msg("sysdns", "ok", false,
+                        "error", "нужны права администратора: смена системного DNS"));
+                    return;
+                }
+
+                RunInBackground("sysdns-off", () =>
+                {
+                    string error = Core.SystemDns.Disable();
+
+                    if (error != null)
+                    {
+                        bridge.Send(WebBridge.Msg("sysdns", "ok", false, "error", error));
+                        return;
+                    }
+
+                    _localDns.Stop();
+
+                    _settings.SystemDns = false;
+                    _settings.Save();
+
+                    Log.Info("DNS", "системный DoH выключен, вернул автоматический DNS");
+                    SendSystemDns();
+                });
             });
 
             // ---- язык интерфейса: словарь вшит в exe, наружу ничего не пишется
@@ -1582,6 +1659,61 @@ namespace AutoZapret.App
             }
 
             _form.Bridge.Send(WebBridge.Msg("hosts.fixes", "items", items));
+        }
+
+        /// <summary>Состояние системного DoH — для карточки в диагностике.</summary>
+        /// <summary>
+        /// Если системный DoH был включён, поднимаем резолвер при старте: система
+        /// уже смотрит на 127.0.0.1, и без нашего сервера DNS не работает вовсе.
+        /// Это важнее любой другой инициализации.
+        /// </summary>
+        private void TryStartSystemDns()
+        {
+            if (!Core.SystemDns.IsEnabled)
+            {
+                // Флаг в настройках без состояния в системе — значит выключили
+                // извне (или чистили data). Не врём в интерфейсе.
+                if (_settings.SystemDns)
+                {
+                    _settings.SystemDns = false;
+                    _settings.Save();
+                }
+
+                SendSystemDns();
+                return;
+            }
+
+            string error = _localDns.Start();
+
+            if (error != null)
+            {
+                Log.Error("DNS", "системный DNS указывает на 127.0.0.1, а резолвер не запустился: " + error);
+
+                _tray.Notify(AppInfo.Name,
+                    "DNS системы указывает на 127.0.0.1, но локальный резолвер не запустился (" + error +
+                    "). DNS не работает — откройте «Диагностика» и нажмите «Вернуть DNS».",
+                    ToolTipIcon.Error);
+            }
+            else
+            {
+                Log.Info("DNS", "системный DNS поднят: " + _localDns.StatusLine());
+            }
+
+            _settings.SystemDns = true;
+            _settings.Save();
+
+            SendSystemDns();
+        }
+
+        private void SendSystemDns()
+        {
+            _form.Bridge.Send(WebBridge.Msg("sysdns",
+                "ok", true,
+                "enabled", _settings.SystemDns && _localDns.IsRunning,
+                "pointed", Core.SystemDns.IsEnabled,
+                "status", _localDns.StatusLine(),
+                "target", Core.SystemDns.StatusText(),
+                "upstream", _localDns.Upstream));
         }
 
         private void CancelDiag()
@@ -2860,6 +2992,11 @@ namespace AutoZapret.App
             try { _autoPilot.Dispose(); } catch (Exception ex) { Log.Exception("APP", "остановка автопилота", ex); }
             try { _zapret.Dispose(); } catch (Exception ex) { Log.Exception("APP", "остановка движка", ex); }
             try { _proxy.Dispose(); } catch (Exception ex) { Log.Exception("APP", "остановка прокси", ex); }
+
+            // Локальный DNS гасим последним: если система смотрит на 127.0.0.1,
+            // лучше, чтобы он работал до самого выхода. Состояние при этом НЕ
+            // сбрасываем — при следующем запуске он поднимется снова.
+            try { _localDns.Dispose(); } catch (Exception ex) { Log.Exception("APP", "остановка DNS", ex); }
 
             try
             {

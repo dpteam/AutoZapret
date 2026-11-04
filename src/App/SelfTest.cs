@@ -121,6 +121,9 @@ namespace AutoZapret.App
                 Section("редактор hosts и списков");
                 TestEditors();
 
+                Section("локальный DNS");
+                TestLocalDns();
+
                 Section("пресеты по процессам");
                 TestProcessPresets();
 
@@ -3039,6 +3042,60 @@ namespace AutoZapret.App
             }
 
             return count;
+        }
+
+        /// <summary>
+        /// Локальный DNS: чистые функции прокси.
+        ///
+        /// Сам сервер в selftest не поднимаем — порт 53 может быть занят, и тест
+        /// не должен зависеть от сети. Проверяем то, что легко испортить молча:
+        /// ключ кэша не должен зависеть от ID запроса, а ответ обязан нести ID
+        /// именно этого запроса (иначе клиент его выбросит), и SERVFAIL должен
+        /// быть валидным заголовком с тем же ID.
+        /// </summary>
+        private static void TestLocalDns()
+        {
+            byte[] query1 = { 0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x77, 0x77, 0x77 };
+            byte[] query2 = { 0xAB, 0xCD, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x77, 0x77, 0x77 };
+
+            Check("DNS: ключ кэша не зависит от ID",
+                AutoZapret.Core.LocalDns.CacheKey(query1) == AutoZapret.Core.LocalDns.CacheKey(query2),
+                AutoZapret.Core.LocalDns.CacheKey(query1));
+
+            byte[] query3 = (byte[])query1.Clone();
+            query3[13] = 0x04;
+
+            Check("DNS: ключ кэша различает вопросы",
+                AutoZapret.Core.LocalDns.CacheKey(query1) != AutoZapret.Core.LocalDns.CacheKey(query3), "ok");
+
+            byte[] response = { 0x99, 0x99, 0x81, 0x80, 0x00, 0x01 };
+            byte[] rewritten = AutoZapret.Core.LocalDns.Rewrite(response, query1);
+
+            Check("DNS: ответ получает ID запроса",
+                rewritten[0] == 0x12 && rewritten[1] == 0x34, rewritten[0].ToString("x2") + rewritten[1].ToString("x2"));
+
+            Check("DNS: исходный ответ не испорчен", response[0] == 0x99, response[0].ToString("x2"));
+
+            byte[] servfail = AutoZapret.Core.LocalDns.ServFail(query2);
+
+            Check("DNS: SERVFAIL валиден", servfail.Length == 12 && servfail[3] == 0x82, servfail[3].ToString("x2"));
+            Check("DNS: SERVFAIL несёт ID запроса",
+                servfail[0] == 0xAB && servfail[1] == 0xCD, servfail[0].ToString("x2") + servfail[1].ToString("x2"));
+
+            // маршрут определяем без пакетов: не должно быть исключений
+            try
+            {
+                string ip;
+                string adapter = AutoZapret.Core.SystemDns.DefaultRouteAdapter(out ip);
+
+                Check("DNS: маршрут определён без исключения",
+                    adapter == null || adapter.Length > 0,
+                    adapter == null ? "нет маршрута (нормально вне сети)" : adapter);
+            }
+            catch (Exception ex)
+            {
+                Check("DNS: маршрут определён без исключения", false, ex.Message);
+            }
         }
 
         private static void TestSniffResult()

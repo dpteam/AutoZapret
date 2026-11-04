@@ -52,6 +52,14 @@ namespace AutoZapret.Core
             Add(list, "https://dns.adguard.com/dns-query", "AdGuard (имя)");
             Add(list, "https://dns.alidns.com/dns-query", "AliDNS");
             Add(list, "https://dns.comss.one/dns-query", "Comss");
+            Add(list, "https://dns.astracat.network/dns-query", "AstraCat");
+            Add(list, "https://dns.mafioznik.xyz/dns-query", "mafioznik.xyz");
+            Add(list, "https://dns.malw.link/dns-query", "malw.link");
+            Add(list, "https://free.shecan.ir/dns-query", "Shecan (IR)");
+            Add(list, "https://dns.zapret.moe/dns-query", "zapret.moe");
+            Add(list, "https://dns.wlrus.cfd/dns-query", "wlrus.cfd");
+            Add(list, "https://dns.dagami.ru/dns-query", "dagami.ru");
+            Add(list, "https://dns.magicdns.ru/dns-query", "MagicDNS");
             Add(list, "https://common.dot.dns.yandex.net/dns-query", "Яндекс DoT-имя");
             Add(list, "https://dns.nextdns.io", "NextDNS");
             Add(list, "https://doh.cleanbrowsing.org/doh/security-filter/", "CleanBrowsing");
@@ -60,7 +68,6 @@ namespace AutoZapret.Core
             Add(list, "https://xbox-dns.ru/dns-query", "xbox-dns.ru");
             Add(list, "https://dns.bezmezhau.com/dns-query", "bezmezhau (BY)");
             Add(list, "https://dns.dns-ai.ru/dns-query", "dns-ai.ru");
-            Add(list, "https://geohide.ru/dns-query", "geohide.ru");
             Add(list, "https://frd4wvnobp.cloudflare-gateway.com/dns-query", "Cloudflare Gateway");
 
             return list;

@@ -830,6 +830,110 @@ namespace AutoZapret.Diag
         }
 
         /// <summary>
+        /// --sysdns [status|enable|disable|serve]: системный DNS через DoH.
+        ///
+        /// `enable` поднимает локальный резолвер и переключает на него адаптер,
+        /// `serve` только держит резолвер запущенным (отладка), `disable` возвращает.
+        /// Windows 10 своего DoH не имеет — это единственный способ дать его всем.
+        /// </summary>
+        public static int RunSystemDns(string[] args)
+        {
+            string action = "status";
+            int port = 53;
+
+            for (int i = 0; i < args.Length; i++)
+            {
+                string a = args[i];
+
+                if (string.Equals(a, "--port", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    int.TryParse(args[i + 1], out port);
+                    continue;
+                }
+
+                if (a.StartsWith("--", StringComparison.Ordinal)) continue;
+
+                string v = a.Trim().ToLowerInvariant();
+                if (v == "enable" || v == "disable" || v == "status" || v == "serve") action = v;
+            }
+
+            if (port <= 0) port = 53;
+
+            // Смена системного DNS требует прав; «serve» на высоком порту — нет,
+            // это режим отладки самого резолвера.
+            if ((action == "enable" || action == "disable" || (action == "serve" && port == 53)) &&
+                !AutoZapret.App.Elevation.IsElevated)
+            {
+                Console.WriteLine("нужны права администратора");
+                return 1;
+            }
+
+            if (action == "status")
+            {
+                Console.WriteLine("== системный DNS ==");
+                Console.WriteLine("  состояние: " + AutoZapret.Core.SystemDns.StatusText());
+
+                string adapter;
+                string localIp = "";
+                adapter = AutoZapret.Core.SystemDns.DefaultRouteAdapter(out localIp);
+
+                Console.WriteLine("  интернет:  " + (adapter == null ? "нет маршрута" : adapter + " (" + localIp + ")"));
+                Console.WriteLine("  DoH:       " + AutoZapret.Core.DohServers.Recommended());
+
+                return 0;
+            }
+
+            if (action == "disable")
+            {
+                string off = AutoZapret.Core.SystemDns.Disable();
+                Console.WriteLine(off ?? "системный DNS возвращён");
+                return off == null ? 0 : 1;
+            }
+
+            AutoZapret.Core.LocalDns dns = new AutoZapret.Core.LocalDns();
+            dns.Port = port;
+
+            string error = dns.Start();
+
+            if (error != null)
+            {
+                Console.WriteLine(error);
+                return 1;
+            }
+
+            if (action == "serve")
+            {
+                Console.WriteLine("локальный DNS работает. Ctrl+C — выход.");
+
+                try
+                {
+                    System.Threading.Thread.Sleep(System.Threading.Timeout.Infinite);
+                }
+                catch { }
+
+                dns.Stop();
+                return 0;
+            }
+
+            string dnsError = AutoZapret.Core.SystemDns.Enable();
+
+            if (dnsError != null)
+            {
+                dns.Stop();
+                Console.WriteLine(dnsError);
+                return 1;
+            }
+
+            Console.WriteLine("системный DNS включён: " + AutoZapret.Core.SystemDns.StatusText());
+            Console.WriteLine("резолвер: " + dns.StatusLine());
+            Console.WriteLine();
+            Console.WriteLine("Проверьте: --stages www.youtube.com  (DNS должен стать настоящим)");
+
+            dns.Stop();
+            return 0;
+        }
+
+        /// <summary>
         /// --preflight [стратегия]: проверить готовность перед запуском.
         /// Без аргумента проверяется окружение без привязки к стратегии.
         /// </summary>

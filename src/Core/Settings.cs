@@ -36,6 +36,7 @@ namespace AutoZapret.Core
         public string IpsetMode = "loaded";        // off | loaded | any
         public bool AutoStart = false;             // включать обход при запуске приложения
         public bool AutoStartMigrated = false;     // разовая миграция: раньше было true
+        public bool SystemDns = false;             // локальный DoH-резолвер для всей системы
         public bool GameFilterMigrated = false;    // разовая миграция: игровой фильтр был включён
         public bool ReconnectOnStrategy = true;    // перезапускать обход при смене стратегии
         public bool ServiceMode = false;           // запускать как службу, а не как процесс
@@ -152,6 +153,7 @@ namespace AutoZapret.Core
                 s.AutoStart = Json.GetBool(zapret, "autoStart", s.AutoStart);
                 s.AutoStartMigrated = Json.GetBool(zapret, "autoStartMigrated", s.AutoStartMigrated);
                 s.ReconnectOnStrategy = Json.GetBool(zapret, "reconnectOnStrategy", s.ReconnectOnStrategy);
+                s.SystemDns = Json.GetBool(zapret, "systemDns", s.SystemDns);
 
                 // Разовая миграция: раньше «включать обход при старте» было
                 // включено по умолчанию, и приложение само лезло в сеть при
@@ -263,6 +265,7 @@ namespace AutoZapret.Core
                 "autoStartMigrated", AutoStartMigrated,
                 "gameFilterMigrated", GameFilterMigrated,
                 "reconnectOnStrategy", ReconnectOnStrategy,
+                "systemDns", SystemDns,
                 "serviceMode", ServiceMode,
                 "autoPilot", AutoPilot,
                 "processPresets", ProcessPresets);

@@ -234,5 +234,8 @@
   "Убрать дубли": "Remove duplicates",
   "Редактор hosts": "hosts editor",
   "Готовые фиксы": "Ready-made fixes",
-  "Пользовательские записи для hosts: Xbox, авторизация Microsoft и другие. Применяются в редактор — сохраните, когда проверите": "User entries for hosts: Xbox, Microsoft sign-in and others. Applied to the editor - save when you have checked them"
+  "Пользовательские записи для hosts: Xbox, авторизация Microsoft и другие. Применяются в редактор — сохраните, когда проверите": "User entries for hosts: Xbox, Microsoft sign-in and others. Applied to the editor - save when you have checked them",
+  "Системный DNS через DoH (все программы)": "System DNS over DoH (all programs)",
+  "В Windows 10 своего DoH нет. Включаем локальный резолвер на 127.0.0.1, который ходит в DoH, и переключаем на него адаптер с интернетом — так Discord, игры и Telegram перестают попадать на заглушку 198.18.x. Обратимо: «Вернуть» восстанавливает прежние серверы": "Windows 10 has no DoH of its own. We start a local resolver on 127.0.0.1 that talks DoH and point the internet adapter at it, so Discord, games and Telegram stop landing on the 198.18.x stub. Reversible: \"Restore\" puts the previous servers back",
+  "Вернуть DNS": "Restore DNS"
 }

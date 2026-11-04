@@ -78,6 +78,11 @@ html, body {
     border-radius: 7px;
     background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
     flex: 0 0 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(76, 110, 245, .35);
 }
 
 .brand-text { display: flex; flex-direction: column; line-height: 1.15; }
