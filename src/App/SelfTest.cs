@@ -1028,15 +1028,19 @@ namespace AutoZapret.App
                 !ByteEquals(fwdKey, hs.ClientKey), "ok");
 
             // ---- relay init: не похож на HTTP/TLS
+            //
+            // 500 попыток, а не 50: запрещённых начал два на 65536, и на полусотне
+            // прогонов проверка проходила «по luck», а не по правилу. Теперь она
+            // падает, если правило сломали, и не мигает на исправном коде.
             bool reserved = false;
-            for (int i = 0; i < 50; i++)
+            for (int i = 0; i < 500; i++)
             {
                 byte[] relay = AutoZapret.Proxy.MtProtoHandshake.GenerateRelayInit(2, false);
                 if (relay[0] == 0xEF) reserved = true;
                 if (relay[0] == (byte)'G' && relay[1] == (byte)'E') reserved = true;
                 if (relay[0] == 0x16 && relay[1] == 0x03) reserved = true;
             }
-            Check("relay init без запрещённых начал", !reserved, "50 попыток");
+            Check("relay init без запрещённых начал", !reserved, "500 попыток");
 
             // ---- сплиттер: склейка пакетов
             AutoZapret.Proxy.MtProtoSplitter splitter =

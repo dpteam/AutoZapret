@@ -227,7 +227,13 @@ namespace AutoZapret.Proxy
             // 4..8 должны быть не нулевые
             if (init[4] == 0 && init[5] == 0 && init[6] == 0 && init[7] == 0) return true;
 
-            // начала, похожие на HTTP или TLS
+            // Начала, похожие на HTTP или TLS. Проверяем и полные четырёхбайтовые
+            // шаблоны, и двухбайтовые префиксы: DPI смотрит на первые байты, и
+            // «GE…» для него уже начало «GET». Отбрасываем оба варианта — стоит
+            // это 2 попытки на 65536, а не «раз в тысячу рукопожатий не повезло».
+            if (init[0] == (byte)'G' && init[1] == (byte)'E') return true;
+            if (init[0] == 0x16 && init[1] == 0x03) return true;
+
             if (init[0] == (byte)'H' && init[1] == (byte)'E' && init[2] == (byte)'A' && init[3] == (byte)'D') return true;
             if (init[0] == (byte)'P' && init[1] == (byte)'O' && init[2] == (byte)'S' && init[3] == (byte)'T') return true;
             if (init[0] == (byte)'G' && init[1] == (byte)'E' && init[2] == (byte)'T' && init[3] == (byte)' ') return true;
