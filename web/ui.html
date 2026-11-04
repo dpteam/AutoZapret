@@ -305,10 +305,8 @@
 
       <div class="notice warn">
         <span>ⓘ</span>
-        <div>
-          Изменения применяются при следующем запуске обхода. Строка,
-          начинающаяся с <span class="mono">!</span> в списке целей, означает
-          <b>исключение</b>, а не цель.
+        <div id="lists-notice">
+          Изменения применяются при следующем запуске обхода. Строка, начинающаяся с ! в списке целей, означает исключение, а не цель.
         </div>
       </div>
 
@@ -585,6 +583,17 @@
 
       <div class="card">
         <div class="card-title">Интерфейс</div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Язык</div>
+            <div class="row-hint">English — только интерфейс; диагностика и логи остаются на русском</div>
+          </div>
+          <select id="set-language">
+            <option value="ru">Русский</option>
+            <option value="en">English</option>
+          </select>
+        </div>
 
         <div class="row">
           <div>

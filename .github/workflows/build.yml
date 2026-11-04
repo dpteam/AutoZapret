@@ -133,6 +133,13 @@ jobs:
           New-Item -ItemType Directory -Path bin/engine -Force | Out-Null
           robocopy engine bin/engine /E /XO /NJH /NJS /NDL /NFL /NP /R:1 /W:1 | Out-Null
 
+          # ВАЖНО: robocopy считает успехом коды 0-7 (1 = «файлы скопированы»),
+          # а ошибкой — 8 и больше. Без этой проверки шаг падал с «exit code 1»
+          # при полностью успешном копировании: pwsh возвращает код последней
+          # команды, а Actions приписывает `exit $LASTEXITCODE` в конец блока.
+          if ($LASTEXITCODE -ge 8) { throw "robocopy failed with $LASTEXITCODE" }
+          $global:LASTEXITCODE = 0
+
       - name: Selftest (with engine, strict)
         if: hashFiles('engine/bin/winws.exe') != ''
         shell: pwsh
@@ -193,6 +200,18 @@ jobs:
           if (-not (Test-Path 'publish/WebView2Loader.dll')) { throw "WebView2Loader.dll missing in publish" }
           if (-not (Test-Path 'publish/assets/strategies/strategies.v1.json')) { throw "strategies missing in publish" }
 
+          # Артефакт должен запускаться как есть: без движка приложение
+          # показывает «Движок не установлен» и не делает ничего полезного.
+          if (Test-Path 'engine/bin/winws.exe') {
+            New-Item -ItemType Directory -Path 'publish/engine' -Force | Out-Null
+            robocopy engine publish/engine /E /XO /NJH /NJS /NDL /NFL /NP /R:1 /W:1 | Out-Null
+            if ($LASTEXITCODE -ge 8) { throw "engine copy failed with $LASTEXITCODE" }
+            $global:LASTEXITCODE = 0
+            Write-Host "engine included in publish"
+          } else {
+            Write-Host "::warning::engine not fetched - the artifact will run without it"
+          }
+
       - name: Upload self-contained
         uses: actions/upload-artifact@v4
         with:
@@ -200,6 +219,6 @@ jobs:
           path: |
             publish/AutoZapret.exe
             publish/WebView2Loader.dll
-            publish/assets/strategies/*.json
-            publish/assets/fakes/fakes.json
+            publish/assets/
+            publish/engine/
           retention-days: 14

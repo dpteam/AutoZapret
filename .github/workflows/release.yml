@@ -42,10 +42,34 @@ jobs:
         shell: pwsh
         run: ./tools/fetch-webview2.ps1
 
+      # Версия берётся из тега, а не из csproj.
+      #
+      # Почему это обязательно: самообновление сравнивает установленную версию
+      # с тегом релиза. Если собрать v0.3.0 с <Version>0.2.0</Version> из csproj,
+      # exe навсегда рапортует 0.2.0 — приложение будет предлагать обновиться
+      # до 0.3.0, обновляться и снова видеть 0.2.0. Бесконечный цикл.
+      - name: Resolve version from tag
+        id: version
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $v = $tag.TrimStart('v', 'V')
+
+          if ($v -notmatch '^\d+\.\d+\.\d+$') {
+            throw "tag '$tag' is not a version (expected v1.2.3)"
+          }
+
+          Write-Host "version: $v (from tag $tag)"
+          "value=$v" >> $env:GITHUB_OUTPUT
+          "numeric=$v.0" >> $env:GITHUB_OUTPUT
+
       - name: Build
         shell: pwsh
         run: |
-          dotnet build AutoZapret.csproj -c Release -v minimal --nologo
+          dotnet build AutoZapret.csproj -c Release -v minimal --nologo `
+            -p:Version=${{ steps.version.outputs.value }} `
+            -p:FileVersion=${{ steps.version.outputs.numeric }} `
+            -p:AssemblyVersion=${{ steps.version.outputs.numeric }}
           if ($LASTEXITCODE -ne 0) { throw "build failed" }
 
       - name: Selftest
@@ -77,6 +101,18 @@ jobs:
           }
 
       # portable-архив: self-contained exe (.NET внутри) + loader + ассеты + ЛИЦЕНЗИИ
+      #
+      # Движок обязателен: без engine\ приложение запускается и показывает
+      # «Движок не установлен». Раньше пакет собирался БЕЗ него, а README внутри
+      # предлагал запустить tools\fetch-engine.ps1 — которого в пакете тоже нет.
+      - name: Fetch engine
+        shell: pwsh
+        run: |
+          ./tools/fetch-engine.ps1
+          if (-not (Test-Path 'engine/bin/winws.exe')) {
+            throw "engine not fetched - the portable package would be useless without it"
+          }
+
       - name: Publish self-contained
         shell: pwsh
         run: |
@@ -84,9 +120,16 @@ jobs:
             -p:PublishSingleFile=true `
             -p:EnableCompressionInSingleFile=true `
             -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:Version=${{ steps.version.outputs.value }} `
+            -p:FileVersion=${{ steps.version.outputs.numeric }} `
+            -p:AssemblyVersion=${{ steps.version.outputs.numeric }} `
             -p:DebugType=none -v minimal --nologo -o publish
           if ($LASTEXITCODE -ne 0) { throw "publish failed" }
           Copy-Item 'lib/webview2/WebView2Loader.dll' 'publish/' -Force
+
+          # версия внутри опубликованного exe должна совпасть с тегом
+          $p = Start-Process -FilePath ./publish/AutoZapret.exe -ArgumentList '--version' -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "published exe --version failed" }
 
       - name: Assemble portable package
         shell: pwsh
@@ -99,6 +142,21 @@ jobs:
 
           # ассеты и стратегии - часть продукта, без них приложение пустое
           Copy-Item 'assets' $stage -Recurse -Force
+
+          # движок идёт ВНУТРЬ пакета: обещание «скачал и работает» иначе ложь
+          if (Test-Path 'engine/bin/winws.exe') {
+            New-Item -ItemType Directory -Path (Join-Path $stage 'engine') -Force | Out-Null
+            robocopy engine (Join-Path $stage 'engine') /E /XO /NJH /NJS /NDL /NFL /NP /R:1 /W:1 | Out-Null
+            # robocopy: 0-7 успех, 8+ ошибка
+            if ($LASTEXITCODE -ge 8) { throw "engine copy failed with $LASTEXITCODE" }
+            $global:LASTEXITCODE = 0
+          } else {
+            throw "engine missing - refusing to publish a package that cannot work"
+          }
+
+          # скрипт обновления движка кладём рядом, иначе README отправляет в пустоту
+          New-Item -ItemType Directory -Path (Join-Path $stage 'tools') -Force | Out-Null
+          Copy-Item 'tools/fetch-engine.ps1' (Join-Path $stage 'tools') -Force
           # лицензии обязательны (MIT/LGPL требования)
           Copy-Item 'LICENSE'   $stage -Force
           Copy-Item 'licenses'  $stage -Recurse -Force
@@ -120,7 +178,10 @@ jobs:
             'Нужен только Microsoft Edge WebView2 Runtime (в Windows 11 уже есть,',
             'для Windows 10 - https://go.microsoft.com/fwlink/p/?LinkId=2124703).',
             '',
-            'Движок обхода DPI (zapret) скачивается отдельно:',
+            'Движок обхода DPI (zapret) уже внутри, в папке engine\.',
+            'Ничего скачивать не нужно.',
+            '',
+            'Обновить движок отдельно:',
             '    powershell -ExecutionPolicy Bypass -File tools\fetch-engine.ps1',
             '',
             'Это не VPN. WinDivert может вызвать реакцию антивируса - это ожидаемо.',
@@ -144,6 +205,9 @@ jobs:
                                 'AutoZapret/WebView2Loader.dll',
                                 'AutoZapret/assets/strategies/strategies.v1.json',
                                 'AutoZapret/assets/fakes/fakes.json',
+                                'AutoZapret/engine/bin/winws.exe',
+                                'AutoZapret/engine/bin/WinDivert64.sys',
+                                'AutoZapret/tools/fetch-engine.ps1',
                                 'AutoZapret/LICENSE',
                                 'AutoZapret/licenses/zapret-MIT.txt',
                                 'AutoZapret/licenses/zapret-custom-binaries-MIT.txt',

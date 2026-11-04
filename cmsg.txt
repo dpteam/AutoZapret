@@ -1,45 +1,50 @@
-feat(P9): own fake-payload generator (TLS ClientHello + QUIC Initial)
+fix(ci): robocopy exit code, engine in artifacts, version from tag + RU/EN interface
 
-The library has 1694 ready fakes from TLSpack, but they were captured on
-a particular day for particular domains. There is no fake for your own
-host, and borrowing someone else's SNI is a lottery. payloadGen cannot be
-shipped - no licence - so the generator is written from the RFCs.
+Three defects reported from GitHub Actions, all real:
 
-TlsClientHello builds a real TLS 1.3 record: GREASE value, 8 cipher
-suites, 16 extensions (server_name, supported_groups, key_share, ALPN
-h2/http1.1, signature_algorithms, supported_versions, padding and the
-rest), then pads with RFC 7685 to the requested size - 517 bytes by
-default, which is exactly what the TLSpack Chrome-like hello measures.
+1. "Successful build, step failed with exit code 1". robocopy returns 1
+   for "files were copied" - 0..7 is success, 8+ is failure. The Actions
+   pwsh wrapper exits with $LASTEXITCODE of the last command, so a
+   perfectly good copy failed the step. Now: explicit "-ge 8" check and
+   $LASTEXITCODE reset, with a comment explaining why.
 
-The important detail is key_share. It gets a REAL ECDH public key -
-X25519 via CNG curve25519, falling back to P-256 when the platform says
-no (it does on this machine). Dropping 32 random bytes there would have
-been three lines shorter and wrong: a random point is not a valid key,
-so the hello differs from a genuine one in a way a real endpoint notices
-immediately. Padding and GREASE are cosmetic; the key is not.
+2. The self-contained artifact shipped WITHOUT engine\, so the app
+   started and said "Engine is not installed". The release zip had the
+   same hole and told the user to run tools\fetch-engine.ps1 - which was
+   not in the archive either. Both workflows now put the engine inside,
+   release fails outright if the engine is missing, and tools/ is
+   packaged so the update instruction actually resolves.
 
-QuicInitial writes long header + version 1 + random payload, exactly 1200
-bytes as RFC 9000 demands. Random payload is not laziness: the contents
-of an Initial are encrypted under keys derived from the public DCID, so
-DPI sees only the header and length. A real CRYPTO frame would look
-identical from outside and cost AES-GCM + HKDF for zero effect.
+3. Release never set the version from the tag: v0.3.0 built with
+   <Version>0.2.0</Version> from csproj reports 0.2.0, so self-update
+   offers 0.3.0 forever - download, install, still 0.2.0, repeat. A
+   "Resolve version from tag" step now validates the tag shape and passes
+   -p:Version/-p:FileVersion/-p:AssemblyVersion to build and publish, and
+   the exe is asked for --version afterwards.
 
-Every generated payload is checked by our own PayloadValidator before it
-is written, and Inspect() reads it back from disk afterwards. If either
-check fails, nothing is saved - a broken .bin silently fed to
---dpi-desync-fake-tls is worse than no file.
+check-workflows.ps1 also learned to substitute ${{ ... }} before parsing:
+Actions expands those placeholders before PowerShell sees them, but the
+parser choked on them and reported false syntax errors.
 
-Domain input is normalised: a pasted URL, a port, a trailing dot all
-reduce to a bare host; 'localhost' and single words are rejected. File
-names match the library convention (tls_clienthello_<host>.bin) with dots
-turned into underscores, because the name ends up in winws arguments.
+Localisation RU/EN:
+- en.json embedded as a resource, key = Russian source text (gettext
+  style: msgid = source string), so no markup surgery across 650 lines.
+  translateDom() walks text nodes plus placeholder/title attributes;
+  dynamic labels go through t() and tf("{0} of {1}", ...).
+- Boundary stated honestly in the settings hint: the INTERFACE is
+  translated, while diagnostics and logs are produced in C# and stay
+  Russian. Pretending otherwise would be a lie the first time someone
+  opens the Diagnostics screen.
+- selftest: 191 keys, valid JSON, no empty or untranslated values, no
+  orphan keys (text edited but dictionary forgotten), templates keep
+  their {0} placeholders.
+- The orphan check caught itself: two keys I had added were unused, and
+  a long hint split across two lines needed whitespace-normalised
+  comparison.
 
-The UI says plainly what this is: a synthetic ClientHello, not a browser
-fingerprint, so nobody expects uTLS-grade parity from it.
+Also recorded the new pitfalls in AGENTS.md, including the one that bit
+me here: a literal "<script>" inside a comment in app.js breaks any tool
+that injects markup into the page.
 
-CLI: --gen-fake --sni <domain> [--type tls|quic|all] [--size N] [--out dir]
-UI: 'Собрать фейк под свой домен' in the fakes card (advanced mode)
-selftest: 42 checks - byte-level structure, record length consistency,
-SNI read back from the bytes, uniqueness across calls, padding to an
-exact size, QUIC header bits and version, size guards, name sanitising,
-save-then-reread, and refusal to save an invalid payload.
+ROADMAP gained section 11 "Final check" - the last pass before handover,
+which explicitly asks to look for half-finished work.

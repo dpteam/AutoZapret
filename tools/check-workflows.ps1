@@ -36,6 +36,13 @@ foreach ($file in $files) {
 
             $total++
             $text = $script.ToString()
+
+            # Actions подставляет ${{ ... }} ДО запуска PowerShell, поэтому
+            # парсер проверки не должен видеть эту конструкцию: для него это
+            # `$` + блок `{{ }}`, то есть синтаксическая ошибка. Заменяем на
+            # безопасную заглушку — важно проверить структуру самого скрипта.
+            $text = [regex]::Replace($text, '\$\{\{[^}]*\}\}', '""')
+
             $errors = $null
             [void][System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$null, [ref]$errors)
 

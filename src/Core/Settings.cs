@@ -46,6 +46,7 @@ namespace AutoZapret.Core
         public bool MinimizeToTray = true;
         public bool StartMinimized = false;
         public bool CloseToTrayHintShown = false;
+        public string Language = "ru";              // ru | en
 
         // ---- updates
         public bool UpdateEngine = true;
@@ -56,6 +57,13 @@ namespace AutoZapret.Core
         // ---- misc
         public string LastRunVersion = "";
         public string LastRunAt = "";
+
+        /// <summary>Язык интерфейса. Всё, что не «en», — русский.</summary>
+        public static string NormalizeLanguage(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return "ru";
+            return string.Equals(value.Trim(), "en", StringComparison.OrdinalIgnoreCase) ? "en" : "ru";
+        }
 
         private static readonly object Gate = new object();
         private static Settings _current;
@@ -156,6 +164,7 @@ namespace AutoZapret.Core
                 s.MinimizeToTray = Json.GetBool(ui, "minimizeToTray", s.MinimizeToTray);
                 s.StartMinimized = Json.GetBool(ui, "startMinimized", s.StartMinimized);
                 s.CloseToTrayHintShown = Json.GetBool(ui, "closeToTrayHintShown", s.CloseToTrayHintShown);
+                s.Language = Json.GetString(ui, "language", s.Language);
             }
 
             Dictionary<string, object> updates = Json.GetObject(map, "updates");
@@ -217,7 +226,8 @@ namespace AutoZapret.Core
                 "simpleMode", SimpleMode,
                 "minimizeToTray", MinimizeToTray,
                 "startMinimized", StartMinimized,
-                "closeToTrayHintShown", CloseToTrayHintShown);
+                "closeToTrayHintShown", CloseToTrayHintShown,
+                "language", Language);
 
             root["updates"] = Map(
                 "engine", UpdateEngine,

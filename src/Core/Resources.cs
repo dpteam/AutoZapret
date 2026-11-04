@@ -16,6 +16,9 @@ namespace AutoZapret.Core
         public const string AppJs = "AutoZapret.Web.app.js";
         public const string ThemeCss = "AutoZapret.Web.theme.css";
 
+        /// <summary>Словарь перевода. Русский не нужен: исходный текст и есть русский.</summary>
+        public const string EnglishDict = "AutoZapret.Web.i18n.en.json";
+
         /// <summary>Читает ресурс. При отсутствии возвращает пустую строку (не null).</summary>
         public static string Text(string logicalName)
         {

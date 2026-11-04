@@ -34,6 +34,105 @@
     var pendingSettings = {};
     var netSpeedTimer = null;
 
+    // ------------------------------------------------------------- локализация
+    //
+    // Ключ словаря — русский исходный текст (подход gettext: msgid = исходная
+    // строка). Почему так, а не data-i18n на каждом узле: разметка уже написана
+    // по-русски, и расставлять ключи по 650 строкам — это сотни правок, каждая
+    // из которых может сломать вёрстку. Здесь же ноль изменений в HTML.
+    //
+    // Что переводится: интерфейс — подписи, кнопки, подсказки, заголовки.
+    // Что НЕ переводится: тексты, которые присылает движок (диагностика, логи,
+    // названия проверок). Они рождаются в C# и живут в русском.
+    var i18nDict = null;          // null = русский, перевод не нужен
+    var i18nLang = "ru";
+
+    function t(source) {
+        if (!i18nDict || !source) return source;
+
+        var value = i18nDict[source];
+        return typeof value === "string" ? value : source;
+    }
+
+    /// <summary>Шаблон с подстановками: tf("{0} из {1}", a, b).</summary>
+    function tf(source) {
+        var text = t(source);
+        for (var i = 1; i < arguments.length; i++) {
+            text = text.split("{" + (i - 1) + "}").join(String(arguments[i]));
+        }
+        return text;
+    }
+
+    function applyLanguage(lang, json) {
+        i18nLang = lang === "en" ? "en" : "ru";
+
+        if (i18nLang === "en" && json) {
+            try {
+                var parsed = JSON.parse(json);
+                i18nDict = parsed && typeof parsed === "object" ? parsed : null;
+            } catch (e) {
+                console.warn("словарь перевода не разобран:", e);
+                i18nDict = null;
+            }
+        } else {
+            i18nDict = null;
+        }
+
+        document.documentElement.lang = i18nLang;
+        translateDom();
+
+        // динамические подписи (статус, подсказки движка) уже отрисованы
+        // по-русски — перерисуем из последнего состояния
+        if (state && state.version) renderState(state);
+    }
+
+    /// <summary>
+    /// Переводит статический текст в разметке: текстовые узлы, placeholder и title.
+    /// Пробелы по краям сохраняются, чтобы не поехала вёрстка.
+    /// </summary>
+    function translateDom() {
+        if (!i18nDict) return;
+
+        var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+        var nodes = [];
+
+        while (walker.nextNode()) {
+            var node = walker.currentNode;
+            var parent = node.parentNode;
+
+            // внутри тега script лежит весь app.js — его переводить нельзя
+            if (parent && (parent.nodeName === "SCRIPT" || parent.nodeName === "STYLE")) continue;
+            nodes.push(node);
+        }
+
+        for (var i = 0; i < nodes.length; i++) {
+            var value = nodes[i].nodeValue;
+            if (!value || !/[А-Яа-яЁё]/.test(value)) continue;
+
+            var key = value.replace(/\s+/g, " ").trim();
+            var translated = i18nDict[key];
+            if (typeof translated !== "string") continue;
+
+            var lead = value.match(/^\s*/)[0];
+            var trail = value.match(/\s*$/)[0];
+            nodes[i].nodeValue = lead + translated + trail;
+        }
+
+        var withPlaceholder = document.querySelectorAll("[placeholder]");
+        for (var p = 0; p < withPlaceholder.length; p++) {
+            var ph = withPlaceholder[p].getAttribute("placeholder");
+            var phKey = ph.replace(/\s+/g, " ").trim();
+            if (i18nDict[phKey]) withPlaceholder[p].setAttribute("placeholder", i18nDict[phKey]);
+        }
+
+        var withTitle = document.querySelectorAll("[title]");
+        for (var k = 0; k < withTitle.length; k++) {
+            var ti = withTitle[k].getAttribute("title");
+            var tiKey = ti.replace(/\s+/g, " ").trim();
+            if (i18nDict[tiKey]) withTitle[k].setAttribute("title", i18nDict[tiKey]);
+        }
+    }
+
     // ------------------------------------------------------------ навигация
 
     function showScreen(name) {
@@ -156,21 +255,32 @@
         "error": "Ошибка"
     };
 
+    var i18nRequested = "";
+
+    function requestLanguage(lang) {
+        if (i18nRequested === lang) return;
+        i18nRequested = lang;
+        send("i18n.get", { lang: lang });
+    }
+
     function renderState(s) {
         state = s || {};
 
+        // язык пришёл в настройках — подтягиваем словарь один раз на смену
+        if (s.language && s.language !== i18nLang) requestLanguage(s.language);
+
         text("env-mode", s.portable ? "portable" : "installed");
-        text("env-admin", s.admin ? "администратор" : "без прав админа");
+        text("env-admin", t(s.admin ? "администратор" : "без прав админа"));
 
         // главная
         var protection = s.protection || "off";
-        text("status-text", PROTECTION_LABEL[protection] || protection);
+        text("status-text", t(PROTECTION_LABEL[protection] || protection));
 
         var detail;
-        if (!s.engineReady) detail = s.engineProblem || "Движок не установлен";
-        else if (protection === "running") detail = "Стратегия: " + (s.activeStrategy || "—") + " · " + fmtUptime(s.uptimeSec);
-        else if (protection === "error") detail = s.protectionError || "Ошибка";
-        else detail = "Движок " + (s.engineVersion || "?") + " готов";
+        if (!s.engineReady) detail = s.engineProblem || t("Движок не установлен");
+        else if (protection === "running") detail = tf("Стратегия: {0} · {1}", s.activeStrategy || "—", fmtUptime(s.uptimeSec));
+        else if (protection === "error") detail = s.protectionError || t("Ошибка");
+        else detail = tf("Движок {0} готов", s.engineVersion || "?");
         text("status-detail", detail);
 
         // предупреждение о проблеме с движком
@@ -180,7 +290,7 @@
             notice.style.display = show ? "" : "none";
             if (show) {
                 document.getElementById("p0-notice-text").innerHTML =
-                    "Движок не установлен. Выполните в папке с программой:<br>" +
+                    t("Движок не установлен. Выполните в папке с программой:") + "<br>" +
                     "<span class='mono'>powershell -ExecutionPolicy Bypass -File tools\\fetch-engine.ps1</span>";
             }
         }
@@ -211,7 +321,7 @@
         if (sel && s.strategyId && sel.value !== s.strategyId) sel.value = s.strategyId;
 
         text("game-filter", GAME_FILTER_LABEL[s.gameFilter] || s.gameFilter);
-        text("proxy-state", s.proxyEnabled ? "включён" : "выключен");
+        text("proxy-state", t(s.proxyEnabled ? "включён" : "выключен"));
 
         // настройки
         setSelect("set-engine", s.engineKind);
@@ -219,11 +329,11 @@
         if (engHint) {
             if (s.engineKind === "v2") {
                 engHint.textContent = s.engineV2
-                    ? "zapret 2 — новее, но lua-скрипты чувствительны к версии"
-                    : (s.engineV2Reason || "zapret 2 не установлен");
+                    ? t("zapret 2 — новее, но lua-скрипты чувствительны к версии")
+                    : (s.engineV2Reason || t("zapret 2 не установлен"));
                 engHint.className = "row-hint " + (s.engineV2 ? "" : "diag-bad");
             } else {
-                engHint.textContent = "zapret 1 — проверенный, совместимый";
+                engHint.textContent = t("zapret 1 — проверенный, совместимый");
                 engHint.className = "row-hint";
             }
         }
@@ -246,10 +356,13 @@
         // о программе
         text("about-version", s.version);
         text("about-os", s.os);
-        text("about-admin", s.admin ? "администратор" : "обычный пользователь");
+        text("about-admin", t(s.admin ? "администратор" : "обычный пользователь"));
         text("about-portable", s.portable ? "portable (рядом с exe)" : "installed (LocalAppData)");
         text("about-datadir", s.dataDir);
         text("about-webview2", s.webview2);
+
+        var langSelect = document.getElementById("set-language");
+        if (langSelect && s.language) langSelect.value = s.language;
     }
 
     function fmtUptime(sec) {
@@ -257,9 +370,9 @@
         var h = Math.floor(sec / 3600);
         var m = Math.floor((sec % 3600) / 60);
         var s = sec % 60;
-        if (h > 0) return h + " ч " + m + " мин";
-        if (m > 0) return m + " мин " + s + " с";
-        return s + " с";
+        if (h > 0) return tf("{0} ч {1} мин", h, m);
+        if (m > 0) return tf("{0} мин {1} с", m, s);
+        return tf("{0} с", s);
     }
 
     function renderStrategies(items) {
@@ -1253,6 +1366,11 @@
         if (channel) channel.addEventListener("change", function () {
             queueSave({ updateChannel: channel.value });
         });
+
+        var language = document.getElementById("set-language");
+        if (language) language.addEventListener("change", function () {
+            queueSave({ language: language.value });
+        });
     }
 
     function renderUpdateState(msg) {
@@ -1435,6 +1553,10 @@
                 renderFakeGenerated(msg);
                 break;
 
+            case "i18n":
+                applyLanguage(msg.lang, msg.json);
+                break;
+
             case "logs":
                 logLines = msg.lines || [];
                 text("log-file", msg.file);
@@ -1498,4 +1620,30 @@
     } else {
         boot();
     }
+
+    // Отладочная точка входа: позволяет проверить перевод в обычном браузере,
+    // без моста WebView2 (в CI и при ручной проверке вёрстки). Ничего не
+    // включает и не меняет настройки — только применяет словарь.
+    window.azDebug = {
+        applyLanguage: applyLanguage,
+        t: t,
+        tf: tf,
+        translateDom: translateDom,
+        missingKeys: function () {
+            // какие русские строки в разметке остались без перевода
+            if (!i18nDict) return [];
+            var out = [];
+            var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+            while (walker.nextNode()) {
+                var node = walker.currentNode;
+                var parent = node.parentNode;
+                if (parent && (parent.nodeName === "SCRIPT" || parent.nodeName === "STYLE")) continue;
+                var value = node.nodeValue;
+                if (!value || !/[А-Яа-яЁё]/.test(value)) continue;
+                var key = value.replace(/\s+/g, " ").trim();
+                if (!i18nDict[key]) out.push(key);
+            }
+            return out;
+        }
+    };
 })();

@@ -318,6 +318,17 @@ namespace AutoZapret.App
                 RunInBackground("test", () => RunTestUi(count));
             });
 
+            // ---- язык интерфейса: словарь вшит в exe, наружу ничего не пишется
+            bridge.Register("i18n.get", msg =>
+            {
+                string lang = NormalizeLanguage(Json.GetString(msg, "lang", _settings.Language));
+                string dict = lang == "en" ? Resources.Text(Resources.EnglishDict) : "";
+
+                bridge.Send(WebBridge.Msg("i18n",
+                    "lang", lang,
+                    "json", dict ?? ""));
+            });
+
             // ---- трафик (по запросу, раз в секунду пока открыта главная)
             bridge.Register("net.speed", msg =>
             {
@@ -1138,6 +1149,12 @@ namespace AutoZapret.App
             });
         }
 
+        /// <summary>Допустимые языки интерфейса. Всё остальное — русский.</summary>
+        public static string NormalizeLanguage(string value)
+        {
+            return Settings.NormalizeLanguage(value);
+        }
+
         private void PushAutoStart()
         {
             AutoStartStatus status = AutoStartManager.Query();
@@ -1571,6 +1588,7 @@ namespace AutoZapret.App
                 "updateApp", _settings.UpdateApp,
                 "updateLists", _settings.UpdateLists,
                 "updateChannel", _settings.UpdateChannel,
+                "language", _settings.Language,
                 "autoStartProtect", _settings.AutoStart,
                 "processPresets", _settings.ProcessPresets,
                 "logFile", Log.CurrentFile ?? "");
@@ -1618,6 +1636,7 @@ namespace AutoZapret.App
             _settings.MinimizeToTray = Json.GetBool(msg, "minimizeToTray", _settings.MinimizeToTray);
             _settings.StartMinimized = Json.GetBool(msg, "startMinimized", _settings.StartMinimized);
             _settings.AutoStart = Json.GetBool(msg, "autoStart", _settings.AutoStart);
+            _settings.Language = NormalizeLanguage(Json.GetString(msg, "language", _settings.Language));
             _settings.UpdateEngine = Json.GetBool(msg, "updateEngine", _settings.UpdateEngine);
             _settings.UpdateApp = Json.GetBool(msg, "updateApp", _settings.UpdateApp);
             _settings.UpdateLists = Json.GetBool(msg, "updateLists", _settings.UpdateLists);

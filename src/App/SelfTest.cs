@@ -126,6 +126,9 @@ namespace AutoZapret.App
 
                 Section("генератор фейков");
                 TestFakeGenerator();
+
+                Section("локализация");
+                TestLocalization();
             }
             catch (Exception ex)
             {
@@ -1176,6 +1179,123 @@ namespace AutoZapret.App
         /// и что SNI реально читается из байтов: «выглядит как TLS» проверяется
         /// разбором, а не на глаз.
         /// </summary>
+        /// <summary>
+        /// Локализация. Проверяем то, что реально ломается: битый JSON, ключи,
+        /// которые никто не использует после правки текста, и переводы-пустышки.
+        /// </summary>
+        private static void TestLocalization()
+        {
+            string json = Resources.Text(Resources.EnglishDict);
+
+            Check("словарь en вшит в exe", json.Length > 0, json.Length + " символов");
+
+            if (json.Length == 0) return;
+
+            Dictionary<string, object> map = null;
+            bool parsed = true;
+
+            try { map = Json.ParseObjectSafe(json); }
+            catch { parsed = false; }
+
+            Check("словарь: это валидный JSON", parsed && map != null, parsed ? "ok" : "не разобран");
+
+            if (map == null) return;
+
+            int real = 0, cyrillic = 0, empty = 0;
+
+            foreach (KeyValuePair<string, object> pair in map)
+            {
+                if (pair.Key.StartsWith("_", StringComparison.Ordinal)) continue;   // служебные заметки
+
+                real++;
+
+                string value = pair.Value as string;
+
+                if (string.IsNullOrEmpty(value)) { empty++; continue; }
+
+                // в переводе не должно быть кириллицы: значит, его забыли перевести
+                foreach (char c in value)
+                {
+                    if (c >= 'А' && c <= 'я' || c == 'Ё' || c == 'ё') { cyrillic++; break; }
+                }
+            }
+
+            Check("словарь: есть переводы", real > 100, real + " ключей");
+            Check("словарь: нет пустых переводов", empty == 0, empty + " пустых");
+            Check("словарь: нет непереведённых значений", cyrillic == 0, cyrillic + " с кириллицей");
+
+            // ---- ключи-сироты: текст в интерфейсе переписали, словарь забыли
+            //
+            // Сравниваем с нормализованными пробелами: в разметке длинная подсказка
+            // перенесена на две строки, а в словаре — одна строка. Для translateDom
+            // это неважно (он сам схлопывает пробелы), а для поиска подстроки важно.
+            string html = Resources.Text(Resources.UiHtml);
+            string js = Resources.Text(Resources.AppJs);
+
+            Check("ui.html вшит", html.Length > 0, html.Length + " символов");
+            Check("app.js вшит", js.Length > 0, js.Length + " символов");
+
+            string flatHtml = System.Text.RegularExpressions.Regex.Replace(html ?? "", @"\s+", " ");
+            string flatJs = System.Text.RegularExpressions.Regex.Replace(js ?? "", @"\s+", " ");
+
+            List<string> orphans = new List<string>();
+
+            foreach (KeyValuePair<string, object> pair in map)
+            {
+                if (pair.Key.StartsWith("_", StringComparison.Ordinal)) continue;
+
+                string key = System.Text.RegularExpressions.Regex.Replace(pair.Key, @"\s+", " ");
+
+                if (flatHtml.IndexOf(key, StringComparison.Ordinal) < 0 &&
+                    flatJs.IndexOf(key, StringComparison.Ordinal) < 0)
+                    orphans.Add(pair.Key);
+            }
+
+            Check("словарь: нет ключей-сирот", orphans.Count == 0,
+                orphans.Count == 0 ? "ok" : OrphanPreview(orphans));
+
+            // ---- ключевые переводы на месте (защита от случайной путаницы)
+            Check("перевод: Главная -> Home",
+                Json.GetString(map, "Главная", "") == "Home", Json.GetString(map, "Главная", ""));
+            Check("перевод: Диагностика -> Diagnostics",
+                Json.GetString(map, "Диагностика", "") == "Diagnostics", "ok");
+            Check("перевод: Сохранить -> Save",
+                Json.GetString(map, "Сохранить", "") == "Save", "ok");
+
+            // ---- шаблоны с подстановками не должны потерять плейсхолдеры
+            Check("шаблон: {0} и {1} сохранены",
+                Json.GetString(map, "Стратегия: {0} · {1}", "") == "Strategy: {0} · {1}",
+                Json.GetString(map, "Стратегия: {0} · {1}", ""));
+
+            // ---- нормализация языка в настройках
+            Check("язык: en", Settings.NormalizeLanguage("EN") == "en", "ok");
+            Check("язык: мусор -> ru", Settings.NormalizeLanguage("de") == "ru", "ok");
+            Check("язык: пусто -> ru", Settings.NormalizeLanguage("") == "ru", "ok");
+
+            // ---- настройки переживают сохранение языка
+            Settings probe = new Settings();
+            probe.Language = "en";
+            string roundTrip = probe.ToJson();
+            Check("настройки: язык сохраняется",
+                roundTrip.IndexOf("\"language\":\"en\"", StringComparison.Ordinal) >= 0,
+                "ok");
+        }
+
+        private static string OrphanPreview(List<string> orphans)
+        {
+            int take = Math.Min(5, orphans.Count);
+            StringBuilder sb = new StringBuilder();
+
+            for (int i = 0; i < take; i++)
+            {
+                if (i > 0) sb.Append(", ");
+                sb.Append(orphans[i]);
+            }
+
+            if (orphans.Count > take) sb.Append(" и ещё ").Append(orphans.Count - take);
+            return sb.ToString();
+        }
+
         private static void TestFakeGenerator()
         {
             // ---- нормализация домена

@@ -105,6 +105,9 @@
     <EmbeddedResource Include="web\theme.css">
       <LogicalName>AutoZapret.Web.theme.css</LogicalName>
     </EmbeddedResource>
+    <EmbeddedResource Include="web\i18n\en.json">
+      <LogicalName>AutoZapret.Web.i18n.en.json</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
   <ItemGroup>
