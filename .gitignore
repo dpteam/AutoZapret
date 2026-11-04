@@ -50,6 +50,9 @@ logs/
 launcher.log
 selftest*.txt
 
+# локальный CI (tools\ci-local.ps1): пакеты, логи прогонов, расширенные отчёты
+artifacts/
+
 # generated lists: downloaded, regenerated, never committed
 data/lists/*.txt
 !assets/lists/*.txt

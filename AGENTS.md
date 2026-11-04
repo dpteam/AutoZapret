@@ -64,10 +64,20 @@ powershell -File tools\fetch-webview2.ps1
 powershell -File tools\fetch-engine.ps1
 AutoZapret.exe --selftest              :: пишет selftest.txt, код возврата 0/1
 AutoZapret.exe --selftest --require-engine  :: строго: без движка падает
-powershell -File tools\ci-test.ps1     :: всё сразу
+powershell -File tools\ci-test.ps1     :: проверки без пакета (быстро)
+powershell -File tools\ci-local.ps1    :: ПОЛНЫЙ локальный CI (+артефакт в artifacts\)
+powershell -File tools\ci-local.ps1 -Publish  :: + self-contained пакет
+powershell -File tools\headless.ps1 -Set safe :: прогон с ОДНИМ UAC (нужен админ)
 ```
 
-Правило: **не коммитить, если `build.cmd` или `--selftest` не зелёные.**
+**Правило: не коммитить, если `tools\ci-local.ps1` не зелёный.**
+Это наш собственный CI — GitHub Actions иногда деградирует или ставит задачу
+в очередь навсегда, и ждать его бессмысленно. `ci-local.ps1` делает то же
+самое локально: workflow-файлы, кодировки, целостность UI, словарь переводов,
+сборка без предупреждений, `--selftest`, строгий selftest с движком,
+расширенный диагностический отчёт и пакет. Результат — `artifacts\`
+(`autozapret-<версия>-<sha>.zip`, `ci-*.log`, `last-run.txt`, `diag\`).
+
 Перед тестами остановить `AutoZapret.exe` и `winws.exe` (иначе файл занят и сборка падает).
 
 **build.cmd против publish.cmd.** `build.cmd` — для разработки: быстро, но требует
