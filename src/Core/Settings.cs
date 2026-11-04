@@ -32,10 +32,11 @@ namespace AutoZapret.Core
         // прошлый выбор «сгорал» — человек каждый раз заново искал свою стратегию.
         public string StrategyIdV1 = "";
         public string StrategyIdV2 = "";
-        public string GameFilter = "tcp+udp";      // off | tcp | udp | tcp+udp
+        public string GameFilter = "off";          // off | tcp | udp | tcp+udp
         public string IpsetMode = "loaded";        // off | loaded | any
         public bool AutoStart = false;             // включать обход при запуске приложения
         public bool AutoStartMigrated = false;     // разовая миграция: раньше было true
+        public bool GameFilterMigrated = false;    // разовая миграция: игровой фильтр был включён
         public bool ReconnectOnStrategy = true;    // перезапускать обход при смене стратегии
         public bool ServiceMode = false;           // запускать как службу, а не как процесс
         public bool AutoPilot = false;             // автоподбор стратегии в фоне
@@ -160,6 +161,21 @@ namespace AutoZapret.Core
                     s.AutoStart = false;
                     s.AutoStartMigrated = true;
                 }
+
+                // Разовая миграция: игровой фильтр был включён по умолчанию, а это
+                // `--wf-tcp=…,1024-65535` — WinDivert ловит ВЕСЬ трафик машины.
+                // У Flowseal игровой фильтр по умолчанию выключен, и перехват
+                // только нужных портов. Лишний перехват — это лишние потери пакетов,
+                // из-за которых TLS-соединения рвутся «сами по себе».
+                s.GameFilterMigrated = Json.GetBool(zapret, "gameFilterMigrated", s.GameFilterMigrated);
+
+                if (!s.GameFilterMigrated)
+                {
+                    if (string.Equals(s.GameFilter, "tcp+udp", StringComparison.OrdinalIgnoreCase))
+                        s.GameFilter = "off";
+
+                    s.GameFilterMigrated = true;
+                }
                 s.ServiceMode = Json.GetBool(zapret, "serviceMode", s.ServiceMode);
                 s.AutoPilot = Json.GetBool(zapret, "autoPilot", s.AutoPilot);
                 s.ProcessPresets = Json.GetBool(zapret, "processPresets", s.ProcessPresets);
@@ -245,6 +261,7 @@ namespace AutoZapret.Core
                 "ipsetMode", IpsetMode,
                 "autoStart", AutoStart,
                 "autoStartMigrated", AutoStartMigrated,
+                "gameFilterMigrated", GameFilterMigrated,
                 "reconnectOnStrategy", ReconnectOnStrategy,
                 "serviceMode", ServiceMode,
                 "autoPilot", AutoPilot,

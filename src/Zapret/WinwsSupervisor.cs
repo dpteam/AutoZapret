@@ -51,7 +51,7 @@ namespace AutoZapret.Zapret
         /// что на деле он мог ничего не перехватывать.
         /// </summary>
         private readonly Queue<string> _output = new Queue<string>();
-        private const int OutputLimit = 120;
+        private const int OutputLimit = 600;
 
         /// <summary>Сколько строк stdout уже выведено в Info: защита от потока отладки.</summary>
         private int _outputLines;
@@ -87,8 +87,13 @@ namespace AutoZapret.Zapret
 
         /// <summary>
         /// Запустить стратегию. Возвращает null при успехе, иначе текст ошибки.
+        ///
+        /// extraArgs — служебные параметры поверх стратегии (например `--debug=1`,
+        /// чтобы winws рассказал, что он делает с пакетами). Одноимённые параметры
+        /// из стратегии при этом убираются: два `--debug` winws не поймёт.
         /// </summary>
-        public string Start(Strategy strategy, Dictionary<string, string> placeholders)
+        public string Start(Strategy strategy, Dictionary<string, string> placeholders,
+                            List<string> extraArgs = null)
         {
             if (strategy == null) return "Стратегия не выбрана.";
 
@@ -123,6 +128,8 @@ namespace AutoZapret.Zapret
             SetState(ProtectionState.Starting, null);
 
             List<string> args = strategy.BuildArguments(placeholders);
+            if (extraArgs != null && extraArgs.Count > 0) args = MergeArgs(args, extraArgs);
+
             Log.Info("WINWS", "старт " + kind + " стратегии '" + strategy.Name + "', аргументов: " + args.Count);
 
             try
@@ -202,6 +209,40 @@ namespace AutoZapret.Zapret
         }
 
         /// <summary>
+        /// Добавить служебные аргументы к аргументам стратегии.
+        ///
+        /// `--debug=N` из extra заменяет такой же из стратегии (в v2 он всегда
+        /// `--debug=0`, и без замены мы бы не получили ни одной строки). Сами
+        /// служебные аргументы ставим в начало: глобальные параметры winws
+        /// действуют на все профили независимо от места.
+        /// </summary>
+        private static List<string> MergeArgs(List<string> args, List<string> extra)
+        {
+            List<string> result = new List<string>(args);
+
+            foreach (string e in extra)
+            {
+                int eq = e.IndexOf('=');
+                string name = eq > 0 ? e.Substring(0, eq) : e;
+
+                // убираем прежние значения того же параметра
+                for (int i = result.Count - 1; i >= 0; i--)
+                {
+                    string a = result[i];
+
+                    if (string.Equals(a, name, StringComparison.OrdinalIgnoreCase) ||
+                        a.StartsWith(name + "=", StringComparison.OrdinalIgnoreCase))
+                    {
+                        result.RemoveAt(i);
+                    }
+                }
+            }
+
+            result.InsertRange(0, extra);
+            return result;
+        }
+
+        /// <summary>
         /// Вывод winws. Первые строки — в Info (их видно в обычном логе), дальше —
         /// в Debug, чтобы включённый `--debug` не превратил лог в мешанину.
         /// Строки с явной ошибкой всегда идут в Warn.
@@ -268,6 +309,33 @@ namespace AutoZapret.Zapret
                 return all.GetRange(from, all.Count - from);
             }
         }
+
+        /// <summary>
+        /// Слить весь накопленный вывод в файл. Нужно для отладочного прогона:
+        /// в логе живут только первые строки, а разбираться приходится по всем.
+        /// </summary>
+        public bool SaveOutput(string path)
+        {
+            try
+            {
+                string dir = System.IO.Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(dir) && !System.IO.Directory.Exists(dir))
+                    System.IO.Directory.CreateDirectory(dir);
+
+                List<string> all;
+                lock (_gate) all = new List<string>(_output);
+
+                System.IO.File.WriteAllLines(path, all.ToArray(), new System.Text.UTF8Encoding(false));
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.Exception("WINWS", "сохранение вывода движка", ex);
+                return false;
+            }
+        }
+
+        /// <summary>Код Windows «требуется повышение прав».</summary>
 
         /// <summary>Код Windows «требуется повышение прав».</summary>
         public const int ErrorElevationRequired = 740;

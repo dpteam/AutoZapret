@@ -287,7 +287,16 @@
               <option value="22" selected>все 22</option>
             </select>
             <button class="btn primary diag-run-btn" id="btn-diag-test">Подобрать</button>
+            <button class="btn diag-run-btn" id="btn-diag-explain" title="Запустить выбранную стратегию с отладочным выводом winws">Объяснить выбранную</button>
           </div>
+        </div>
+        <div class="row-hint" style="margin-top:6px">
+          «Объяснить» запускает одну стратегию с отладочным выводом winws и показывает,
+          что он сделал с соединениями. Полезно, когда все стратегии дают нули
+        </div>
+        <div id="diag-explain-result" style="display:none;margin-top:12px">
+          <div class="row-hint mono" id="diag-explain-summary"></div>
+          <pre class="mini-log" id="diag-explain-log" style="max-height:340px;margin-top:8px"></pre>
         </div>
         <div id="diag-test-progress" style="display:none;margin-top:12px">
           <div class="progress-bar"><div class="progress-fill" id="diag-test-fill" style="width:0%"></div></div>

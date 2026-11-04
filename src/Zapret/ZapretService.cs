@@ -53,6 +53,25 @@ namespace AutoZapret.Zapret
             return _supervisor.RecentOutput(maxLines);
         }
 
+        /// <summary>Слить весь вывод движка в файл (для отладочного прогона).</summary>
+        public bool SaveEngineOutput(string path)
+        {
+            return _supervisor.SaveOutput(path);
+        }
+
+        /// <summary>
+        /// Запуск стратегии с отладочным выводом winws.
+        ///
+        /// Зачем: когда «движок запущен, аргументы правильные, а не работает»,
+        /// остаётся один вопрос — применяет ли winws правила к нашим пакетам.
+        /// `--debug=1` заставляет его рассказывать это в stdout, а stdout мы
+        /// теперь читаем целиком.
+        /// </summary>
+        public string StartWithDebug(string strategyId, int level)
+        {
+            return Start(strategyId, null, new List<string> { "--debug=" + Math.Max(1, level) });
+        }
+
         /// <summary>
         /// Гарантирует, что стратегии загружены.
         /// Порядок для каждого движка: кэш JSON -> импорт из .bat -> ничего.
@@ -164,6 +183,15 @@ namespace AutoZapret.Zapret
         /// </summary>
         public string Start(string strategyId, string gameFilterOverride)
         {
+            return Start(strategyId, gameFilterOverride, null);
+        }
+
+        /// <summary>
+        /// Полный вариант запуска: плюс служебные аргументы поверх стратегии.
+        /// Отдельный метод, чтобы обычные вызовы не могли случайно передать лишнее.
+        /// </summary>
+        public string Start(string strategyId, string gameFilterOverride, List<string> extraArgs)
+        {
             EnsureStrategies();
 
             Strategy strategy = _store.Find(strategyId);
@@ -191,7 +219,7 @@ namespace AutoZapret.Zapret
             // и битый файл превращается в «стратегия не работает» без объяснений.
             ValidatePayloads(strategy, placeholders);
 
-            return _supervisor.Start(strategy, placeholders);
+            return _supervisor.Start(strategy, placeholders, extraArgs);
         }
 
         /// <summary>Предупреждает в лог о битых фейках. Не блокирует запуск.</summary>

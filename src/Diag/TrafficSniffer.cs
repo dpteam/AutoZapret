@@ -111,11 +111,14 @@ namespace AutoZapret.Diag
             byte[] address = new byte[WinDivertInterop.AddressSize];
             IntPtr addressPtr = Marshal.AllocHGlobal(WinDivertInterop.AddressSize);
 
-            DateTime until = DateTime.UtcNow.AddSeconds(result.Seconds);
-
-            try
+            // WinDivertRecv блокируется до прихода пакета, поэтому «спать 8 секунд»
+            // в этом же потоке нельзя: без трафика проверка висела бы вечно
+            // (вживую видели 36 секунд вместо 8). Читаем в отдельном потоке,
+            // а по времени закрываем хэндл — recv сразу вернёт ошибку.
+            ManualResetEvent stop = new ManualResetEvent(false);
+            Thread reader = new Thread(delegate ()
             {
-                while (DateTime.UtcNow < until && !cancel.IsCancellationRequested)
+                while (!stop.WaitOne(0) && !cancel.IsCancellationRequested)
                 {
                     uint recvLen;
 
@@ -133,45 +136,74 @@ namespace AutoZapret.Diag
                             continue;
                         }
 
+                        // 6 = хэндл закрыт нами по времени — это штатное завершение
+                        if (error == 6) break;
+
                         result.Error = "ошибка приёма: " + error;
-                        return result;
+                        break;
                     }
 
-                    result.Total++;
-
-                    Marshal.Copy(addressPtr, address, 0, WinDivertInterop.AddressSize);
-                    WinDivertAddress addr = WinDivertAddress.FromBuffer(address);
-
-                    if (addr.Outbound) result.Outbound++; else result.Inbound++;
-
-                    PacketInfo info;
-                    if (!PacketParser.TryParse(packet, (int)recvLen, addr.IsIPv6, out info)) continue;
-
-                    // TLS ClientHello начинается с 0x16 0x03
-                    if (!info.HasPayload) continue;
-                    if (packet[info.PayloadOffset] != 0x16) continue;
-                    if (info.PayloadLength < 5 || packet[info.PayloadOffset + 1] != 0x03) continue;
-
-                    result.Tls++;
-
-                    byte[] payload = new byte[info.PayloadLength];
-                    Array.Copy(packet, info.PayloadOffset, payload, 0, info.PayloadLength);
-
-                    string sni = PayloadValidator.ExtractSni(payload, PayloadKind.TlsClientHello);
-
-                    if (sni.Length == 0) continue;
-
-                    result.WithSni++;
-                    if (!result.Snis.Contains(sni)) result.Snis.Add(sni);
+                    try { Count(result, packet, (int)recvLen, addressPtr, address); }
+                    catch (Exception ex) { Log.Debug("DIAG", "сниффер: " + ex.Message); }
                 }
+            })
+            { IsBackground = true, Name = "sniffer-recv" };
 
-                result.Ok = true;
+            try
+            {
+                reader.Start();
+
+                int wait = (int)Math.Min(int.MaxValue, result.Seconds * 1000L);
+
+                WaitHandle.WaitAny(new WaitHandle[] { cancel.WaitHandle }, wait);
+
+                stop.Set();
+                WinDivertInterop.WinDivertClose(handle);
+                reader.Join(1500);
+
+                result.Ok = result.Error.Length == 0;
                 return result;
             }
             finally
             {
                 Marshal.FreeHGlobal(addressPtr);
-                WinDivertInterop.WinDivertClose(handle);
+                try { WinDivertInterop.WinDivertClose(handle); } catch { }
+            }
+        }
+
+        /// <summary>Разбор одного пакета: считаем и, если это ClientHello, вытаскиваем SNI.</summary>
+        private static void Count(SniffResult result, byte[] packet, int length,
+                                  IntPtr addressPtr, byte[] address)
+        {
+            result.Total++;
+
+            Marshal.Copy(addressPtr, address, 0, WinDivertInterop.AddressSize);
+            WinDivertAddress addr = WinDivertAddress.FromBuffer(address);
+
+            if (addr.Outbound) result.Outbound++; else result.Inbound++;
+
+            PacketInfo info;
+            if (!PacketParser.TryParse(packet, length, addr.IsIPv6, out info)) return;
+
+            // TLS ClientHello начинается с 0x16 0x03
+            if (!info.HasPayload) return;
+            if (packet[info.PayloadOffset] != 0x16) return;
+            if (info.PayloadLength < 5 || packet[info.PayloadOffset + 1] != 0x03) return;
+
+            result.Tls++;
+
+            byte[] payload = new byte[info.PayloadLength];
+            Array.Copy(packet, info.PayloadOffset, payload, 0, info.PayloadLength);
+
+            string sni = PayloadValidator.ExtractSni(payload, PayloadKind.TlsClientHello);
+
+            if (sni.Length == 0) return;
+
+            result.WithSni++;
+
+            lock (result.Snis)
+            {
+                if (!result.Snis.Contains(sni)) result.Snis.Add(sni);
             }
         }
     }

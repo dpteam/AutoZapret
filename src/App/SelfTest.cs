@@ -254,6 +254,27 @@ namespace AutoZapret.App
             string url = link.BuildProxyLink();
             Check("ссылка tg://proxy", url == "tg://proxy?server=127.0.0.1&port=1443&secret=dd" + new string('a', 32), url);
 
+            // ---- миграция игрового фильтра: агрессивный default не должен остаться
+            //      у старых установок (перехват всего трафика рвёт соединения)
+            try
+            {
+                AtomicFile.WriteAllText(Paths.SettingsFile,
+                    "{\"schema\":1,\"zapret\":{\"gameFilter\":\"tcp+udp\",\"gameFilterMigrated\":false}}");
+
+                Settings migrated = Settings.Load();
+                Check("игровой фильтр: миграция на off", migrated.GameFilter == "off", migrated.GameFilter);
+
+                AtomicFile.WriteAllText(Paths.SettingsFile,
+                    "{\"schema\":1,\"zapret\":{\"gameFilter\":\"tcp\",\"gameFilterMigrated\":true}}");
+
+                Settings kept = Settings.Load();
+                Check("игровой фильтр: осознанный выбор не тронут", kept.GameFilter == "tcp", kept.GameFilter);
+            }
+            catch (Exception ex)
+            {
+                Check("игровой фильтр: миграция", false, ex.Message);
+            }
+
             Settings.SetCurrent(original);
         }
 

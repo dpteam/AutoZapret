@@ -742,6 +742,17 @@
             send("diag.netcap", { seconds: 8 });
         });
 
+        var explain = document.getElementById("btn-diag-explain");
+        if (explain) explain.addEventListener("click", function () {
+            var sel = document.getElementById("strategy-select");
+            var id = sel ? sel.value : "";
+
+            explain.disabled = true;
+            explain.textContent = "Запускаю с отладкой…";
+            document.getElementById("diag-explain-result").style.display = "none";
+            send("diag.explain", { id: id, seconds: 8 });
+        });
+
         var apply = document.getElementById("btn-diag-apply");
         if (apply) apply.addEventListener("click", function () {
             if (!lastBestStrategy) return;
@@ -1026,6 +1037,44 @@
             var list = msg.snis || [];
             snis.textContent = list.length > 0 ? "SNI: " + list.join(", ") : "";
             snis.style.display = list.length > 0 ? "" : "none";
+        }
+
+        box.style.display = "";
+    }
+
+    /// <summary>
+    /// Отладочный прогон: что winws сделал с нашими соединениями.
+    /// Показываем его слова как есть — это единственный источник правды,
+    /// когда «движок запущен, а не работает».
+    /// </summary>
+    function renderExplain(msg) {
+        var btn = document.getElementById("btn-diag-explain");
+        if (btn) { btn.disabled = false; btn.textContent = "Объяснить выбранную"; }
+
+        var box = document.getElementById("diag-explain-result");
+        if (!box) return;
+
+        var summary = document.getElementById("diag-explain-summary");
+        if (summary) {
+            if (!msg.ok) {
+                summary.textContent = "не получилось: " + (msg.error || "?");
+                summary.className = "row-hint diag-bad";
+            } else {
+                var probes = (msg.probes || []).join(" · ");
+                summary.textContent = msg.name + ": " + msg.okCount + "/" + msg.total +
+                    (probes ? " · " + probes : "") +
+                    (msg.file ? " · файл: " + msg.file : "");
+                summary.className = "row-hint " + (msg.okCount > 0 ? "diag-ok" : "diag-warn");
+            }
+        }
+
+        var log = document.getElementById("diag-explain-log");
+        if (log) {
+            var lines = msg.engine || [];
+            log.textContent = lines.length > 0
+                ? lines.join("\n")
+                : "winws не сказал ни слова про пакеты — значит правила не применились " +
+                  "(не совпал фильтр) либо он не считает это ошибкой";
         }
 
         box.style.display = "";
@@ -1804,6 +1853,10 @@
 
             case "diag.netcap":
                 renderNetCap(msg);
+                break;
+
+            case "diag.explain":
+                renderExplain(msg);
                 break;
 
             case "diag.tcp16":

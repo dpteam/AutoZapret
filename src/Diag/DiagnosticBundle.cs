@@ -132,6 +132,19 @@ namespace AutoZapret.Diag
                     string logText = LogTail();
                     if (logText.Length > 0) AddText(zip, "app.log", logText, result);
                     else result.Entries.Add("app.log — пусто");
+
+                    // Вывод winws с --debug=1: если его собирали, он важнее всего
+                    // остального. Кладём как есть, вместе с аргументами и ошибками.
+                    try
+                    {
+                        string winws = StrategyDebugger.OutputPath;
+                        if (File.Exists(winws))
+                            AddText(zip, "winws-debug.txt", File.ReadAllText(winws), result);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Debug("DIAG", "winws-debug.txt: " + ex.Message);
+                    }
                 }
 
                 if (File.Exists(finalPath))

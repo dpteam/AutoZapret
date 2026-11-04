@@ -33,6 +33,7 @@ namespace AutoZapret.App
         private bool _exiting;
         private bool _startedMinimized;
         private bool _autoStartTried;
+        private bool _ipsetTried;
         private NetStats _lastNetSample;
 
         public AppHost()
@@ -219,6 +220,7 @@ namespace AutoZapret.App
                 PushStrategies();
                 PushPresets();
                 PushAutoStart();
+                TryAutoUpdateIpset();
                 TryAutoStartProtection();
                 CheckUpdatesOnStart();
             });
@@ -360,6 +362,16 @@ namespace AutoZapret.App
             {
                 int count = Json.GetInt(msg, "count", 5);
                 RunDiag("test", "подбор стратегий", ct => RunTestUi(count, ct), true);
+            });
+
+            // Отладочный прогон одной стратегии: winws рассказывает, что делает
+            // с пакетами. Нужен, когда подбор даёт нули и непонятно почему.
+            bridge.Register("diag.explain", msg =>
+            {
+                string id = Json.GetString(msg, "id", _settings.StrategyId);
+                int seconds = Json.GetInt(msg, "seconds", 8);
+
+                RunDiag("explain", "объяснение стратегии", ct => RunExplainUi(id, seconds, ct), true);
             });
 
             bridge.Register("diag.cancel", msg => CancelDiag());
@@ -1533,6 +1545,48 @@ namespace AutoZapret.App
             return Settings.NormalizeLanguage(value);
         }
 
+        /// <summary>
+        /// Первый запуск: список IP-подсетей — заглушка из бандла (один тестовый
+        /// адрес, 18 байт). Все профили «IP Bypass …» при этом не совпадают ни с
+        /// чем, и обход выглядит нерабочим: движок жив, ошибок нет, эффекта нет.
+        ///
+        /// Flowseal качает этот список при установке, поэтому у их сборки такой
+        /// дыры не видно. Делаем так же: тихо, в фоне, один раз за запуск.
+        /// </summary>
+        private void TryAutoUpdateIpset()
+        {
+            if (_ipsetTried) return;
+            _ipsetTried = true;
+
+            if (!_settings.UpdateLists) return;
+
+            string path = System.IO.Path.Combine(Paths.EngineListsDir, "ipset-all.txt");
+
+            try
+            {
+                if (System.IO.File.Exists(path) && new System.IO.FileInfo(path).Length > 1024) return;
+            }
+            catch (Exception ex)
+            {
+                Log.Debug("LIST", "ipset: " + ex.Message);
+                return;
+            }
+
+            Log.Info("LIST", "ipset-all.txt пуст — скачиваю автоматически");
+
+            RunInBackground("ipset-auto", () =>
+            {
+                UpdateResult r = ListsUpdater.UpdateIpset();
+
+                if (r.Ok)
+                    Log.Info("LIST", "ipset скачан автоматически: " + r.Message + ", подсетей " + r.Entries);
+                else
+                    Log.Warn("LIST", "автоскачивание ipset не удалось: " + r.Message);
+
+                SendIpsetState();
+            });
+        }
+
         private void PushAutoStart()
         {
             AutoStartStatus status = AutoStartManager.Query();
@@ -1813,6 +1867,14 @@ namespace AutoZapret.App
             List<object> snis = new List<object>();
             foreach (string s in result.Snis) snis.Add(s);
 
+            // в лог — обязательно: без этого в архив поддержки попадает только
+            // «проверка начата», и понять, видел ли драйвер трафик, невозможно
+            if (result.Ok)
+                Log.Info("DIAG", "сниффер: " + result.Summary() +
+                                 (result.Snis.Count > 0 ? " | SNI: " + string.Join(", ", result.Snis.ToArray()) : ""));
+            else
+                Log.Warn("DIAG", "сниффер: " + result.Error);
+
             _form.Bridge.Send(WebBridge.Msg("diag.netcap",
                 "ok", result.Ok,
                 "error", result.Error ?? "",
@@ -2052,6 +2114,60 @@ namespace AutoZapret.App
             foreach (StrategyScore s in scores)
                 if (s.OkCount > 0) return false;
             return true;
+        }
+
+        /// <summary>
+        /// Отладочный прогон одной стратегии с `--debug=1`.
+        ///
+        /// Когда «движок запущен, а не работает», остаётся ровно один вопрос:
+        /// применяет ли winws свои правила к нашим соединениям. Здесь мы его
+        /// спрашиваем напрямую и показываем ответ как есть.
+        /// </summary>
+        private void RunExplainUi(string strategyId, int seconds, CancellationToken token)
+        {
+            if (!EnsureElevation())
+            {
+                _form.Bridge.Send(WebBridge.Msg("diag.explain",
+                    "ok", false,
+                    "error", "нужны права администратора: без них winws не запускается",
+                    "engine", new List<object>(),
+                    "probes", new List<object>()));
+                return;
+            }
+
+            DiagProgress("запускаю стратегию с отладкой winws…");
+
+            DebugRunResult result = StrategyDebugger.Run(_zapret, strategyId, seconds, token);
+
+            // В лог — целиком: это то, что человек пришлёт в поддержку.
+            if (result.Engine.Count > 0)
+            {
+                Log.Info("DIAG", "отладка " + strategyId + ": строк от winws " + result.Engine.Count);
+
+                foreach (string line in result.Engine)
+                    Log.Info("WINWS", line);
+            }
+            else
+            {
+                Log.Warn("DIAG", "отладка " + strategyId + ": winws не сказал ни слова");
+            }
+
+            List<object> engine = new List<object>();
+            foreach (string line in result.Engine) engine.Add(line);
+
+            List<object> probes = new List<object>();
+            foreach (string line in result.Probes) probes.Add(line);
+
+            _form.Bridge.Send(WebBridge.Msg("diag.explain",
+                "ok", result.Ok,
+                "error", result.Error ?? "",
+                "id", strategyId,
+                "name", result.StrategyName ?? "",
+                "okCount", (long)result.OkCount,
+                "total", (long)result.Total,
+                "engine", engine,
+                "probes", probes,
+                "file", result.FileName ?? ""));
         }
 
         // --------------------------------------------------------------- control
