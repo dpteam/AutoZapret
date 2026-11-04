@@ -2073,29 +2073,75 @@
             send("hosts.raw.save", { text: text });
         });
 
-        var fixApply = document.getElementById("btn-hosts-fix-apply");
+        var fixApply = document.getElementById("btn-hosts-fixes-apply");
         if (fixApply) fixApply.addEventListener("click", function () {
-            var sel = document.getElementById("hosts-fix-select");
-            if (!sel || !sel.value) return;
+            var chosen = [];
 
-            var text = document.getElementById("hosts-raw-input").value;
-            var kind = sel.options[sel.selectedIndex].getAttribute("data-kind") || "fix";
-            var careful = sel.options[sel.selectedIndex].getAttribute("data-careful") === "1";
+            document.querySelectorAll("#hosts-fixes-list input[data-fix-id]").forEach(function (box) {
+                if (box.checked) chosen.push(box.getAttribute("data-fix-id"));
+            });
+
+            if (chosen.length === 0) {
+                var status = document.getElementById("hosts-fixes-status");
+                if (status) {
+                    status.textContent = "Отметьте галочками, что добавить";
+                    status.className = "row-hint diag-warn";
+                }
+                return;
+            }
 
             // Большой hosts с блокировками (0.0.0.0) может сломать приложение:
-            // предупреждаем ДО, а не после. Человек должен понимать, что тянет.
-            if (careful && !window.confirm(
-                "В этом hosts есть блокировки рекламы и трекеров (0.0.0.0).\n\n" +
+            // предупреждаем ДО применения, а не после.
+            var risky = [];
+            chosen.forEach(function (id) {
+                var box = document.querySelector('#hosts-fixes-list input[data-fix-id="' + id + '"]');
+                if (box && box.getAttribute("data-careful") === "1") risky.push(box.getAttribute("data-fix-name"));
+            });
+
+            if (risky.length > 0 && !window.confirm(
+                "В выбранном есть блокировки рекламы и трекеров (0.0.0.0):\n" +
+                risky.join(", ") + "\n\n" +
                 "Иногда они ломают приложения: реклама и аналитика бывают частью\n" +
                 "логики входа. Применяем в редактор — вы сможете посмотреть\n" +
                 "и убрать лишнее до сохранения. Продолжить?")) return;
 
             fixApply.disabled = true;
-            fixApply.textContent = kind === "remote" ? "Скачиваю…" : "Применяю…";
+            fixApply.textContent = "Применяю…";
 
-            if (kind === "fix") send("hosts.fix.apply", { id: sel.value, text: text });
-            else send("hosts.source.apply", { id: sel.value, text: text });
+            send("hosts.fixes.applyMany", {
+                ids: chosen,
+                text: document.getElementById("hosts-raw-input").value
+            });
         });
+
+        var selectAll = document.getElementById("btn-hosts-fixes-all");
+        if (selectAll) selectAll.addEventListener("click", function () {
+            document.querySelectorAll("#hosts-fixes-list input[data-fix-id]").forEach(function (b) { b.checked = true; });
+            updateFixesSelected();
+        });
+
+        var selectNone = document.getElementById("btn-hosts-fixes-none");
+        if (selectNone) selectNone.addEventListener("click", function () {
+            document.querySelectorAll("#hosts-fixes-list input[data-fix-id]").forEach(function (b) { b.checked = false; });
+            updateFixesSelected();
+        });
+    }
+
+    /// Счётчик выбранного: видно, сколько применять, не открывая список глазами.
+    function updateFixesSelected() {
+        var label = document.getElementById("hosts-fixes-selected");
+        if (!label) return;
+
+        var boxes = document.querySelectorAll("#hosts-fixes-list input[data-fix-id]");
+        var chosen = 0;
+
+        boxes.forEach(function (b) { if (b.checked) chosen++; });
+
+        label.textContent = boxes.length === 0
+            ? ""
+            : "выбрано " + chosen + " из " + boxes.length;
+
+        label.className = "row-hint mono " + (chosen > 0 ? "diag-ok" : "");
     }
 
     // локальная проверка: дубли и конфликты считаем по тому, что в поле,
@@ -2188,42 +2234,52 @@
     }
 
     function renderHostsFixes(msg) {
-        var sel = document.getElementById("hosts-fix-select");
-        if (!sel) return;
+        var list = document.getElementById("hosts-fixes-list");
+        if (!list) return;
 
-        var current = sel.value;
-        sel.innerHTML = "";
+        list.innerHTML = "";
 
         var items = msg.items || [];
 
         if (items.length === 0) {
-            var opt = document.createElement("option");
-            opt.value = "";
-            opt.textContent = "нет фиксов";
-            sel.appendChild(opt);
+            var empty = document.createElement("div");
+            empty.className = "row-hint";
+            empty.textContent = "фиксов нет";
+            list.appendChild(empty);
+            updateFixesSelected();
             return;
         }
 
         items.forEach(function (f) {
-            var opt = document.createElement("option");
-            opt.value = f.id;
-
             // три вида: статичный фикс, вшитый файл, скачиваемый список
             var kind = f.remote ? "remote" : (f.bundled ? "bundled" : "fix");
 
-            opt.textContent = f.name +
-                (kind === "remote" ? " · из сети" : (kind === "bundled" ? " · из поставки" : " (" + f.count + ")"));
+            var badge = kind === "remote" ? "сеть" : (kind === "bundled" ? "поставка" : "фикс");
 
-            opt.setAttribute("data-kind", kind);
-            opt.setAttribute("data-careful", f.careful ? "1" : "0");
-            if (f.note) opt.title = f.note;
-            sel.appendChild(opt);
+            var row = document.createElement("label");
+            row.className = "fix-row";
+
+            row.innerHTML =
+                '<input type="checkbox" data-fix-id="' + f.id + '"' +
+                    ' data-careful="' + (f.careful ? "1" : "0") + '"' +
+                    ' data-fix-name="' + String(f.name || "").replace(/"/g, "&quot;") + '">' +
+                '<span class="fix-body">' +
+                    '<span class="fix-head">' +
+                        '<span class="fix-name">' + f.name + '</span>' +
+                        '<span class="badge">' + badge + '</span>' +
+                        (f.careful ? '<span class="badge warn">блокировки</span>' : '') +
+                    '</span>' +
+                    (f.note ? '<span class="fix-note">' + f.note + '</span>' : '') +
+                '</span>';
+
+            list.appendChild(row);
         });
 
-        if (current) sel.value = current;
+        list.querySelectorAll("input[data-fix-id]").forEach(function (box) {
+            box.addEventListener("change", updateFixesSelected);
+        });
 
-        var apply = document.getElementById("btn-hosts-fix-apply");
-        if (apply) { apply.disabled = false; apply.textContent = "Применить"; }
+        updateFixesSelected();
     }
 
     function renderHosts(msg) {
@@ -2556,6 +2612,16 @@
 
                 var st = document.getElementById("hosts-raw-status");
                 if (st) { st.textContent = msg.summary || ""; st.className = "row-hint diag-ok"; }
+
+                // тот же отчёт дублируем в карточке фиксов: кнопка нажимается там
+                var fs = document.getElementById("hosts-fixes-status");
+                if (fs) {
+                    fs.textContent = msg.summary || "";
+                    fs.className = "row-hint " + (msg.partial ? "diag-warn" : "diag-ok");
+                }
+
+                var apply = document.getElementById("btn-hosts-fixes-apply");
+                if (apply) { apply.disabled = false; apply.textContent = "Применить выбранные"; }
                 break;
             }
 

@@ -126,7 +126,6 @@ namespace AutoZapret.App
 
                 Section("источники hosts");
                 TestHostsSources();
-
                 Section("каталог списков");
                 TestListCatalog();
 
@@ -3021,6 +3020,28 @@ namespace AutoZapret.App
             Check("фикс: существующая не продублирована",
                 CountOccurrences(merged, "37.230.192.51 xsts") == 1,
                 CountOccurrences(merged, "37.230.192.51 xsts").ToString());
+
+            // ---- несколько фиксов подряд: это то, что делает мультивыбор.
+            // Второй фикс не должен ни затирать первый, ни дублировать его строки.
+            System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, string>> second =
+                new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, string>>
+                {
+                    new System.Collections.Generic.KeyValuePair<string, string>("10.0.0.2", "another.example"),
+                    new System.Collections.Generic.KeyValuePair<string, string>("37.230.192.51", "xsts.auth.xboxlive.com")
+                };
+
+            string twice = AutoZapret.Lists.HostsEditor.AddEntries(merged, "Второй", second);
+
+            Check("два фикса: второй добавлен",
+                twice.IndexOf("10.0.0.2 another.example", StringComparison.Ordinal) >= 0, "ok");
+            Check("два фикса: первый на месте",
+                twice.IndexOf("10.0.0.1 new.example", StringComparison.Ordinal) >= 0, "ok");
+            Check("два фикса: общая запись не продублирована",
+                CountOccurrences(twice, "37.230.192.51 xsts") == 1,
+                CountOccurrences(twice, "37.230.192.51 xsts").ToString());
+            Check("два фикса: имена посчитаны",
+                AutoZapret.Lists.HostsEditor.Analyze(twice).UniqueHosts == 4,
+                AutoZapret.Lists.HostsEditor.Analyze(twice).UniqueHosts.ToString());
 
             // ---- списки обхода: статистика и дубли
             string list =

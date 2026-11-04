@@ -1,4 +1,4 @@
-// Разовая правка словаря: поиск в списках.
+// Разовая правка словаря: мультивыбор фиксов hosts.
 const fs = require("fs");
 const path = require("path");
 
@@ -6,15 +6,36 @@ const p = path.join(__dirname, "..", "web", "i18n", "en.json");
 const dict = JSON.parse(fs.readFileSync(p, "utf8"));
 
 const add = {
-  "Найти": "Find"
+  "Фиксы и списки hosts": "hosts fixes and lists",
+  "Что добавить": "What to add",
+  "Отметьте галочками всё нужное и примените одной кнопкой. Дубли не появятся: то, что уже есть в файле, пропускается. Изменения попадут в редактор выше — сохраните, когда проверите":
+    "Tick everything you need and apply with one button. No duplicates: entries already in the file are skipped. Changes land in the editor above - save when you have checked them",
+  "Выбрать все": "Select all",
+  "Снять все": "Clear all",
+  "Применить выбранные": "Apply selected",
+  "Применяю…": "Applying…",
+  "блокировки": "blocks",
+  "поставка": "bundle",
+  "сеть": "network",
+  "фикс": "fix"
 };
 
-let added = 0;
+const drop = [
+  "Готовые фиксы",
+  "Пользовательские записи для hosts: Xbox, авторизация Microsoft и другие. Применяются в редактор — сохраните, когда проверите"
+];
+
+let added = 0, removed = 0;
 for (const key of Object.keys(add)) {
   if (dict[key]) continue;
   dict[key] = add[key];
   added++;
 }
+for (const key of drop) {
+  if (!dict[key]) continue;
+  delete dict[key];
+  removed++;
+}
 
 fs.writeFileSync(p, JSON.stringify(dict, null, 2), "utf8");
-console.log("added: " + added);
+console.log("added: " + added + ", removed: " + removed);

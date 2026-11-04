@@ -985,6 +985,129 @@ namespace AutoZapret.App
                     "summary", "фикс «" + fix.Name + "» применён, записей " + fix.Count +
                                " · не забудьте «Сохранить»"));
             });
+
+            // Несколько выбранных сразу: галочки в интерфейсе, одно применение.
+            //
+            // Почему одной операцией, а не N вызовами: статические фиксы
+            // добавляются мгновенно, а скачиваемые требуют сети, и N запросов
+            // подряд — это N ожиданий и N промежуточных состояний в редакторе.
+            // Здесь всё складывается в один текст и один отчёт.
+            bridge.Register("hosts.fixes.applyMany", msg =>
+            {
+                string text = Json.GetString(msg, "text", "");
+                List<string> ids = new List<string>();
+
+                List<object> raw = Json.GetArray(msg, "ids");
+                if (raw != null)
+                    foreach (object item in raw)
+                    {
+                        string id = item as string;
+                        if (!string.IsNullOrEmpty(id)) ids.Add(id);
+                    }
+
+                if (ids.Count == 0)
+                {
+                    bridge.Send(WebBridge.Msg("hosts.edited", "text", text,
+                        "summary", "ничего не выбрано"));
+                    return;
+                }
+
+                RunInBackground("hosts-fixes", () =>
+                {
+                    string current = text;
+                    List<string> done = new List<string>();
+                    List<string> failed = new List<string>();
+
+                    foreach (string id in ids)
+                    {
+                        HostsFix fix = HostsFixes.Find(id);
+
+                        if (fix != null)
+                        {
+                            int before = CountHosts(current);
+                            current = HostsEditor.AddEntries(current, fix.Name, fix.Entries);
+                            int added = CountHosts(current) - before;
+
+                            done.Add(fix.Name + (added > 0 ? " +" + added : " (уже было)"));
+                            continue;
+                        }
+
+                        HostsSource source = HostsFixes.FindSource(id);
+
+                        if (source == null)
+                        {
+                            failed.Add(id + ": не найден");
+                            continue;
+                        }
+
+                        string error = "";
+                        string downloaded;
+
+                        if (source.Bundled)
+                        {
+                            string path = HostsFixes.BundledPath(source);
+
+                            if (!System.IO.File.Exists(path))
+                            {
+                                failed.Add(source.Name + ": нет в поставке");
+                                continue;
+                            }
+
+                            downloaded = System.IO.File.ReadAllText(path);
+                        }
+                        else
+                        {
+                            downloaded = HostsFixes.Download(source, out error);
+
+                            if (downloaded == null)
+                            {
+                                failed.Add(source.Name + ": " + error);
+                                continue;
+                            }
+                        }
+
+                        HostsReport report = new HostsReport();
+                        List<HostsRow> rows = HostsEditor.Parse(downloaded, report);
+
+                        List<KeyValuePair<string, string>> entries =
+                            new List<KeyValuePair<string, string>>();
+
+                        foreach (HostsRow row in rows)
+                            foreach (string host in row.Hosts)
+                                entries.Add(new KeyValuePair<string, string>(row.Ip, host));
+
+                        if (entries.Count == 0)
+                        {
+                            failed.Add(source.Name + ": записей не найдено");
+                            continue;
+                        }
+
+                        int was = CountHosts(current);
+                        current = HostsEditor.AddEntries(current, source.Name, entries);
+                        int got = CountHosts(current) - was;
+
+                        done.Add(source.Name + " +" + got + " из " + entries.Count);
+                    }
+
+                    HostsReport before2 = HostsEditor.Analyze(text);
+                    HostsReport after2 = HostsEditor.Analyze(current);
+
+                    List<string> parts = new List<string>();
+
+                    if (done.Count > 0) parts.Add("добавлено: " + string.Join(", ", done.ToArray()));
+                    if (failed.Count > 0) parts.Add("не вышло: " + string.Join(", ", failed.ToArray()));
+
+                    parts.Add("имён " + before2.UniqueHosts + " → " + after2.UniqueHosts);
+                    parts.Add("не забудьте «Сохранить»");
+
+                    Log.Info("HOSTS", "мультивыбор фиксов: " + string.Join(" | ", parts.ToArray()));
+
+                    bridge.Send(WebBridge.Msg("hosts.edited",
+                        "text", current,
+                        "summary", string.Join(" · ", parts.ToArray()),
+                        "partial", failed.Count > 0));
+                });
+            });
             bridge.Register("hosts.restore", msg =>
             {
                 if (!EnsureElevation()) return;
@@ -1978,7 +2101,13 @@ namespace AutoZapret.App
             return result;
         }
 
-        /// <summary>Список готовых фиксов и скачиваемых источников для hosts.</summary>
+        /// <summary>Сколько имён в тексте hosts — для отчёта «добавлено N».</summary>
+        private static int CountHosts(string text)
+        {
+            return HostsEditor.Analyze(text).UniqueHosts;
+        }
+
+        /// <summary>Отдать список фиксов и источников с их состоянием.</summary>
         private void SendHostsFixes()
         {
             List<object> items = new List<object>();

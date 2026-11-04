@@ -635,20 +635,35 @@
           </div>
         </div>
 
-        <div class="row" style="margin-top:14px">
+        <div class="row-hint" id="hosts-raw-status"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Фиксы и списки hosts</div>
+
+        <div class="row">
           <div>
-            <div class="row-label">Готовые фиксы</div>
+            <div class="row-label">Что добавить</div>
             <div class="row-hint">
-              Пользовательские записи для hosts: Xbox, авторизация Microsoft и другие.
-              Применяются в редактор — сохраните, когда проверите
+              Отметьте галочками всё нужное и примените одной кнопкой. Дубли не
+              появятся: то, что уже есть в файле, пропускается. Изменения попадут
+              в редактор выше — сохраните, когда проверите
             </div>
           </div>
           <div style="display:flex;gap:8px;align-items:center">
-            <select id="hosts-fix-select"></select>
-            <button class="btn" id="btn-hosts-fix-apply">Применить</button>
+            <button class="btn" id="btn-hosts-fixes-all">Выбрать все</button>
+            <button class="btn" id="btn-hosts-fixes-none">Снять все</button>
           </div>
         </div>
-        <div class="row-hint" id="hosts-raw-status"></div>
+
+        <div class="diag-list" id="hosts-fixes-list" style="margin-top:10px"></div>
+
+        <div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap">
+          <button class="btn primary" id="btn-hosts-fixes-apply">Применить выбранные</button>
+          <span class="row-hint mono" id="hosts-fixes-selected"></span>
+        </div>
+
+        <div class="row-hint" id="hosts-fixes-status"></div>
       </div>
 
       <div class="card" data-advanced>
