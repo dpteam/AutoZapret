@@ -132,6 +132,9 @@ namespace AutoZapret.App
 
                 Section("скачивание движка");
                 TestEngineInstaller();
+
+                Section("проверка готовности");
+                TestPreflight();
             }
             catch (Exception ex)
             {
@@ -1182,6 +1185,124 @@ namespace AutoZapret.App
         /// и что SNI реально читается из байтов: «выглядит как TLS» проверяется
         /// разбором, а не на глаз.
         /// </summary>
+        /// <summary>
+        /// Preflight: быстрая проверка «можно ли запускать». Тестируем на живом
+        /// окружении, потому что смысл проверки — именно файлы на диске.
+        /// </summary>
+        private static void TestPreflight()
+        {
+            AutoZapret.Zapret.EngineLocator engine = new AutoZapret.Zapret.EngineLocator();
+            engine.Refresh();
+
+            AutoZapret.Zapret.StrategyStore store = null;
+
+            try
+            {
+                using (AutoZapret.Zapret.ZapretService svc = new AutoZapret.Zapret.ZapretService())
+                {
+                    svc.EnsureStrategies();
+                    store = svc.Strategies;
+                }
+            }
+            catch { }
+
+            // ---- не бросает
+            bool threw = false;
+            List<AutoZapret.Zapret.PreflightProblem> problems = null;
+
+            try { problems = AutoZapret.Zapret.Preflight.Run(engine, store, "flowseal.general", "off"); }
+            catch { threw = true; }
+
+            Check("preflight не бросает", !threw, threw ? "исключение" : "ok");
+
+            if (problems == null)
+            {
+                Check("preflight вернул список", false, "null");
+                return;
+            }
+
+            Check("preflight: у проблем есть текст",
+                problems.TrueForAll(p => p.Title.Length > 0), problems.Count + " проблем");
+
+            // ---- без движка проверка сообщает именно об этом и дальше не идёт
+            if (!engine.Ready)
+            {
+                Check("preflight: без движка — одна проблема",
+                    problems.Count == 1 && problems[0].Code == "engine-not-ready",
+                    problems.Count + " проблем, код " + (problems.Count > 0 ? problems[0].Code : "-"));
+
+                Check("preflight: без движка — это блокер",
+                    AutoZapret.Zapret.Preflight.HasBlockers(problems), "ok");
+            }
+            else
+            {
+                // ---- пустой strategyId: только окружение, без жалоб на стратегию
+                List<AutoZapret.Zapret.PreflightProblem> envOnly =
+                    AutoZapret.Zapret.Preflight.Run(engine, store, "", "off");
+
+                bool complainsAboutStrategy = envOnly.Exists(
+                    p => p.Code == "strategy-missing" || p.Code == "strategy-empty");
+
+                Check("preflight: пустая стратегия не считается ошибкой",
+                    !complainsAboutStrategy, envOnly.Count + " проблем");
+
+                // ---- несуществующая стратегия — блокер
+                List<AutoZapret.Zapret.PreflightProblem> missing =
+                    AutoZapret.Zapret.Preflight.Run(engine, store, "no.such.strategy", "off");
+
+                Check("preflight: неизвестная стратегия — блокер",
+                    AutoZapret.Zapret.Preflight.HasBlockers(missing), missing.Count + " проблем");
+
+                // ---- права: в selftest мы обычно НЕ администратор
+                bool hasElevationProblem = problems.Exists(p => p.Code == "elevation");
+
+                if (AutoZapret.Core.AppInfo.IsAdmin)
+                    Check("preflight: под админом жалобы на права нет", !hasElevationProblem, "ok");
+                else
+                    Check("preflight: без админа жалуется на права", hasElevationProblem,
+                        hasElevationProblem ? "ok" : "нет проблемы elevation");
+            }
+
+            // ---- логика сводки
+            Check("HasBlockers: null -> false",
+                !AutoZapret.Zapret.Preflight.HasBlockers(null), "ok");
+            Check("HasBlockers: пустой список -> false",
+                !AutoZapret.Zapret.Preflight.HasBlockers(
+                    new List<AutoZapret.Zapret.PreflightProblem>()), "ok");
+
+            List<AutoZapret.Zapret.PreflightProblem> blockOnly =
+                new List<AutoZapret.Zapret.PreflightProblem>
+                {
+                    new AutoZapret.Zapret.PreflightProblem
+                    {
+                        Level = AutoZapret.Zapret.PreflightLevel.Blocker,
+                        Code = "x", Title = "одна", Hint = ""
+                    }
+                };
+
+            Check("HasBlockers: блокер найден",
+                AutoZapret.Zapret.Preflight.HasBlockers(blockOnly), "ok");
+            Check("Summary: одна проблема — её текст",
+                AutoZapret.Zapret.Preflight.Summary(blockOnly) == "одна",
+                AutoZapret.Zapret.Preflight.Summary(blockOnly));
+
+            List<AutoZapret.Zapret.PreflightProblem> warnOnly =
+                new List<AutoZapret.Zapret.PreflightProblem>
+                {
+                    new AutoZapret.Zapret.PreflightProblem
+                    {
+                        Level = AutoZapret.Zapret.PreflightLevel.Warning,
+                        Code = "y", Title = "предупреждение", Hint = ""
+                    }
+                };
+
+            Check("HasBlockers: предупреждение не блокер",
+                !AutoZapret.Zapret.Preflight.HasBlockers(warnOnly), "ok");
+            Check("Summary: предупреждения считаются",
+                AutoZapret.Zapret.Preflight.Summary(warnOnly).IndexOf("предупрежд", StringComparison.Ordinal) >= 0,
+                AutoZapret.Zapret.Preflight.Summary(warnOnly));
+        }
+
         /// <summary>
         /// Установщик движка. Без сети: проверяем то, что защищает от порчи
         /// файлов и от zip-slip — именно здесь ошибка стоит дорого.

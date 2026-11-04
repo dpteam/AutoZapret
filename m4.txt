@@ -1,0 +1,35 @@
+feat: readiness preflight and a non-modal "no admin" banner
+
+Two ideas that close the same gap: the user presses, nothing happens, and
+the app does not say why.
+
+Preflight (~200 ms, before winws starts):
+  engine present; winws.exe / winws2.exe; WinDivert64.sys and
+  WinDivert.dll; cygwin1.dll for v1; a foreign winws holding WinDivert;
+  the selected strategy exists and produces arguments; every referenced
+  .bin exists AND passes PayloadValidator; every hostlist/ipset file
+  exists; lua files for zapret2; admin rights.
+
+Why each of those matters rather than being decoration:
+- winws does not validate .bin contents, it just sends bytes. A missing
+  or corrupt fake means a strategy that "runs" and does nothing.
+- a missing hostlist makes winws complain on stderr while the UI shows
+  "enabled", which is the worst possible feedback.
+- a foreign winws (the zapret service) holds WinDivert and our start
+  silently cannot filter.
+
+Blockers cancel the start, warnings do not. The list goes to the UI, so
+the message is "missing cygwin1.dll", not "failed to start".
+
+Banner instead of a modal: being non-elevated is a persistent condition,
+not an event. A dialog on every power click trains people to dismiss
+dialogs without reading them. The home screen now always shows
+"Running without administrator rights" with one button, and
+EnsureElevation just highlights it and notifies the tray.
+
+selftest: 11 preflight checks, including that an empty strategy id is
+not an error (strategy testing passes none on purpose) while an unknown
+one is a blocker.
+
+Verified in the browser: the banner renders with the restart button and
+the problem list, both from state and from a preflight message.

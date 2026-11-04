@@ -47,6 +47,8 @@
     // названия проверок). Они рождаются в C# и живут в русском.
     var i18nDict = null;          // null = русский, перевод не нужен
     var i18nLang = "ru";
+    var lastPreflight = [];       // последняя проверка готовности
+    var elevationHintShown = false;
 
     function t(source) {
         if (!i18nDict || !source) return source;
@@ -231,6 +233,54 @@
         }
     }
 
+    /// <summary>
+    /// Верхний блок главного экрана: «нет прав администратора» и результаты
+    /// проверки готовности. Один контейнер на два случая — человеку всё равно,
+    /// из какого места пришла проблема, важно что делать дальше.
+    /// </summary>
+    function renderAlerts(s) {
+        var box = document.getElementById("p0-alerts");
+        if (!box) return;
+
+        var parts = [];
+
+        // ---- нет прав администратора
+        if (s && s.admin === false) {
+            parts.push(
+                '<div class="notice warn" style="margin-bottom:10px">' +
+                '<span>!</span><div style="flex:1">' +
+                '<div>' + t("Запущено без прав администратора — обход не включится.") + '</div>' +
+                '<div class="row-hint" style="margin-top:4px">' +
+                t("Драйвер WinDivert загружается только от администратора.") + '</div>' +
+                '<button class="btn primary" id="btn-restart-admin" style="margin-top:8px">' +
+                t("Перезапустить от админа") + '</button>' +
+                '</div></div>');
+        }
+
+        // ---- проблемы готовности, если они есть
+        if (lastPreflight.length > 0) {
+            var rows = lastPreflight.map(function (p) {
+                var cls = p.level === "blocker" ? "diag-bad" : "diag-warn";
+                return '<div class="diag-row">' +
+                    '<span class="badge ' + (p.level === "blocker" ? "bad" : "warn") + '">' +
+                    (p.level === "blocker" ? "!" : "?") + '</span>' +
+                    '<span class="name ' + cls + '">' + p.title + '</span>' +
+                    '<span class="verdict">' + (p.hint || "") + '</span>' +
+                    '</div>';
+            }).join("");
+
+            parts.push(
+                '<div class="notice warn" style="margin-bottom:10px">' +
+                '<span>!</span><div style="flex:1">' +
+                '<div>' + t("Проверка готовности нашла проблемы:") + '</div>' +
+                '<div class="diag-list" style="margin-top:8px">' + rows + '</div>' +
+                '</div></div>');
+        }
+
+        box.innerHTML = parts.join("");
+        box.style.display = parts.length > 0 ? "" : "none";
+    }
+
     function setSwitch(id, on) {
         var el = document.getElementById(id);
         if (el) el.classList.toggle("on", !!on);
@@ -374,6 +424,8 @@
 
         var langSelect = document.getElementById("set-language");
         if (langSelect && s.language) langSelect.value = s.language;
+
+        renderAlerts(s);
     }
 
     function fmtUptime(sec) {
@@ -1019,6 +1071,16 @@
         document.addEventListener("click", function (event) {
             var target = event.target;
             if (!target || typeof target.closest !== "function") return;
+
+            // кнопка перезапуска с правами (делегирование — блок перерисовывается)
+            if (target.closest("#btn-restart-admin")) {
+                var adminButton = target.closest("#btn-restart-admin");
+                adminButton.disabled = true;
+                adminButton.textContent = t("Перезапускаюсь…");
+                send("app.restartElevated");
+                return;
+            }
+
             if (!target.closest("#btn-engine-download")) return;
 
             var button = target.closest("#btn-engine-download");
@@ -1619,6 +1681,16 @@
                 renderEngineProgress(msg);
                 break;
 
+            case "preflight":
+                lastPreflight = msg.items || [];
+                renderAlerts(state);
+                break;
+
+            case "needs.elevation":
+                elevationHintShown = true;
+                renderAlerts(state);
+                break;
+
             case "logs":
                 logLines = msg.lines || [];
                 text("log-file", msg.file);
@@ -1691,6 +1763,8 @@
         t: t,
         tf: tf,
         translateDom: translateDom,
+        renderAlerts: renderAlerts,
+        setPreflight: function (items) { lastPreflight = items || []; },
         missingKeys: function () {
             // какие русские строки в разметке остались без перевода
             if (!i18nDict) return [];

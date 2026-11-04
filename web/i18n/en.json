@@ -194,5 +194,10 @@
   "обычный пользователь": "regular user",
   "Проверяются только заблокированные цели": "Only blocked targets are tested",
   "Обновить hosts": "Update hosts",
-  "Скачать источники, объединить и записать в hosts. Ваши записи не трогаются, дубликаты схлопываются": "Download sources, merge and write into hosts. Your entries are untouched, duplicates are collapsed"
+  "Скачать источники, объединить и записать в hosts. Ваши записи не трогаются, дубликаты схлопываются": "Download sources, merge and write into hosts. Your entries are untouched, duplicates are collapsed",
+  "Запущено без прав администратора — обход не включится.": "Running without administrator rights — the bypass will not start.",
+  "Драйвер WinDivert загружается только от администратора.": "The WinDivert driver only loads with administrator rights.",
+  "Перезапустить от админа": "Restart as administrator",
+  "Перезапускаюсь…": "Restarting…",
+  "Проверка готовности нашла проблемы:": "Readiness check found problems:"
 }

@@ -286,6 +286,20 @@ namespace AutoZapret.App
             bridge.Register("tray.hide", msg => _form.HideToTray());
             bridge.Register("app.exit", msg => RequestExit());
 
+            // перезапуск с правами по кнопке из баннера
+            bridge.Register("app.restartElevated", msg =>
+            {
+                if (Elevation.IsElevated)
+                {
+                    Log.Info("APP", "перезапуск не нужен: права уже есть");
+                    PushState();
+                    return;
+                }
+
+                Log.Info("APP", "перезапуск от имени администратора по кнопке");
+                if (Elevation.RestartElevated()) RequestExit();
+            });
+
             bridge.Register("app.info", msg => bridge.Send(WebBridge.Msg("info",
                 "version", AppInfo.Version,
                 "os", AppInfo.OsDescription,
@@ -1504,6 +1518,9 @@ namespace AutoZapret.App
                 return;
             }
 
+            // Окружение проверяем без привязки к стратегии: перебирать будем разные
+            if (!RunPreflight(null)) return;
+
             Baseline.Snapshot baseline = Baseline.Load();
             if (baseline == null || baseline.Blocked.Count == 0)
             {
@@ -1563,29 +1580,67 @@ namespace AutoZapret.App
         /// «Запрошенная операция требует повышения» в лог. Пользователь видел
         /// «подбор не работает» и не понимал причины.
         ///
-        /// Возвращает true, если права есть. Если нет — спрашивает и
-        /// перезапускается, а вызывающий просто прекращает работу.
+        /// Теперь без модального окна: на главной всегда висит баннер «нет прав»
+        /// с кнопкой перезапуска, а мы лишь подсвечиваем его и пишем в трей.
+        /// Модалка на каждое нажатие — это то самое раздражение, из-за которого
+        /// люди перестают читать предупреждения.
+        ///
+        /// Возвращает true, если права есть.
         /// </summary>
         private bool EnsureElevation()
         {
             if (Elevation.IsElevated) return true;
 
-            DialogResult answer = MessageBox.Show(
-                Elevation.ExplainWhy(), AppInfo.Name,
-                MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            Log.Warn("APP", "действие требует прав администратора");
 
-            if (answer == DialogResult.Yes)
-            {
-                if (Elevation.RestartElevated()) RequestExit();
-                else _tray.Notify(AppInfo.Name, "Права администратора не получены.", ToolTipIcon.Warning);
-            }
-            else
-            {
-                _tray.Notify(AppInfo.Name,
-                    "Без прав администратора обход не запустится.", ToolTipIcon.Warning);
-            }
+            _form.Bridge.Send(WebBridge.Msg("needs.elevation"));
+
+            _tray.Notify(AppInfo.Name,
+                "Нужны права администратора. На главной есть кнопка «Перезапустить от админа»",
+                ToolTipIcon.Warning);
 
             return false;
+        }
+
+        /// <summary>
+        /// Быстрая проверка готовности перед запуском движка. Возвращает false,
+        /// если есть блокеры. Список уходит в интерфейс — человек должен видеть,
+        /// чего именно не хватает, а не «не удалось запустить».
+        /// </summary>
+        private bool RunPreflight(string strategyId)
+        {
+            List<PreflightProblem> problems = Preflight.Run(
+                _zapret.Engine, _zapret.Strategies, strategyId,
+                _settings.GameFilter);
+
+            List<object> items = new List<object>();
+
+            foreach (PreflightProblem p in problems)
+            {
+                items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    { "level", p.Level == PreflightLevel.Blocker ? "blocker" : "warning" },
+                    { "title", p.Title ?? "" },
+                    { "hint", p.Hint ?? "" }
+                });
+
+                Log.Warn("CHECK", p.Level + ": " + p.Text());
+            }
+
+            _form.Bridge.Send(WebBridge.Msg("preflight",
+                "items", items,
+                "blockers", (long)CountBlockers(problems),
+                "summary", Preflight.Summary(problems)));
+
+            return !Preflight.HasBlockers(problems);
+        }
+
+        private static int CountBlockers(List<PreflightProblem> problems)
+        {
+            int count = 0;
+            foreach (PreflightProblem p in problems)
+                if (p.Level == PreflightLevel.Blocker) count++;
+            return count;
         }
 
         /// <summary>Включить/выключить обход. Выполняется в фоне: старт winws не быстрый.</summary>
@@ -1607,6 +1662,15 @@ namespace AutoZapret.App
                 if (state == ProtectionState.Running)
                 {
                     _zapret.Stop();
+                    return;
+                }
+
+                // Проверка готовности ДО запуска: 200 мс вместо тихого «не сработало»
+                if (!RunPreflight(_settings.StrategyId))
+                {
+                    Log.Warn("WINWS", "включение отменено: проверка готовности нашла проблемы");
+                    _tray.Notify(AppInfo.Name, "Обход не запущен: см. список проблем на главной",
+                        ToolTipIcon.Warning);
                     return;
                 }
 
