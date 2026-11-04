@@ -124,6 +124,9 @@ namespace AutoZapret.App
                 Section("UDP и udplen");
                 TestUdpPacket();
 
+                Section("фильтр своего движка");
+                TestOwnFilter();
+
                 Section("Secure DNS в браузерах");
                 TestBrowserDoh();
 
@@ -4176,6 +4179,111 @@ namespace AutoZapret.App
             }
 
             return p;
+        }
+
+        /// <summary>
+        /// Фильтр своего движка: что трогать, а что нет.
+        ///
+        /// Это самый опасный код в проекте после драйвера. Ошибка здесь значит
+        /// либо «движок лезет в банк», либо «движок не трогает ничего и обход
+        /// не работает» — и оба варианта выглядят как «сломалось».
+        ///
+        /// Проверяем в первую очередь ловушку суффикса: `notexample.com` не
+        /// должен совпадать с `example.com`. Через `EndsWith` это ровно то, что
+        /// получается, и уводит чужой трафик в десинк.
+        /// </summary>
+        private static void TestOwnFilter()
+        {
+            // ---- IpRangeSet: подсети
+            AutoZapret.Zapret.Own.IpRangeSet set = new AutoZapret.Zapret.Own.IpRangeSet();
+
+            Check("ipset: /24 добавлен", set.Add("142.250.0.0/16"), "ok");
+            Check("ipset: одиночный адрес добавлен", set.Add("162.159.128.1"), "ok");
+            Check("ipset: мусор отклонён", !set.Add("не-адрес"), "ok");
+
+            set.Build();
+
+            Check("ipset: внутри /16 найдено",
+                set.Contains(System.Net.IPAddress.Parse("142.250.155.4")), "142.250.155.4");
+            Check("ipset: вне /16 не найдено",
+                !set.Contains(System.Net.IPAddress.Parse("142.251.155.4")), "142.251.155.4");
+            Check("ipset: точный адрес найден",
+                set.Contains(System.Net.IPAddress.Parse("162.159.128.1")), "162.159.128.1");
+            Check("ipset: соседний адрес не найден",
+                !set.Contains(System.Net.IPAddress.Parse("162.159.128.2")), "162.159.128.2");
+
+            // ---- слияние пересекающихся диапазонов
+            AutoZapret.Zapret.Own.IpRangeSet merged = new AutoZapret.Zapret.Own.IpRangeSet();
+
+            merged.Add("10.0.0.0/8");
+            merged.Add("10.1.0.0/16");   // внутри первого
+            merged.Add("10.2.0.0/16");   // тоже внутри
+
+            merged.Build();
+
+            Check("ipset: пересечения слиты", merged.Count4 == 3 && merged.Contains(
+                System.Net.IPAddress.Parse("10.200.1.1")), "10.200.1.1");
+
+            // ---- IPv6
+            AutoZapret.Zapret.Own.IpRangeSet v6 = new AutoZapret.Zapret.Own.IpRangeSet();
+            v6.Add("2a02:6ea0::/32");
+            v6.Build();
+
+            Check("ipset: IPv6 внутри найден",
+                v6.Contains(System.Net.IPAddress.Parse("2a02:6ea0:1234::1")), "ok");
+            Check("ipset: IPv6 вне не найден",
+                !v6.Contains(System.Net.IPAddress.Parse("2a03:6ea0:1234::1")), "ok");
+
+            // ---- фильтр доменов
+            AutoZapret.Zapret.Own.OwnFilter filter = new AutoZapret.Zapret.Own.OwnFilter();
+
+            string dir = System.IO.Path.Combine(Paths.DataDir, "selftest-filter");
+            System.IO.Directory.CreateDirectory(dir);
+
+            string hosts = System.IO.Path.Combine(dir, "hosts.txt");
+            System.IO.File.WriteAllText(hosts,
+                "# комментарий\n" +
+                "youtube.com\n" +
+                "*.googlevideo.com\n" +
+                "!safe.youtube.com\n");
+
+            filter.LoadHosts(hosts, false);
+
+            Check("фильтр: домены загружены", filter.HostCount == 2, filter.HostCount.ToString());
+            Check("фильтр: «!» стал исключением", filter.HostExcludeCount == 1,
+                filter.HostExcludeCount.ToString());
+
+            System.Net.IPAddress anyIp = System.Net.IPAddress.Parse("1.2.3.4");
+
+            Check("фильтр: точный домен", filter.ShouldDesync("youtube.com", anyIp), "youtube.com");
+            Check("фильтр: поддомен", filter.ShouldDesync("www.youtube.com", anyIp), "www.youtube.com");
+            Check("фильтр: звёздочка", filter.ShouldDesync("rr1.googlevideo.com", anyIp), "rr1.googlevideo.com");
+            Check("фильтр: чужой домен не трогаем",
+                !filter.ShouldDesync("example.org", anyIp), "example.org");
+
+            // ловушка суффикса: notyoutube.com НЕ должен совпадать с youtube.com
+            Check("фильтр: notyoutube.com не совпадает",
+                !filter.ShouldDesync("notyoutube.com", anyIp), "notyoutube.com");
+
+            // исключение сильнее цели
+            Check("фильтр: исключение сильнее цели",
+                !filter.ShouldDesync("safe.youtube.com", anyIp), "safe.youtube.com");
+
+            // без SNI и с hostlist — не трогаем: не знаем, чьё это
+            Check("фильтр: без SNI не трогаем",
+                !filter.ShouldDesync("", anyIp), "пустой SNI");
+
+            // ---- без списков трогаем всё (режим проверки техники)
+            AutoZapret.Zapret.Own.OwnFilter empty = new AutoZapret.Zapret.Own.OwnFilter();
+
+            Check("фильтр: без списков пропускает всё",
+                empty.ShouldDesync("anything.example", anyIp), "ok");
+
+            // ---- исключение по адресу сильнее всего
+            AutoZapret.Zapret.Own.OwnFilter byIp = new AutoZapret.Zapret.Own.OwnFilter();
+            byIp.LoadHosts(hosts, false);
+
+            try { System.IO.Directory.Delete(dir, true); } catch { }
         }
 
         private static void TestSniffResult()

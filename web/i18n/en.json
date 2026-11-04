@@ -293,5 +293,7 @@
   "Сравнить": "Compare",
   "Сравниваю…": "Comparing…",
   "Техника": "Technique",
-  "udplen — длина UDP (QUIC)": "udplen - UDP length (QUIC)"
+  "udplen — длина UDP (QUIC)": "udplen - UDP length (QUIC)",
+  "Только свои цели": "Own targets only",
+  "Брать списки движка (домены и подсети), как winws. Без этого движок трогает весь TCP/443 — включая банки. Для постоянной работы включайте": "Use the engine lists (domains and subnets) like winws. Without it the engine touches all of TCP/443 - banks included. Keep it on for permanent use"
 }

@@ -355,11 +355,21 @@ namespace AutoZapret.Zapret.Own
             b[offset + 3] = (byte)value;
         }
 
+                                /// <summary>Адрес назначения как IPAddress — для фильтра по подсетям.</summary>
+        public System.Net.IPAddress DestinationAddress()
+        {
+            byte[] bytes =
+            {
+                (byte)(DstIp >> 24), (byte)(DstIp >> 16), (byte)(DstIp >> 8), (byte)DstIp
+            };
+
+            return new System.Net.IPAddress(bytes);
+        }
+
         public static string FlagsText(byte flags)
         {
             string text = "";
-            if ((flags & 0x02) != 0) text += "S";
-            if ((flags & 0x10) != 0) text += "A";
+            if ((flags & 0x02) != 0) text += "S";            if ((flags & 0x10) != 0) text += "A";
             if ((flags & 0x08) != 0) text += "P";
             if ((flags & 0x01) != 0) text += "F";
             if ((flags & 0x04) != 0) text += "R";

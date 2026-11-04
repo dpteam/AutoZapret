@@ -2409,12 +2409,26 @@ namespace AutoZapret.App
 
             int seconds = Json.GetInt(msg, "seconds", 30);
 
+            // 0 = работать до нажатия «Остановить» (постоянный режим)
+            if (seconds < 0) seconds = 0;
+
+            // Без фильтра — весь трафик, и это режим «проверить технику».
+            // Для постоянной работы фильтр обязателен: иначе движок лезет в банк.
+            bool useFilter = Json.GetBool(msg, "filter", true);
+
             Zapret.Own.OwnEngineOptions options = new Zapret.Own.OwnEngineOptions
             {
                 Technique = technique,
                 Seconds = seconds,
-                DryRun = Json.GetBool(msg, "dry", false)
+                DryRun = Json.GetBool(msg, "dry", false),
+                // Списки читаем только когда они реально нужны: 33 000 подсетей
+                // строятся заметное время, а в режиме проверки техники они
+                // наоборот мешают — надо видеть весь трафик.
+                Filter = useFilter ? Zapret.Own.OwnFilter.FromEngineLists() : null
             };
+
+            if (options.Filter != null && options.Filter.HasLimits)
+                Log.Info("OWN", "фильтр: " + options.Filter.Describe());
 
             System.Threading.CancellationTokenSource cancel;
 

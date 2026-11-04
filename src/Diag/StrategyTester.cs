@@ -804,6 +804,13 @@ namespace AutoZapret.Diag
                     continue;
                 }
 
+                // --filter — брать списки движка (как winws), а не весь трафик
+                if (string.Equals(a, "--filter", StringComparison.OrdinalIgnoreCase))
+                {
+                    options.Filter = AutoZapret.Zapret.Own.OwnFilter.FromEngineLists();
+                    continue;
+                }
+
                 if (string.Equals(a, "--own", StringComparison.OrdinalIgnoreCase)) continue;
 
                 int seconds;
@@ -820,6 +827,10 @@ namespace AutoZapret.Diag
 
             Console.WriteLine("== свой движок: " + options.Technique.Describe() +
                               ", " + options.Seconds + " с" + (options.DryRun ? ", показ" : "") + " ==");
+
+            if (options.Filter != null)
+                Console.WriteLine("фильтр: " + options.Filter.Describe());
+
             Console.WriteLine("откройте https://www.youtube.com в браузере во время работы");
             Console.WriteLine();
 

@@ -420,6 +420,17 @@
 
         <div class="row">
           <div>
+            <div class="row-label">Только свои цели</div>
+            <div class="row-hint">
+              Брать списки движка (домены и подсети), как winws. Без этого движок
+              трогает весь TCP/443 — включая банки. Для постоянной работы включайте
+            </div>
+          </div>
+          <div class="switch on" id="own-filter"></div>
+        </div>
+
+        <div class="row">
+          <div>
             <div class="row-label">Запуск</div>
             <div class="row-hint" id="own-status">не запускался</div>
           </div>
@@ -437,7 +448,10 @@
               какая реально пробивает ваш DPI <span class="dim">· 2–4 min</span>
             </div>
           </div>
-          <button class="btn" id="btn-own-compare">Сравнить</button>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn" id="btn-own-compare">Сравнить</button>
+            <button class="btn" id="btn-own-best" style="display:none">Применить лучшую</button>
+          </div>
         </div>
 
         <div id="own-compare-result" style="display:none;margin-top:12px">
@@ -446,8 +460,7 @@
             <tbody id="own-compare-body"></tbody>
           </table>
           <div class="row-hint" id="own-compare-summary" style="margin-top:10px"></div>
-        </div>
-      </div>
+        </div>      </div>
     </section>
 
     <!-- ============================================================ ПРОКСИ -->

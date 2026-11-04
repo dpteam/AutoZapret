@@ -853,7 +853,8 @@
                 repeats: parseInt(document.getElementById("own-repeats").value, 10) || 6,
                 overlap: parseInt(document.getElementById("own-overlap").value, 10) || 0,
                 seconds: parseInt(document.getElementById("own-seconds").value, 10) || 30,
-                dry: document.getElementById("own-dry").classList.contains("on")
+                dry: document.getElementById("own-dry").classList.contains("on"),
+                filter: document.getElementById("own-filter").classList.contains("on")
             });
         });
 
@@ -867,6 +868,11 @@
         var ownDry = document.getElementById("own-dry");
         if (ownDry) ownDry.addEventListener("click", function () {
             ownDry.classList.toggle("on");
+        });
+
+        var ownFilter = document.getElementById("own-filter");
+        if (ownFilter) ownFilter.addEventListener("click", function () {
+            ownFilter.classList.toggle("on");
         });
 
         var ownCompare = document.getElementById("btn-own-compare");
@@ -960,6 +966,28 @@
         if (summaryEl) {
             summaryEl.textContent = msg.summary || "";
             summaryEl.className = "row-hint " + (msg.cancelled ? "diag-warn" : "");
+        }
+
+        // Лучшая техника — в дропдаун одним нажатием. Искать её глазами в
+        // таблице и потом вручную переключать селектор — лишний шаг.
+        var bestBtn = document.getElementById("btn-own-best");
+        if (bestBtn) {
+            var best = (msg.items || [])[0];
+
+            if (best && best.okCount > 0) {
+                bestBtn.style.display = "";
+                bestBtn.disabled = false;
+                bestBtn.textContent = "Применить «" + best.name + "»";
+
+                bestBtn.onclick = function () {
+                    var sel = document.getElementById("own-tech");
+                    if (sel) sel.value = best.name;
+                    bestBtn.textContent = "Выбрано: " + best.name;
+                    bestBtn.disabled = true;
+                };
+            } else {
+                bestBtn.style.display = "none";
+            }
         }
 
         box.style.display = "";

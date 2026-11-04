@@ -20,6 +20,15 @@ namespace AutoZapret.Zapret.Own
 
         /// <summary>Дополнительные порты не нужны: первый шаг — только TCP/443.</summary>
         public int Port = 443;
+
+        /// <summary>
+        /// Что трогать. null — трогать всё (режим проверки техники).
+        /// Задан — работаем как winws: только цели из списков.
+        /// </summary>
+        public OwnFilter Filter;
+
+        /// <summary>Порт назначения для UDP (QUIC). Обычно тот же 443.</summary>
+        public int UdpPort = 443;
     }
 
     /// <summary>Что движок сделал — для лога и отчёта.</summary>
@@ -30,10 +39,15 @@ namespace AutoZapret.Zapret.Own
         public int Applied;
         public int Errors;
 
+        /// <summary>Сколько соединений отброшено фильтром (не наши цели).</summary>
+        public int Skipped;
+
         public string Summary()
         {
             return "пакетов " + Packets + ", ClientHello " + ClientHellos +
-                   ", применено " + Applied + ", ошибок " + Errors;
+                   ", применено " + Applied +
+                   (Skipped > 0 ? ", пропущено " + Skipped : "") +
+                   ", ошибок " + Errors;
         }
     }
 
@@ -213,6 +227,20 @@ namespace AutoZapret.Zapret.Own
 
             _stats.ClientHellos++;
 
+            // Фильтр: трогаем только свои цели. Без него движок лез бы в банк
+            // и госуслуги — winws так не делает, и мы не должны.
+            if (_options.Filter != null)
+            {
+                string sni = Payloads.PayloadValidator.ExtractSni(
+                    Payload(tcp), Payloads.PayloadKind.TlsClientHello);
+
+                if (!_options.Filter.ShouldDesync(sni, tcp.DestinationAddress()))
+                {
+                    _stats.Skipped++;
+                    return false;   // пакет уходит как есть
+                }
+            }
+
             string error;
             List<Desync.Outgoing> outgoing = Desync.Build(tcp, _options.Technique, out error);
 
@@ -295,6 +323,22 @@ namespace AutoZapret.Zapret.Own
 
             _stats.ClientHellos++;    // для UDP это QUIC Initial, счётчик общий
 
+            // Фильтр по адресу: у QUIC нет SNI в открытом виде (он зашифрован),
+            // поэтому решение принимается только по подсетям. Если в фильтре
+            // есть ТОЛЬКО домены, UDP не трогаем вовсе — иначе обойдём всё подряд.
+            if (_options.Filter != null)
+            {
+                System.Net.IPAddress destination = UdpDestination(udp);
+
+                bool domainOnly = _options.Filter.HostCount > 0 && _options.Filter.IpCount == 0;
+
+                if (domainOnly || !_options.Filter.ShouldDesync("", destination))
+                {
+                    _stats.Skipped++;
+                    return false;
+                }
+            }
+
             string error;
             List<Desync.Outgoing> outgoing = Desync.BuildUdp(udp, _options.Technique, out error);
 
@@ -348,6 +392,45 @@ namespace AutoZapret.Zapret.Own
         {
             uint sendLen;
             return WinDivertInterop.WinDivertSend(handle, data, (uint)length, out sendLen, addressPtr);
+        }
+
+        /// <summary>Копия payload TCP-пакета — для извлечения SNI.</summary>
+        private static byte[] Payload(TcpPacket tcp)
+        {
+            if (tcp == null || !tcp.HasPayload) return new byte[0];
+
+            byte[] data = new byte[tcp.PayloadLength];
+            Array.Copy(tcp.Buffer, tcp.PayloadOffset, data, 0, tcp.PayloadLength);
+
+            return data;
+        }
+
+        /// <summary>Адрес назначения UDP-пакета.</summary>
+        private static System.Net.IPAddress UdpDestination(UdpPacket udp)
+        {
+            if (udp == null) return null;
+
+            try
+            {
+                if (!udp.IsIPv6)
+                {
+                    byte[] bytes =
+                    {
+                        udp.Buffer[16], udp.Buffer[17], udp.Buffer[18], udp.Buffer[19]
+                    };
+
+                    return new System.Net.IPAddress(bytes);
+                }
+
+                byte[] v6 = new byte[16];
+                Array.Copy(udp.Buffer, 24, v6, 0, 16);
+
+                return new System.Net.IPAddress(v6);
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private bool Reinject(IntPtr handle, IntPtr addressPtr, byte[] packet, int length)
