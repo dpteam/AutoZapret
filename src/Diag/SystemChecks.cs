@@ -395,28 +395,61 @@ namespace AutoZapret.Diag
             return r;
         }
 
+        /// <summary>
+        /// Перехватчики трафика помимо антивируса: они стоят между приложением и
+        /// сетью и ломают обход так, что winws работает, а результата нет.
+        ///
+        /// Killer и SmartByte особенно злые: они агрегируют трафик и меняют
+        /// маршрутизацию на уровне драйвера. Check Point и Intel Connectivity —
+        /// корпоративные фильтры. AdGuard перехватывает DNS.
+        ///
+        /// Список сервисов, а не только процессов: у службы может не быть
+        /// процесса в момент проверки, но она уже держит фильтр в ядре.
+        /// </summary>
         private static CheckResult CheckAntivirus()
         {
-            CheckResult r = new CheckResult { Name = "Антивирус-перехватчики" };
+            CheckResult r = new CheckResult { Name = "Перехватчики трафика" };
 
-            string[] services = { "AdguardSvc", "AdGuard Service" };
-            string[] processes = { "adguard", "adguardSvc" };
+            // сервис -> понятное имя
+            string[][] services =
+            {
+                new[] { "AdguardSvc", "AdGuard" },
+                new[] { "AdGuard Service", "AdGuard" },
+                new[] { "KillerNetworkService", "Killer" },
+                new[] { "Killer Network Service", "Killer" },
+                new[] { "SmartByteNetworkService", "SmartByte" },
+                new[] { "SmartByte Telemetry", "SmartByte" },
+                new[] { "IntelConnectivityNetworkService", "Intel Connectivity" },
+                new[] { "CheckPointEndpointSecurity", "Check Point" },
+                new[] { "CPDA", "Check Point" }
+            };
+
+            // процесс -> понятное имя
+            string[][] processes =
+            {
+                new[] { "adguard", "AdGuard" },
+                new[] { "adguardSvc", "AdGuard" },
+                new[] { "KillerNetworkService", "Killer" },
+                new[] { "SmartByteNetworkService", "SmartByte" },
+                new[] { "IntelConnectivity", "Intel Connectivity" },
+                new[] { "CPDA", "Check Point" }
+            };
 
             List<string> found = new List<string>();
 
-            foreach (string service in services)
+            foreach (string[] pair in services)
             {
-                string output = Cmd("sc query \"" + service + "\"");
+                string output = Cmd("sc query \"" + pair[0] + "\"");
                 if (output.IndexOf("RUNNING", StringComparison.OrdinalIgnoreCase) >= 0)
-                    found.Add(service);
+                    AddUnique(found, pair[1]);
             }
 
-            foreach (string name in processes)
+            foreach (string[] pair in processes)
             {
                 try
                 {
-                    Process[] procs = Process.GetProcessesByName(name);
-                    if (procs.Length > 0 && found.Count == 0) found.Add("AdGuard");
+                    Process[] procs = Process.GetProcessesByName(pair[0]);
+                    if (procs.Length > 0) AddUnique(found, pair[1]);
                     foreach (Process p in procs) { try { p.Dispose(); } catch { } }
                 }
                 catch { }
@@ -431,9 +464,16 @@ namespace AutoZapret.Diag
 
             r.Status = CheckStatus.Warn;
             r.Detail = "запущен: " + string.Join(", ", found.ToArray());
-            r.Advice = "AdGuard и подобные перехватывают DNS и трафик. " +
-                       "Если обход не работает — попробуйте временно отключить.";
+            r.Advice = "Эти программы стоят между приложением и сетью и ломают обход. " +
+                       "Если что-то не работает — временно отключите их и проверьте снова.";
             return r;
+        }
+
+        private static void AddUnique(List<string> list, string value)
+        {
+            foreach (string existing in list)
+                if (string.Equals(existing, value, StringComparison.OrdinalIgnoreCase)) return;
+            list.Add(value);
         }
 
         private static CheckResult CheckAdmin()
