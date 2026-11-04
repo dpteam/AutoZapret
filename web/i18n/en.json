@@ -230,5 +230,9 @@
   "Secure DNS включён": "Secure DNS enabled",
   "системный DNS": "system DNS",
   "Включаю…": "Enabling…",
-  "Выключаю…": "Disabling…"
+  "Выключаю…": "Disabling…",
+  "Убрать дубли": "Remove duplicates",
+  "Редактор hosts": "hosts editor",
+  "Готовые фиксы": "Ready-made fixes",
+  "Пользовательские записи для hosts: Xbox, авторизация Microsoft и другие. Применяются в редактор — сохраните, когда проверите": "User entries for hosts: Xbox, Microsoft sign-in and others. Applied to the editor - save when you have checked them"
 }

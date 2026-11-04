@@ -216,6 +216,122 @@ namespace AutoZapret.Lists
             return result;
         }
 
+        /// <summary>
+        /// Разбор пользовательского текста списка для редактора: значения,
+        /// дубли и мусор. Отличие от ParseInput — отчёт, а не только результат.
+        /// </summary>
+        public sealed class ListStats
+        {
+            public int Lines;
+            public int Values;
+            public int Unique;
+            public int Duplicates;
+            public int Invalid;
+            public List<string> InvalidSample = new List<string>();
+
+            public string Summary()
+            {
+                string text = "строк " + Lines + ", значений " + Values + ", уникальных " + Unique;
+
+                if (Duplicates > 0) text += ", дублей " + Duplicates;
+                if (Invalid > 0) text += ", похоже на мусор " + Invalid;
+
+                return text;
+            }
+        }
+
+        public static ListStats Stats(string text)
+        {
+            ListStats stats = new ListStats();
+
+            if (string.IsNullOrEmpty(text)) return stats;
+
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (string raw in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+            {
+                string line = raw.Trim();
+                if (line.Length == 0) continue;
+
+                stats.Lines++;
+
+                // комментарий целиком или в конце строки — не значение
+                if (line.StartsWith("#", StringComparison.Ordinal)) continue;
+
+                string value = CommentRegex.Replace(line, "").Trim();
+                if (value.Length == 0) continue;
+
+                stats.Values++;
+
+                if (!seen.Add(value))
+                {
+                    stats.Duplicates++;
+                    continue;
+                }
+
+                if (!IsValidDomain(value) && !IsValidIpOrCidr(value))
+                {
+                    stats.Invalid++;
+                    if (stats.InvalidSample.Count < 10) stats.InvalidSample.Add(value);
+                }
+            }
+
+            stats.Unique = seen.Count;
+            return stats;
+        }
+
+        /// <summary>
+        /// Убрать дубли, сохранив порядок и комментарии. Работает и для доменов,
+        /// и для IP: сначала проверяем как домен, потом как адрес/подсеть.
+        /// </summary>
+        public static string Dedupe(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            List<string> result = new List<string>();
+
+            foreach (string raw in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+            {
+                string line = raw.TrimEnd();
+
+                if (line.Trim().Length == 0)
+                {
+                    result.Add("");
+                    continue;
+                }
+
+                if (line.TrimStart().StartsWith("#", StringComparison.Ordinal))
+                {
+                    result.Add(line);
+                    continue;
+                }
+
+                string value = CommentRegex.Replace(line, "").Trim();
+                string comment = line.Substring(value.Length).Trim();
+
+                if (value.Length == 0) continue;
+                if (!seen.Add(value)) continue;   // дубль — выбрасываем
+
+                result.Add(comment.Length > 0 ? value + "  " + comment : value);
+            }
+
+            // не больше одной пустой строки подряд
+            List<string> clean = new List<string>();
+            bool empty = false;
+
+            foreach (string line in result)
+            {
+                bool isLine = line.Trim().Length == 0;
+
+                if (isLine && empty) continue;
+                empty = isLine;
+                clean.Add(line);
+            }
+
+            return string.Join("\n", clean.ToArray()).Trim() + "\n";
+        }
+
         // ----------------------------------------------------------------- ipset
 
         /// <summary>

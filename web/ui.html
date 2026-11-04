@@ -407,6 +407,8 @@
           </div>
           <div style="display:flex;flex-direction:column;gap:8px">
             <button class="btn primary" id="btn-list-general-save">Сохранить</button>
+            <button class="btn" id="btn-list-general-check">Проверить</button>
+            <button class="btn" id="btn-list-general-dedupe">Убрать дубли</button>
             <button class="btn" id="btn-list-general-import">Из файла</button>
             <button class="btn" id="btn-list-general-reload">Обновить</button>
             <input type="file" id="file-list-general" accept=".txt,.lst,text/plain" style="display:none">
@@ -424,6 +426,8 @@
           </div>
           <div style="display:flex;flex-direction:column;gap:8px">
             <button class="btn primary" id="btn-list-exclude-save">Сохранить</button>
+            <button class="btn" id="btn-list-exclude-check">Проверить</button>
+            <button class="btn" id="btn-list-exclude-dedupe">Убрать дубли</button>
             <button class="btn" id="btn-list-exclude-import">Из файла</button>
             <button class="btn" id="btn-list-exclude-reload">Обновить</button>
             <input type="file" id="file-list-exclude" accept=".txt,.lst,text/plain" style="display:none">
@@ -520,6 +524,40 @@
 
         <div id="hosts-status" class="row-hint" style="margin-top:10px"></div>
         <div id="hosts-conflicts" class="diag-list" style="margin-top:10px;display:none"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Редактор hosts</div>
+
+        <div class="row" style="align-items:flex-start">
+          <div style="flex:1">
+            <textarea id="hosts-raw-input" class="list-input" spellcheck="false"
+                      placeholder="127.0.0.1 localhost"></textarea>
+            <div class="row-hint" id="hosts-raw-summary"></div>
+            <div class="diag-list" id="hosts-raw-problems" style="margin-top:8px;display:none"></div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px;min-width:170px">
+            <button class="btn primary" id="btn-hosts-raw-save">Сохранить</button>
+            <button class="btn" id="btn-hosts-raw-check">Проверить</button>
+            <button class="btn" id="btn-hosts-raw-dedupe">Убрать дубли</button>
+            <button class="btn" id="btn-hosts-raw-reload">Обновить</button>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:14px">
+          <div>
+            <div class="row-label">Готовые фиксы</div>
+            <div class="row-hint">
+              Пользовательские записи для hosts: Xbox, авторизация Microsoft и другие.
+              Применяются в редактор — сохраните, когда проверите
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select id="hosts-fix-select"></select>
+            <button class="btn" id="btn-hosts-fix-apply">Применить</button>
+          </div>
+        </div>
+        <div class="row-hint" id="hosts-raw-status"></div>
       </div>
 
       <div class="card" data-advanced>

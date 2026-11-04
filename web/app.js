@@ -154,6 +154,7 @@
             send("lists.get", { kind: "general" });
             send("lists.get", { kind: "exclude" });
             send("fakes.scan");
+            send("hosts.raw.get");
         }
         if (name === "proxy") {
             send("proxy.state");
@@ -1480,6 +1481,19 @@
         reload.addEventListener("click", function () {
             send("lists.get", { kind: kind });
         });
+
+        // дубли и мусор: считаем на сервере, потому что правила валидации
+        // (домен, CIDR, `!` для исключений) уже написаны в C# — второй
+        // экземпляр правил в JS разошёлся бы с ними на первой же правке
+        var dupes = document.getElementById("btn-list-" + kind + "-dedupe");
+        if (dupes) dupes.addEventListener("click", function () {
+            send("lists.dedupe", { kind: kind, text: input.value });
+        });
+
+        var check = document.getElementById("btn-list-" + kind + "-check");
+        if (check) check.addEventListener("click", function () {
+            send("lists.stats", { kind: kind, text: input.value });
+        });
     }
 
     /// <summary>
@@ -1665,10 +1679,164 @@
             reset.textContent = "Пересоздаю…";
             send("hosts.reset");
         });
+
+        // ---- редактор hosts
+        var rawReload = document.getElementById("btn-hosts-raw-reload");
+        if (rawReload) rawReload.addEventListener("click", function () { send("hosts.raw.get"); });
+
+        var rawCheck = document.getElementById("btn-hosts-raw-check");
+        if (rawCheck) rawCheck.addEventListener("click", function () {
+            checkHostsText(document.getElementById("hosts-raw-input").value);
+        });
+
+        var rawDedupe = document.getElementById("btn-hosts-raw-dedupe");
+        if (rawDedupe) rawDedupe.addEventListener("click", function () {
+            send("hosts.dedupe", { text: document.getElementById("hosts-raw-input").value });
+        });
+
+        var rawSave = document.getElementById("btn-hosts-raw-save");
+        if (rawSave) rawSave.addEventListener("click", function () {
+            var text = document.getElementById("hosts-raw-input").value;
+
+            if (!window.confirm(
+                "Записать этот текст в системный файл hosts?\n\n" +
+                "Резервная копия уже создана (или создастся сейчас).")) return;
+
+            rawSave.disabled = true;
+            rawSave.textContent = "Сохраняю…";
+            send("hosts.raw.save", { text: text });
+        });
+
+        var fixApply = document.getElementById("btn-hosts-fix-apply");
+        if (fixApply) fixApply.addEventListener("click", function () {
+            var sel = document.getElementById("hosts-fix-select");
+            if (!sel || !sel.value) return;
+
+            send("hosts.fix.apply", {
+                id: sel.value,
+                text: document.getElementById("hosts-raw-input").value
+            });
+        });
+    }
+
+    // локальная проверка: дубли и конфликты считаем по тому, что в поле,
+    // не дожидаясь ответа ядра — так видно результат прямо при правке
+    function checkHostsText(text) {
+        var rows = 0, hosts = 0;
+        var byHost = {};
+
+        String(text || "").split(/\r?\n/).forEach(function (line) {
+            var t = line.trim();
+            if (!t || t.charAt(0) === "#") return;
+
+            var hash = t.indexOf("#");
+            if (hash > 0) t = t.substring(0, hash).trim();
+
+            var parts = t.split(/[\s\t]+/);
+            if (parts.length < 2) return;
+
+            rows++;
+
+            for (var i = 1; i < parts.length; i++) {
+                var h = parts[i].toLowerCase();
+                if (!h || h === "localhost") continue;
+
+                if (!byHost[h]) { byHost[h] = []; hosts++; }
+                if (byHost[h].indexOf(parts[0]) < 0) byHost[h].push(parts[0]);
+            }
+        });
+
+        var conflicts = [];
+        Object.keys(byHost).forEach(function (h) {
+            if (byHost[h].length > 1) conflicts.push(h + " → " + byHost[h].join(", "));
+        });
+
+        var summary = document.getElementById("hosts-raw-summary");
+        if (summary) {
+            summary.textContent = "записей " + rows + ", имён " + hosts +
+                (conflicts.length ? ", имён с несколькими адресами " + conflicts.length : "");
+            summary.className = "row-hint " + (conflicts.length ? "diag-warn" : "diag-ok");
+        }
+
+        var box = document.getElementById("hosts-raw-problems");
+        if (!box) return;
+
+        box.innerHTML = "";
+
+        conflicts.slice(0, 10).forEach(function (c) {
+            var div = document.createElement("div");
+            div.className = "diag-row";
+            div.innerHTML = '<span class="badge warn">!</span>' +
+                '<span class="name mono">' + c + '</span>' +
+                '<span class="verdict">одно имя, разные адреса</span>';
+            box.appendChild(div);
+        });
+
+        box.style.display = conflicts.length ? "" : "none";
+    }
+
+    // ---- редактор hosts: полный текст и разбор от ядра
+    function renderHostsRaw(msg) {
+        var save = document.getElementById("btn-hosts-raw-save");
+        if (save) { save.disabled = false; save.textContent = "Сохранить"; }
+
+        var reload = document.getElementById("btn-hosts-raw-reload");
+        if (reload) { reload.disabled = false; reload.textContent = "Обновить"; }
+
+        var status = document.getElementById("hosts-raw-status");
+
+        if (!msg.ok) {
+            if (status) {
+                status.textContent = msg.error || "не удалось прочитать hosts";
+                status.className = "row-hint diag-bad";
+            }
+            return;
+        }
+
+        var input = document.getElementById("hosts-raw-input");
+        if (input && typeof msg.text === "string" && input.value.trim() !== msg.text.trim()) {
+            input.value = msg.text;
+        }
+
+        checkHostsText(msg.text || "");
+
+        if (status) {
+            status.textContent = msg.summary || "";
+            status.className = "row-hint";
+        }
+
+        send("hosts.fixes");
+    }
+
+    function renderHostsFixes(msg) {
+        var sel = document.getElementById("hosts-fix-select");
+        if (!sel) return;
+
+        var current = sel.value;
+        sel.innerHTML = "";
+
+        var items = msg.items || [];
+
+        if (items.length === 0) {
+            var opt = document.createElement("option");
+            opt.value = "";
+            opt.textContent = "нет фиксов";
+            sel.appendChild(opt);
+            return;
+        }
+
+        items.forEach(function (f) {
+            var opt = document.createElement("option");
+            opt.value = f.id;
+            opt.textContent = f.name + " (" + f.count + ")";
+            if (f.note) opt.title = f.note;
+            sel.appendChild(opt);
+        });
+
+        if (current) sel.value = current;
     }
 
     function renderHosts(msg) {
-        var apply = document.getElementById("btn-hosts-apply");
         // то же имя, что в разметке: иначе после первой операции кнопка
         // «Обновить» превращается обратно в «Применить»
         if (apply) { apply.disabled = false; apply.textContent = t("Обновить"); }
@@ -1975,6 +2143,47 @@
             case "hosts":
                 renderHosts(msg);
                 break;
+
+            case "hosts.raw":
+                renderHostsRaw(msg);
+                break;
+
+            case "hosts.edited":
+            {
+                var input = document.getElementById("hosts-raw-input");
+                if (input && typeof msg.text === "string") {
+                    input.value = msg.text;
+                    checkHostsText(msg.text);
+                }
+
+                var st = document.getElementById("hosts-raw-status");
+                if (st) { st.textContent = msg.summary || ""; st.className = "row-hint diag-ok"; }
+                break;
+            }
+
+            case "hosts.fixes":
+                renderHostsFixes(msg);
+                break;
+
+            case "lists.stats":
+            {
+                var hint = document.getElementById("list-" + (msg.kind || "general") + "-hint");
+                if (hint) {
+                    hint.textContent = msg.stats || "";
+                    hint.className = "row-hint " + ((msg.duplicates || 0) > 0 ? "diag-warn" : "diag-ok");
+                }
+                break;
+            }
+
+            case "lists.edited":
+            {
+                var target = document.getElementById("list-" + (msg.kind || "general") + "-input");
+                if (target && typeof msg.text === "string") target.value = msg.text;
+
+                var hint = document.getElementById("list-" + (msg.kind || "general") + "-hint");
+                if (hint) { hint.textContent = msg.summary || ""; hint.className = "row-hint diag-ok"; }
+                break;
+            }
 
             case "auto":
                 renderAuto(msg);

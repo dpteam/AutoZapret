@@ -1,0 +1,16 @@
+{
+  "_comment": "Готовые записи для hosts. Формат: id, name, note, entries[{ip, host}]. Правьте руками — программа только читает.",
+  "fixes": [
+    {
+      "id": "xbox",
+      "name": "Xbox / Microsoft авторизация",
+      "note": "Снимает геоблок Xbox и Game Pass, чинит вход в Microsoft-аккаунт. Адреса проверены на рабочей технике, но могут устареть: если Xbox перестал входить — попробуйте снять фикс.",
+      "entries": [
+        { "ip": "37.230.192.51", "host": "xsts.auth.xboxlive.com" },
+        { "ip": "143.20.64.55", "host": "xsts.auth.xboxlive.com" },
+        { "ip": "143.20.64.55", "host": "xgpuwebf2p.gssv-play-prod.xboxlive.com" },
+        { "ip": "143.20.64.55", "host": "xgpuweb.gssv-play-prod.xboxlive.com" }
+      ]
+    }
+  ]
+}

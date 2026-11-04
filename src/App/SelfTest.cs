@@ -118,6 +118,9 @@ namespace AutoZapret.App
                 Section("Secure DNS в браузерах");
                 TestBrowserDoh();
 
+                Section("редактор hosts и списков");
+                TestEditors();
+
                 Section("пресеты по процессам");
                 TestProcessPresets();
 
@@ -2938,6 +2941,104 @@ namespace AutoZapret.App
             {
                 Check("DoH для браузера: определение", false, ex.Message);
             }
+        }
+
+        /// <summary>
+        /// Редакторы hosts и списков. Проверяем ровно то, что дороже всего
+        /// ошибить: разбор с комментариями, дубли, конфликты IPv4/IPv6,
+        /// и что слияние фикса не плодит повторных строк.
+        /// </summary>
+        private static void TestEditors()
+        {
+            string hosts =
+                "# мой комментарий\r\n" +
+                "127.0.0.1 localhost\r\n" +
+                "37.230.192.51 xsts.auth.xboxlive.com\r\n" +
+                "143.20.64.55 xsts.auth.xboxlive.com\r\n" +
+                "1.2.3.4 example.com example.com\r\n" +
+                "::1 example.com\r\n";
+
+            AutoZapret.Lists.HostsReport report = AutoZapret.Lists.HostsEditor.Analyze(hosts);
+
+            Check("hosts: записи разобраны", report.Rows == 4, report.Rows.ToString());
+            Check("hosts: localhost не считается",
+                report.UniqueHosts == 2, report.UniqueHosts.ToString());
+            Check("hosts: конфликт IPv4 найден", report.Conflicts == 1, report.Conflicts.ToString());
+            Check("hosts: IPv4+IPv6 не конфликт",
+                report.ConflictDetails.Count > 0 &&
+                report.ConflictDetails[0].IndexOf("xsts", StringComparison.Ordinal) >= 0,
+                report.ConflictDetails.Count > 0 ? report.ConflictDetails[0] : "нет");
+
+            // ---- дубли: повтор имени внутри строки и одинаковые IP склеиваются
+            string withDupes =
+                "1.1.1.1 a.com\r\n" +
+                "1.1.1.1 a.com\r\n" +
+                "1.1.1.1 b.com b.com\r\n";
+
+            string deduped = AutoZapret.Lists.HostsEditor.Dedupe(withDupes);
+            AutoZapret.Lists.HostsReport after = AutoZapret.Lists.HostsEditor.Analyze(deduped);
+
+            Check("hosts: дубли убраны", after.Rows == 1, after.Rows.ToString());
+            Check("hosts: имена сохранены", after.UniqueHosts == 2, after.UniqueHosts.ToString());
+            Check("hosts: комментарии сохранены",
+                AutoZapret.Lists.HostsEditor.Dedupe("# keep\r\n1.1.1.1 a.com\r\n")
+                    .IndexOf("# keep", StringComparison.Ordinal) >= 0, "ok");
+
+            // ---- фикс не дублирует уже существующие записи
+            System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, string>> fix =
+                new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, string>>
+                {
+                    new System.Collections.Generic.KeyValuePair<string, string>("37.230.192.51", "xsts.auth.xboxlive.com"),
+                    new System.Collections.Generic.KeyValuePair<string, string>("10.0.0.1", "new.example")
+                };
+
+            string merged = AutoZapret.Lists.HostsEditor.AddEntries(hosts, "Xbox", fix);
+
+            Check("фикс: новая запись добавлена",
+                merged.IndexOf("10.0.0.1 new.example", StringComparison.Ordinal) >= 0, "ok");
+            Check("фикс: существующая не продублирована",
+                CountOccurrences(merged, "37.230.192.51 xsts") == 1,
+                CountOccurrences(merged, "37.230.192.51 xsts").ToString());
+
+            // ---- списки обхода: статистика и дубли
+            string list =
+                "# комментарий\n" +
+                "example.com\n" +
+                "EXAMPLE.com\n" +
+                "sub.example.org  # пояснение\n" +
+                "!excluded.net\n" +
+                "10.0.0.0/8\n";
+
+            AutoZapret.Lists.HostlistManager.ListStats stats = AutoZapret.Lists.HostlistManager.Stats(list);
+
+            Check("список: значения посчитаны", stats.Values == 5, stats.Values.ToString());
+            Check("список: дубли найдены", stats.Duplicates == 1, stats.Duplicates.ToString());
+            Check("список: мусора нет", stats.Invalid == 0, stats.Invalid.ToString());
+
+            string listClean = AutoZapret.Lists.HostlistManager.Dedupe(list);
+
+            Check("список: дубль убран",
+                CountOccurrences(listClean, "example.com") == 1,
+                CountOccurrences(listClean, "example.com").ToString());
+            Check("список: исключение с ! сохранено",
+                listClean.IndexOf("!excluded.net", StringComparison.Ordinal) >= 0, "ok");
+            Check("список: комментарий в строке сохранён",
+                listClean.IndexOf("# пояснение", StringComparison.Ordinal) >= 0, "ok");
+        }
+
+        private static int CountOccurrences(string text, string needle)
+        {
+            int count = 0, index = 0;
+
+            while (true)
+            {
+                index = text.IndexOf(needle, index, StringComparison.OrdinalIgnoreCase);
+                if (index < 0) break;
+                count++;
+                index += needle.Length;
+            }
+
+            return count;
         }
 
         private static void TestSniffResult()

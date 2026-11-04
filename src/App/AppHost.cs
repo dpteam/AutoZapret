@@ -560,6 +560,36 @@ namespace AutoZapret.App
                 SendUpdateStatus(r);
             }));
 
+            // ---- инструменты списков: статистика и дубли
+            bridge.Register("lists.stats", msg =>
+            {
+                string text = Json.GetString(msg, "text", "");
+                HostlistManager.ListStats stats = HostlistManager.Stats(text);
+
+                bridge.Send(WebBridge.Msg("lists.stats",
+                    "kind", Json.GetString(msg, "kind", "general"),
+                    "stats", stats.Summary(),
+                    "duplicates", (long)stats.Duplicates,
+                    "invalid", ToObjects(stats.InvalidSample)));
+            });
+
+            bridge.Register("lists.dedupe", msg =>
+            {
+                string text = Json.GetString(msg, "text", "");
+
+                HostlistManager.ListStats before = HostlistManager.Stats(text);
+                string cleaned = HostlistManager.Dedupe(text);
+                HostlistManager.ListStats after = HostlistManager.Stats(cleaned);
+
+                Log.Info("LIST", "список: убраны дубли — было " + before.Summary() + ", стало " + after.Summary());
+
+                bridge.Send(WebBridge.Msg("lists.edited",
+                    "kind", Json.GetString(msg, "kind", "general"),
+                    "text", cleaned,
+                    "summary", "было: " + before.Summary() + " · стало: " + after.Summary() +
+                               " · не забудьте «Сохранить»"));
+            });
+
             // ---- фейки
             bridge.Register("fakes.scan", msg => RunInBackground("fakes", SendFakes));
             bridge.Register("fakes.search", msg =>
@@ -601,6 +631,80 @@ namespace AutoZapret.App
             });
 
             bridge.Register("hosts.check", msg => RunInBackground("hosts-check", CheckHostsUi));
+
+            // ---- редактор hosts: текст целиком, проверка, дубли, фиксы
+            //
+            // Человек должен видеть файл и править его руками; программа только
+            // подсказывает (дубли, конфликты) и убирает мусор. Поэтому отдаём
+            // весь текст, а не «умную» модель.
+            bridge.Register("hosts.raw.get", msg => SendHostsRaw());
+
+            bridge.Register("hosts.raw.save", msg =>
+            {
+                string text = Json.GetString(msg, "text", "");
+
+                if (!EnsureElevation())
+                {
+                    bridge.Send(WebBridge.Msg("hosts.raw", "ok", false,
+                        "error", "нужны права администратора: hosts лежит в System32"));
+                    return;
+                }
+
+                RunInBackground("hosts-raw-save", () =>
+                {
+                    string error = HostsFile.Apply(text);
+
+                    if (error != null)
+                    {
+                        bridge.Send(WebBridge.Msg("hosts.raw", "ok", false, "error", error));
+                        _tray.Notify(AppInfo.Name, "hosts: " + error, ToolTipIcon.Error);
+                        return;
+                    }
+
+                    Log.Info("HOSTS", "hosts сохранён из редактора");
+                    SendHostsRaw();
+                    SendHosts(true, false, "hosts сохранён вручную", null);
+                });
+            });
+
+            bridge.Register("hosts.dedupe", msg =>
+            {
+                string text = Json.GetString(msg, "text", "");
+                string cleaned = HostsEditor.Dedupe(text);
+
+                HostsReport before = HostsEditor.Analyze(text);
+                HostsReport after = HostsEditor.Analyze(cleaned);
+
+                Log.Info("HOSTS", "убраны дубли: " + before.Summary() + " → " + after.Summary());
+
+                bridge.Send(WebBridge.Msg("hosts.edited",
+                    "text", cleaned,
+                    "summary", "было: " + before.Summary() + " · стало: " + after.Summary()));
+            });
+
+            bridge.Register("hosts.fixes", msg => SendHostsFixes());
+
+            bridge.Register("hosts.fix.apply", msg =>
+            {
+                string id = Json.GetString(msg, "id", "");
+                string text = Json.GetString(msg, "text", "");
+
+                HostsFix fix = HostsFixes.Find(id);
+
+                if (fix == null)
+                {
+                    bridge.Send(WebBridge.Msg("hosts.edited", "text", text,
+                        "summary", "фикс не найден: " + id));
+                    return;
+                }
+
+                string updated = HostsEditor.AddEntries(text, fix.Name, fix.Entries);
+
+                bridge.Send(WebBridge.Msg("hosts.edited",
+                    "text", updated,
+                    "summary", "фикс «" + fix.Name + "» применён, записей " + fix.Count +
+                               " · не забудьте «Сохранить»"));
+            });
             bridge.Register("hosts.restore", msg =>
             {
                 if (!EnsureElevation()) return;
@@ -1428,6 +1532,56 @@ namespace AutoZapret.App
                 "items", items,
                 "template", Core.BrowserDoh.Template,
                 "summary", Core.BrowserDoh.StatusText()));
+        }
+
+        /// <summary>Отдать редактору полный текст hosts и его разбор.</summary>
+        private void SendHostsRaw()
+        {
+            string text = HostsFile.ReadSystem();
+
+            if (text == null)
+            {
+                _form.Bridge.Send(WebBridge.Msg("hosts.raw", "ok", false,
+                    "error", "не удалось прочитать hosts (нужны права?)"));
+                return;
+            }
+
+            HostsReport report = HostsEditor.Analyze(text);
+
+            _form.Bridge.Send(WebBridge.Msg("hosts.raw",
+                "ok", true,
+                "text", text,
+                "summary", report.Summary(),
+                "conflicts", ToObjects(report.ConflictDetails),
+                "duplicates", (long)report.DuplicateHosts,
+                "invalid", ToObjects(report.Invalid),
+                "path", HostsFile.SystemPath));
+        }
+
+        private static List<object> ToObjects(List<string> items)
+        {
+            List<object> result = new List<object>();
+            foreach (string s in items) result.Add(s);
+            return result;
+        }
+
+        /// <summary>Список готовых фиксов для hosts.</summary>
+        private void SendHostsFixes()
+        {
+            List<object> items = new List<object>();
+
+            foreach (HostsFix fix in HostsFixes.Load())
+            {
+                items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    { "id", fix.Id },
+                    { "name", fix.Name },
+                    { "note", fix.Note ?? "" },
+                    { "count", (long)fix.Count }
+                });
+            }
+
+            _form.Bridge.Send(WebBridge.Msg("hosts.fixes", "items", items));
         }
 
         private void CancelDiag()
