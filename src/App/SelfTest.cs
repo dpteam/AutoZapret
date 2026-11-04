@@ -1599,6 +1599,26 @@ namespace AutoZapret.App
                     AutoZapret.Zapret.Preflight.NormalizePath("@@C:\\x") == @"C:\x", "ok");
 
                 Check("путь: пустой", AutoZapret.Zapret.Preflight.NormalizePath("") == "", "ok");
+
+                // ---- fake-IP от VPN-туннеля: 198.18.0.0/15
+                Check("fake-IP: 198.18.0.4 найден",
+                    AutoZapret.Diag.DnsGuard.IsFakeIp(System.Net.IPAddress.Parse("198.18.0.4")), "ok");
+                Check("fake-IP: 198.19.0.7 найден",
+                    AutoZapret.Diag.DnsGuard.IsFakeIp(System.Net.IPAddress.Parse("198.19.0.7")), "ok");
+                Check("fake-IP: реальный адрес не считается",
+                    !AutoZapret.Diag.DnsGuard.IsFakeIp(System.Net.IPAddress.Parse("142.251.150.4")), "ok");
+                Check("fake-IP: 192.168.1.1 не считается",
+                    !AutoZapret.Diag.DnsGuard.IsFakeIp(System.Net.IPAddress.Parse("192.168.1.1")), "ok");
+
+                // ---- предупреждение «список пуст» только для скачиваемых файлов
+                Check("списки: user-файл не ругаем",
+                    !AutoZapret.Zapret.Preflight.IsSupposedToGrow("list-general-user.txt"), "ok");
+                Check("списки: ipset-exclude не ругаем",
+                    !AutoZapret.Zapret.Preflight.IsSupposedToGrow("ipset-exclude.txt"), "ok");
+                Check("списки: ipset-all ругаем",
+                    AutoZapret.Zapret.Preflight.IsSupposedToGrow("ipset-all.txt"), "ok");
+                Check("списки: list-general ругаем",
+                    AutoZapret.Zapret.Preflight.IsSupposedToGrow("list-general.txt"), "ok");
             }
 
             // ---- логика сводки

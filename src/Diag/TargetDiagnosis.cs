@@ -28,10 +28,20 @@ namespace AutoZapret.Diag
         public bool TcpOk;
         public bool TlsOk;
 
+        /// <summary>Адрес из fake-IP диапазона, если DNS отдал именно его.</summary>
+        public string FakeIp = "";
+
         /// <summary>Где именно всё встало — одной строкой.</summary>
         public string Verdict()
         {
             if (!DnsOk) return "DNS не отвечает";
+
+            // fake-IP: подключение к 198.18.x «успешно» за 1 мс, потому что это
+            // локальный туннель VPN, а не сайт. Без этой ветки вывод врал:
+            // «TCP есть, TLS рвётся — лечится desync», хотя desync тут бессилен.
+            if (FakeIp.Length > 0)
+                return "DNS отдаёт fake-IP " + FakeIp + " — трафик в туннеле VPN, обход его не видит";
+
             if (!TcpOk) return "TCP не соединяется — похоже на блокировку по IP, desync тут не поможет";
             if (!TlsOk) return "TCP есть, TLS рвётся — DPI, лечится desync";
             return "открывается";
@@ -95,6 +105,7 @@ namespace AutoZapret.Diag
                 foreach (IPAddress ip in v6) text.Add(ip.ToString() + " (v6)");
 
                 stage.Dns = stage.DnsOk ? string.Join(", ", text.ToArray()) : "пусто";
+                stage.FakeIp = DnsGuard.FakeAddress(v4);
             }
             catch (Exception ex)
             {

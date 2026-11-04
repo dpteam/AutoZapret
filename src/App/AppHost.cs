@@ -33,7 +33,7 @@ namespace AutoZapret.App
         private bool _exiting;
         private bool _startedMinimized;
         private bool _autoStartTried;
-        private bool _ipsetTried;
+        private bool _listsTried;
         private NetStats _lastNetSample;
 
         public AppHost()
@@ -220,7 +220,7 @@ namespace AutoZapret.App
                 PushStrategies();
                 PushPresets();
                 PushAutoStart();
-                TryAutoUpdateIpset();
+                TryAutoUpdateLists();
                 TryAutoStartProtection();
                 CheckUpdatesOnStart();
             });
@@ -1505,6 +1505,100 @@ namespace AutoZapret.App
         ///   * пробуем один раз за сессию, чтобы не бороться с пользователем,
         ///     который только что выключил обход вручную.
         /// </summary>
+        /// <summary>
+        /// Первый запуск: списки из бандла — заглушки (ipset-all.txt 18 байт с
+        /// одним тестовым адресом, остальные тоже почти пустые). Все профили
+        /// «IP Bypass …» при этом не совпадают ни с чем, и обход выглядит
+        /// нерабочим: движок жив, ошибок нет, эффекта нет.
+        ///
+        /// Flowseal качает списки при установке, поэтому у их сборки такой дыры
+        /// не видно. Делаем так же: тихо, в фоне, один раз за запуск — и не
+        /// заставляем человека идти в «Списки» до первого включения.
+        /// </summary>
+        private void TryAutoUpdateLists()
+        {
+            if (_listsTried) return;
+            _listsTried = true;
+
+            // `*-user.txt` — личные дополнения. Их отсутствие ломает winws
+            // («не открылся список»), поэтому создаём пустые заранее.
+            EnsureUserLists();
+
+            if (!_settings.UpdateLists) return;
+
+            bool needIpset = TooSmall("ipset-all.txt", 1024);
+            bool needExclude = TooSmall("list-exclude.txt", 256);
+            bool needIpExclude = TooSmall("ipset-exclude.txt", 32);
+
+            if (!needIpset && !needExclude && !needIpExclude) return;
+
+            Log.Info("LIST", "списки неполные — скачиваю при запуске: " +
+                             (needIpset ? "ipset " : "") +
+                             (needExclude ? "домены-исключения " : "") +
+                             (needIpExclude ? "локальные сети" : ""));
+
+            RunInBackground("lists-auto", () =>
+            {
+                if (needIpset) ReportAuto("ipset", ListsUpdater.UpdateIpset());
+                if (needExclude) ReportAuto("домены-исключения", ListsUpdater.UpdateExcludeDomains());
+                if (needIpExclude) ReportAuto("локальные сети", ListsUpdater.UpdateIpsetExclude());
+
+                SendIpsetState();
+            });
+        }
+
+        private static void ReportAuto(string what, UpdateResult r)
+        {
+            if (r.Ok)
+                Log.Info("LIST", what + " скачано автоматически: " + r.Message + ", записей " + r.Entries);
+            else
+                Log.Warn("LIST", what + " не скачалось автоматически: " + r.Message);
+        }
+
+        private static bool TooSmall(string fileName, long minBytes)
+        {
+            try
+            {
+                string path = System.IO.Path.Combine(Paths.EngineListsDir, fileName);
+
+                if (!System.IO.File.Exists(path)) return true;
+
+                return new System.IO.FileInfo(path).Length < minBytes;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Создать пустые `*-user.txt`, если их нет: winws открывает их по
+        /// `--hostlist=` и без файла ругается, а человек ничего не делал.
+        /// </summary>
+        private static void EnsureUserLists()
+        {
+            string[] names = { "list-general-user.txt", "list-exclude-user.txt", "ipset-exclude-user.txt" };
+
+            foreach (string name in names)
+            {
+                try
+                {
+                    string path = System.IO.Path.Combine(Paths.EngineListsDir, name);
+
+                    if (System.IO.File.Exists(path)) continue;
+
+                    System.IO.Directory.CreateDirectory(Paths.EngineListsDir);
+                    System.IO.File.WriteAllText(path, "", new System.Text.UTF8Encoding(false));
+
+                    Log.Info("LIST", "создан пустой " + name);
+                }
+                catch (Exception ex)
+                {
+                    Log.Debug("LIST", "не удалось создать " + name + ": " + ex.Message);
+                }
+            }
+        }
+
         private void TryAutoStartProtection()
         {
             if (_autoStartTried) return;
@@ -1543,48 +1637,6 @@ namespace AutoZapret.App
         public static string NormalizeLanguage(string value)
         {
             return Settings.NormalizeLanguage(value);
-        }
-
-        /// <summary>
-        /// Первый запуск: список IP-подсетей — заглушка из бандла (один тестовый
-        /// адрес, 18 байт). Все профили «IP Bypass …» при этом не совпадают ни с
-        /// чем, и обход выглядит нерабочим: движок жив, ошибок нет, эффекта нет.
-        ///
-        /// Flowseal качает этот список при установке, поэтому у их сборки такой
-        /// дыры не видно. Делаем так же: тихо, в фоне, один раз за запуск.
-        /// </summary>
-        private void TryAutoUpdateIpset()
-        {
-            if (_ipsetTried) return;
-            _ipsetTried = true;
-
-            if (!_settings.UpdateLists) return;
-
-            string path = System.IO.Path.Combine(Paths.EngineListsDir, "ipset-all.txt");
-
-            try
-            {
-                if (System.IO.File.Exists(path) && new System.IO.FileInfo(path).Length > 1024) return;
-            }
-            catch (Exception ex)
-            {
-                Log.Debug("LIST", "ipset: " + ex.Message);
-                return;
-            }
-
-            Log.Info("LIST", "ipset-all.txt пуст — скачиваю автоматически");
-
-            RunInBackground("ipset-auto", () =>
-            {
-                UpdateResult r = ListsUpdater.UpdateIpset();
-
-                if (r.Ok)
-                    Log.Info("LIST", "ipset скачан автоматически: " + r.Message + ", подсетей " + r.Entries);
-                else
-                    Log.Warn("LIST", "автоскачивание ipset не удалось: " + r.Message);
-
-                SendIpsetState();
-            });
         }
 
         private void PushAutoStart()

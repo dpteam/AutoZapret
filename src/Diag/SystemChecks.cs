@@ -398,6 +398,21 @@ namespace AutoZapret.Diag
         {
             CheckResult r = new CheckResult { Name = "VPN и туннели" };
 
+            // Сначала факт, а не догадка: если DNS отдаёт адреса 198.18.x, значит
+            // трафик УЖЕ завёрнут в туннель VPN-клиента, и никакой пакет до
+            // провайдера (а значит и до DPI) не доходит. Искать при этом процессы
+            // бесполезно: Hiddify поднимает TUN-адаптер и fake-IP DNS, а сам
+            // процесс может быть «не подключён» по своим логам.
+            string fakeIp = DnsGuard.Detect();
+
+            if (fakeIp.Length > 0)
+            {
+                r.Status = CheckStatus.Fail;
+                r.Detail = "трафик в туннеле: DNS отдаёт fake-IP";
+                r.Advice = fakeIp;
+                return r;
+            }
+
             string[] services = { "WireGuard", "WireGuardTunnel", "OpenVPNService", "OpenVPN", "TAP-Windows" };
             List<string> running = new List<string>();
 

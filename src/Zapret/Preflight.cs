@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using AutoZapret.Core;
+using AutoZapret.Diag;
 using AutoZapret.Payloads;
 
 namespace AutoZapret.Zapret
@@ -73,6 +74,19 @@ namespace AutoZapret.Zapret
                               string.Equals(strategy.Engine, "v2", StringComparison.OrdinalIgnoreCase)
                 ? EngineKind.V2
                 : EngineKind.V1;
+
+            // ---- 0. DNS-ловушка: трафик завёрнут в туннель VPN
+            //
+            // Это первое, что нужно проверить: при fake-IP DNS (198.18.x) пакеты
+            // уходят в локальный TUN, до провайдера и DPI не доходят, и любая
+            // стратегия даёт ровно «0 из 4» с ошибкой TLS. Выглядит как «движок
+            // не работает», а на деле ему нечего исправлять.
+            string fakeDns = DnsGuard.Detect();
+            if (fakeDns.Length > 0)
+            {
+                problems.Add(Warning("dns-fake-ip",
+                    "DNS отдаёт адреса туннеля VPN — обход не увидит трафик", fakeDns));
+            }
 
             if (!engine.IsAvailable(kind))
             {
@@ -210,6 +224,15 @@ namespace AutoZapret.Zapret
                     // Файл есть, но пустой — это ХУЖЕ отсутствующего: winws
                     // запускается, фильтр не совпадает ни с чем, и все стратегии
                     // выглядят «нерабочими» (0/4 у каждой). Встречалось вживую.
+                    //
+                    // Но не для всех файлов: `*-user.txt` — личные дополнения
+                    // пользователя, пустой файл там НОРМА, а `ipset-exclude.txt` —
+                    // список локальных сетей, у него 11 подсетей это 135 байт.
+                    // Раньше мы ругались на них при каждом запуске, и это выглядело
+                    // как «списков нет, хотя я их скачивал».
+                    if (!IsSupposedToGrow(Path.GetFileName(listPath)))
+                        continue;
+
                     try
                     {
                         long size = new FileInfo(listPath).Length;
@@ -221,7 +244,7 @@ namespace AutoZapret.Zapret
                         {
                             problems.Add(Warning("list-empty",
                                 "список почти пуст: " + Path.GetFileName(listPath),
-                                size + " байт — обновите списки на экране «Списки», иначе обход не покроет трафик"));
+                                size + " байт — списки обновятся сами при запуске (или кнопкой на экране «Списки»)"));
                         }
                     }
                     catch { }
@@ -315,6 +338,24 @@ namespace AutoZapret.Zapret
             while (path.StartsWith("@", StringComparison.Ordinal)) path = path.Substring(1);
 
             return path;
+        }
+
+        /// <summary>
+        /// Должен ли файл списка быть большим.
+        ///
+        /// `*-user.txt` — личные дополнения человека: пустой файл там нормальное
+        /// состояние. `ipset-exclude*.txt` — список локальных сетей, он по смыслу
+        /// короткий (10/8, 192.168/16 и т.д., ~135 байт). Пустыми «по-настоящему»
+        /// бывают только скачиваемые списки, о них и предупреждаем.
+        /// </summary>
+        public static bool IsSupposedToGrow(string fileName)
+        {
+            string name = (fileName ?? "").ToLowerInvariant();
+
+            if (name.EndsWith("-user.txt", StringComparison.Ordinal)) return false;
+            if (name.StartsWith("ipset-exclude", StringComparison.Ordinal)) return false;
+
+            return true;
         }
 
         private static bool ElevationRequiredButMissing()
