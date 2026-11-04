@@ -229,11 +229,19 @@ namespace AutoZapret.Diag
                                     break;
                                 }
 
-                                // есть данные — вычитываем, чтобы не блокироваться
+                                // есть данные — вычитываем, чтобы не блокироваться.
+                                // Считаем прочитанное: 0 означает, что соединение
+                                // закрыто, и дальше писать бессмысленно.
                                 try
                                 {
                                     byte[] sink = new byte[Math.Min(client.Client.Available, 8192)];
-                                    stream.Read(sink, 0, sink.Length);
+                                    int drained = stream.Read(sink, 0, sink.Length);
+
+                                    if (drained <= 0)
+                                    {
+                                        result.Detail = "сервер закрыл соединение";
+                                        break;
+                                    }
                                 }
                                 catch { }
                             }

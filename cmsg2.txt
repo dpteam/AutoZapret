@@ -1,0 +1,13 @@
+chore: zero build warnings, final check pass
+
+CA2022 in Tcp16Test: the drain read ignored its return value. Now the
+count is checked - 0 means the server closed and writing further is
+pointless, which is also more correct behaviour, not just a quieter
+analyzer.
+
+IL3000 in DiagnosticBundle: Assembly.Location is always empty in a
+single-file app, so the build stamp in the diagnostic ZIP was silently
+"?" for every real user. Now it reads the timestamp of the running exe
+via Environment.ProcessPath.
+
+Build is warning-free, selftest and CI green.

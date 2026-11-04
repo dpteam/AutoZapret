@@ -187,12 +187,21 @@ namespace AutoZapret.Diag
             return sb.ToString();
         }
 
+        /// <summary>
+        /// Когда собрана программа. В single-file `Assembly.Location` пустой,
+        /// поэтому берём время файла по пути запущенного процесса.
+        /// </summary>
         private static string BuildStamp()
         {
             try
             {
-                return File.GetLastWriteTimeUtc(
-                    System.Reflection.Assembly.GetExecutingAssembly().Location)
+                string exe = Environment.ProcessPath;
+                if (string.IsNullOrEmpty(exe) || !File.Exists(exe))
+                    exe = Path.Combine(AppContext.BaseDirectory, "AutoZapret.exe");
+
+                if (!File.Exists(exe)) return "?";
+
+                return File.GetLastWriteTimeUtc(exe)
                     .ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture);
             }
             catch { return "?"; }
