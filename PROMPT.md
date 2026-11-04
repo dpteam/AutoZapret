@@ -25,14 +25,16 @@ GUI «всё-в-одном» для обхода DPI на Windows:
 | | |
 |---|---|
 | Язык | C# |
-| Рантайм | **.NET Framework 4.8**, **x64** |
+| Рантайм | **.NET 9** (`net9.0-windows`), **x64**, self-contained single-file |
 | UI | **WebView2** (HTML+CSS+JS в ресурсах), WinForms-хост |
 | Мост | `chrome.webview.postMessage` |
-| Сборка | `build.cmd` + `csc.exe`, **без NuGet и MSBuild** |
+| Сборка | `build.cmd` (разработка) + `publish.cmd` (self-contained) |
 | Трей | `NotifyIcon`, иконка с генерируемым оверлеем |
 
-Форму проекта смотрим в `../NFSWorldServer2` — там уже решены: сборка без MSBuild,
-WebView2 в ресурсах, `postMessage`-мост, `refs/` в `.gitignore`, `--selftest`.
+Форму проекта смотрим в `../NFSWorldServer2` — там уже решены: WebView2 в ресурсах,
+`postMessage`-мост, `refs/` в `.gitignore`, `--selftest`.
+
+**Windows 7/8.1 не поддерживаются:** .NET 9 требует Windows 10 1607+.
 
 ---
 

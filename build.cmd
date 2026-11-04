@@ -30,8 +30,7 @@ if not errorlevel 1 (
 where dotnet >nul 2>&1
 if errorlevel 1 (
   echo [ERROR] dotnet SDK not found in PATH.
-  echo         Install .NET SDK 8 or newer: https://dotnet.microsoft.com/download
-  echo         The RESULT still targets .NET Framework 4.8 - the SDK is only the compiler.
+  echo         Install .NET SDK 9 or newer: https://dotnet.microsoft.com/download
   exit /b 1
 )
 

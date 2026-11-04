@@ -1,26 +1,31 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    AutoZapret - .NET Framework 4.8 / x64 / WinForms-хост + WebView2 UI.
+    AutoZapret - .NET 9 / x64 / WinForms-хост + WebView2 UI.
 
     Правила (см. AGENTS.md):
-      * никакого NuGet: единственная внешняя ссылка - WebView2 SDK из lib\webview2,
+      * единственная внешняя зависимость - WebView2 SDK из lib\webview2,
         качается tools\fetch-webview2.ps1;
       * UI живёт в web\ и вшивается ресурсами (LogicalName задан явно);
-      * сборка - build.cmd (обёртка над dotnet build).
+      * сборка - build.cmd (для разработки), публикация - publish.cmd
+        (self-contained single-file, .NET у пользователя не нужен).
+
+    Windows 7/8.1 больше не поддерживаются: .NET 9 требует Windows 10 1607+.
   -->
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net48</TargetFramework>
+    <TargetFramework>net9.0-windows</TargetFramework>
     <AssemblyName>AutoZapret</AssemblyName>
     <RootNamespace>AutoZapret</RootNamespace>
+    <!-- WinForms нужен только ради хоста окна и NotifyIcon; UI - WebView2 -->
+    <UseWindowsForms>true</UseWindowsForms>
 
     <!-- x64 обязателен: 32-битного winws.exe не существует -->
     <PlatformTarget>x64</PlatformTarget>
     <Prefer32Bit>false</Prefer32Bit>
 
-    <LangVersion>7.3</LangVersion>
+    <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
 
@@ -36,36 +41,35 @@
     <ApplicationIcon>assets\AutoZapret.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
 
-    <Version>0.1.0</Version>
-    <FileVersion>0.1.0.0</FileVersion>
-    <AssemblyVersion>0.1.0.0</AssemblyVersion>
+    <Version>0.2.0</Version>
+    <FileVersion>0.2.0.0</FileVersion>
+    <AssemblyVersion>0.2.0.0</AssemblyVersion>
     <Product>AutoZapret</Product>
     <Company>DPT</Company>
     <Copyright>MIT. Обёртка над zapret (bol-van), конфиги Flowseal.</Copyright>
 
-    <DebugType>pdbonly</DebugType>
+    <DebugType>portable</DebugType>
     <Optimize>true</Optimize>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
 
-    <!-- CS1591: нет XML-комментариев; CS0618: устаревшие API BCL осознанно -->
-    <NoWarn>$(NoWarn);CS1591;CS0618</NoWarn>
+    <!--
+      DPI: настраивается здесь, а не в манифесте. С .NET 6 WinForms требует
+      именно этого пути (иначе WFO0003 и возможное игнорирование режима).
+    -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationUseCompatibleTextRendering>false</ApplicationUseCompatibleTextRendering>
+
+    <!--
+      CS1591: нет XML-комментариев
+      SYSLIB0014: HttpWebRequest/WebClient помечены устаревшими, но работают
+                  и уже покрыты тестами; переход на HttpClient - отдельная задача
+      CA1416: платформенные предупреждения - мы и так только Windows
+    -->
+    <NoWarn>$(NoWarn);CS1591;SYSLIB0014;CA1416</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <Compile Include="src\**\*.cs" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Reference Include="System" />
-    <Reference Include="System.Core" />
-    <Reference Include="System.Xml" />
-    <Reference Include="System.Drawing" />
-    <Reference Include="System.Windows.Forms" />
-    <Reference Include="System.Net.Http" />
-    <Reference Include="Microsoft.CSharp" />
-    <!-- System.IO.Compression.ZipFile нужен для распаковки обновлений -->
-    <Reference Include="System.IO.Compression" />
-    <Reference Include="System.IO.Compression.FileSystem" />
   </ItemGroup>
 
   <!-- Единственная сторонняя зависимость. Скачивается tools\fetch-webview2.ps1 -->
@@ -81,6 +85,12 @@
     <None Include="lib\webview2\WebView2Loader.dll">
       <Link>WebView2Loader.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <!--
+        CopyToPublishDirectory обязателен отдельно: при single-file publish
+        копирование в output не переносится автоматически, и без этой строки
+        WebView2Loader.dll не попадает в дистрибутив - окно не запускается.
+      -->
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>
   </ItemGroup>
 

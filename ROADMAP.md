@@ -4,11 +4,12 @@
 > `winws.exe` (zapret 1 и zapret 2) + встроенный Telegram WS-прокси + менеджер списков
 > и фейк-payload'ов. Сворачивается в трей, умеет автоподбор стратегии, обновляется сам.
 >
-> **Стек.** C# / **.NET Framework 4.8** / **WebView2** (UI — HTML+CSS+JS, общение через
+> **Стек.** C# / **.NET 9** (`net9.0-windows`) / **WebView2** (UI — HTML+CSS+JS, общение через
 > `chrome.webview.postMessage`), x64, WinForms-хост, `NotifyIcon` для трея.
+> Публикация — self-contained single-file: .NET у пользователя не нужен.
 >
-> **Референс по форме проекта:** `../NFSWorldServer2` — тот же подход: без NuGet,
-> без MSBuild, сборка через `build.cmd` + `csc.exe`, UI в ресурсах, `refs/` в `.gitignore`.
+> **Референс по форме проекта:** `../NFSWorldServer2` — тот же подход: UI в ресурсах,
+> `refs/` в `.gitignore`, `--selftest`.
 >
 > Дата: 2026-11-04. Исследование источников: `docs/research/*.md`.
 
@@ -28,10 +29,11 @@
 
 ## 1. Жёсткие рамки (не обсуждается без причины)
 
-1. **.NET Framework 4.8**, x64. Не .NET 8/9/10 — приложение должно запускаться на стоковой
-   Windows 10/11 без установки рантайма и на Windows 7 SP1 с обновлением.
-2. **Никакого NuGet, никакого MSBuild.** Только BCL + WebView2 SDK (managed DLL из
-   `lib/webview2`, как в NFSWorld2). Сборка — `build.cmd` → `csc.exe`.
+1. **.NET 9** (`net9.0-windows`), x64. Миграция с .NET Framework 4.8 сделана в 0.2.0.
+   **Windows 7 и 8.1 больше не поддерживаются** — .NET 9 требует Windows 10 1607+.
+2. **Никакого NuGet, никаких пакетов.** Только BCL + WebView2 SDK (managed DLL из
+   `lib/webview2`, как в NFSWorld2). Сборка — `build.cmd`, публикация — `publish.cmd`
+   (self-contained single-file, .NET у пользователя не нужен).
 3. **x64 обязателен.** `WinDivert64.sys` — единственный драйвер в бандле, 32-битной сборки
    `winws.exe` нет. Проверять `Environment.Is64BitProcess` на старте.
 4. **UI — WebView2, не WinForms-контролы.** Форма — только хост и трей. Вся вёрстка в
@@ -51,13 +53,13 @@
 | `zapret-win-bundle` | 57.9 МБ | **бинарники**: `winws.exe`, `winws2.exe`, `WinDivert.dll/.sys`, `lua/`, `cygwin1.dll` | нет LICENSE-файла (zapret/zapret2 внутри — MIT) |
 | `zapret-discord-youtube` | 6.0 МБ | **конфиги v1**: 22 `general*.bat`, `service.bat`, `lists/`, `bin/*.bin` | MIT (bol-van + Flowseal) |
 | `snanvl-zapret2` | 6.9 МБ | **конфиги v2**: те же 22 стратегии на `winws2` + `lua/` | MIT |
-| `Zapret-Manager` | 21.0 МБ | **каталог стратегий**: v1-v10, Yv01-Yv33, Dv1-Dv17, Gv1-Gv4 + логика автоподбора | MIT (проверить) |
+| `Zapret-Manager` | 21.0 МБ | **каталог стратегий**: v1-v10, Yv01-Yv33, Dv1-Dv17, Gv1-Gv4 + логика автоподбора | **нет файла лицензии** (см. §3.4) |
 | `IPSets-For-Bypass-in-Russia` | 13.9 МБ | **списки**: `ipset-all.txt` (33 336 CIDR), `exclude-domains.txt` (27), `hosts` (47 459 строк) | нет файла (качать по URL) |
 | `tg-ws-proxy` | 3.9 МБ | **протокол прокси**: obfuscated2, AES-CTR, WS, Fake-TLS | MIT |
 | `fluxroute` | 4.6 МБ | **идеи**: оркестратор, супервизия, диагностика, UX | **GPL-3.0 — только идеи!** |
 | `dpi-detector` | ~1 МБ | **классификация блокировок**: тип DPI, TCP16-20, DNS-заглушки, чужие обходчики | MIT |
-| `TLSpack` | 1.4 МБ | **1630 готовых фейков** `.bin` по доменам | неизвестна (см. §3.4) |
-| `_Add1` | 15 КБ | **станок для фейков**: Go-утилита снятия TLS/QUIC hello | нет файла (by Ori) |
+| `TLSpack` | 1.4 МБ | **1672 готовых фейков** `.bin` по доменам | **MIT** = `HatabaSS/zapret-custom-binaries` (проверено побайтово) |
+| `_Add1` | 15 КБ | **станок для фейков**: Go-утилита снятия TLS/QUIC hello | **не указана**, автор StressOzz (см. §3.4) |
 
 Детальные разборы: `docs/research/zapret-configs.md`, `zapret-win-bundle.md`,
 `zapret-manager-ipsets.md`, `tg-ws-proxy.md`, `fluxroute.md`, `payloadgen-add1.md`.
@@ -84,16 +86,44 @@
 
 ### 3.3 Обязательный минимум
 
-- [ ] `licenses/zapret-MIT.txt`, `licenses/Flowseal-MIT.txt`, `licenses/WinDivert-LGPLv3.txt`,
-      `licenses/tg-ws-proxy-MIT.txt` (если портировали).
+- [x] `licenses/zapret-MIT.txt`, `licenses/flowseal-MIT.txt`, `licenses/WinDivert-LGPLv3.txt`,
+      `licenses/tg-ws-proxy-MIT.txt` — **скачаны и лежат в репозитории**.
 - [ ] Экран «О программе»: версии zapret/zapret2/WinDivert, ссылки, кнопка «Лицензии».
 - [ ] README: «это не VPN», «WinDivert может флагаться AV», «используйте на свой риск».
 
-### 3.4 Открытый вопрос
+### 3.4 `TLSpack` и `_Add1` — вопрос закрыт (2026-11-04)
 
-У `TLSpack` и `_Add1` нет файла лицензии. `TLSpack` — это вывод утилиты по публичным
-доменам (фактически «сетевые наблюдения»), но юридически чище **генерировать свои фейки**
-через `_Add1`-подход, а `TLSpack` использовать как локальный кэш, а не как шиппимый ассет.
+**`refs/TLSpack` = [HatabaSS/zapret-custom-binaries](https://github.com/HatabaSS/zapret-custom-binaries), MIT.**
+
+Проверено побайтово: структура совпадает полностью (1672 файла, те же каталоги),
+а `steam/tls_clienthello_steampowered_com_20260205T122407.bin` имеет
+**идентичный SHA-256** в апстриме и у нас (`6F67D481…B22F0FDA`, 517 байт).
+
+Следствие: **`TLSpack` можно шипить** в составе AutoZapret. Достаточно положить
+`licenses/zapret-custom-binaries-MIT.txt` и ссылку на апстрим.
+Это снимает ограничение «только локальный кэш» из прошлой версии этого раздела.
+
+**`_Add1` (`payloadGen` v0.8) — автор StressOzz, лицензия НЕ указана.**
+
+Установлено по [issue #34 Zapret-Manager](https://github.com/StressOzz/Zapret-Manager/issues/34#issuecomment-3641163824):
+StressOzz выложил `payloadGen_v0.8.zip` (2025-12-11), версия совпадает с нашим исходником.
+У `Zapret-Manager` нет файла LICENSE и нет упоминаний лицензии в readme
+→ действует «все права сохранены».
+
+Следствие: **шипить `payloadGen.exe` или его исходник нельзя.** Изучать логику и писать
+свой генератор по мотивам — можно (идеи не охраняются).
+
+### 3.5 Что делать с Zapret-Manager
+
+`Zapret-Manager` (StressOzz, 2.1k звёзд) — **без файла лицензии**. Мы брали оттуда
+**каталог стратегий** (v1-v10, Yv01-Yv33, Dv1-Dv17, Gv1-Gv4) как справочник и
+переосмыслили в своей модели данных. Сами аргументы `winws` — это факты о протоколе,
+а не творческая работа, но:
+
+- **не копировать** bash-код `Zapret-Manager.sh` (2100+ строк) целиком;
+- если понадобится именно код — сначала спросить автора (issue в его репозитории);
+- наш `strategies.json` собран из **Flowseal** (MIT) — это основной источник, Zapret-Manager
+  использовался для сверки и идей.
 
 ---
 
@@ -116,7 +146,8 @@ AutoZapret.exe  (x64, WinExe)
 └── Orchestrator/   ProbeLoop, Bandit, Evolver, NetworkFingerprint
 ```
 
-Сборка — **один** вызов `csc.exe` со всеми `.cs` (`bin/sources.rsp`), UI-ассеты — `/resource:`.
+Сборка — `dotnet build` (список `.cs` задан в csproj), UI-ассеты — `EmbeddedResource`.
+Публикация — `dotnet publish` self-contained single-file.
 
 ### 4.2 Раскладка репозитория
 
@@ -253,7 +284,7 @@ AutoZapret/
 
 Цель: пустое окно с WebView2, иконка в трее, настройки, логи. Никакого zapret.
 
-- [x] `build.cmd` — обёртка над `dotnet build` (C# 7.3 / net48 / x64), автогасит запущенный exe.
+- [x] `build.cmd` — обёртка над `dotnet build` (net9.0-windows / x64), автогасит запущенный exe.
 - [x] `tools/fetch-webview2.ps1` — качает SDK, сам находит путь `lib/net462` в пакете.
 - [x] `Program.cs`: `--selftest`, `--minimized`, `--version`, обычный запуск.
 - [x] `SingleInstance` — мьютекс `Local\AutoZapret` + событие активации; второй запуск показывает первый.
@@ -330,16 +361,21 @@ AutoZapret/
 - [x] **CRLF → LF** для ipset (иначе winws не разбирает).
 - [x] Экран **Списки**: два поля (цели/исключения), три кнопки обновления, состояние ipset.
 - [x] `--update-lists` для консольной проверки.
-- [x] `PayloadLibrary` — сканирование `engine\bin` + `assets\fakes`, индекс из 23 фейков,
+- [x] **`PayloadLibrary`** — сканирование `engine\bin` + `assets\fakes`, индекс из 23 фейков,
       SNI извлекается прямо из ClientHello.
 - [x] Отбор фейков: TLS (10), QUIC (11), STUN (2) — всё из набора Flowseal.
+- [x] **`TLSpack` можно шипить** — это `HatabaSS/zapret-custom-binaries`, **MIT**,
+      проверено побайтово. Даёт 1672 готовых фейка по доменам вместо 23.
+- [ ] Импорт `TLSpack` в `assets/fakes` + манифест (`fakes.json`: файл, тип, SNI, размер, источник).
+- [ ] UI: выбор фейка по домену, приоритет — `whitelist/*` (домены, которые DPI пропускает).
 - [x] `PayloadValidator` — TLS (длина записи должна совпадать с файлом), QUIC (long header,
       ≥1200 байт), STUN (magic cookie). **Не** RFC-парсер: ловит обрезанные и мусорные файлы,
       а не «не ту версию QUIC» — иначе отбраковывает рабочие фейки.
 - [x] `ZapretService.Start` предупреждает о битых `.bin` до запуска winws.
 - [x] UI: карточка фейков с вердиктом по каждому файлу.
 - [x] `--fakes` для консольной проверки.
-- [ ] Свой генератор фейков (`_Add1`-подход) — вынесено в P9.
+- [ ] Свой генератор фейков — **нельзя брать `payloadGen`** (лицензия не указана),
+      пишем свой. Вынесено в P9.
 
 ---
 
@@ -523,7 +559,9 @@ AutoZapret/
 - [ ] Локализация RU/EN (файлы `web/i18n/*.json`).
 - [ ] Инсталлятор (Inno Setup) + portable-zip.
 - [ ] Подпись кода (EV / Azure Trusted Signing) — снимает SmartScreen.
-- [ ] «Снять свежие фейки» — вызов `payloadgen` (см. `docs/research/payloadgen-add1.md` §5.3, вариант A).
+- [ ] «Снять свежие фейки» — **свой** генератор по мотивам `payloadGen`
+      (исходник `_Add1` изучаем, но не шипим: лицензия не указана).
+      См. `docs/research/payloadgen-add1.md` §5.3, вариант A.
 
 ---
 

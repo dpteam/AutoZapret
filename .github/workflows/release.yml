@@ -57,40 +57,98 @@ jobs:
             if (Test-Path selftest.txt) { Get-Content selftest.txt -Encoding UTF8 | Write-Host }
             if ($p.ExitCode -ne 0) { throw "selftest failed" }
           } finally { Pop-Location }
-      # portable-архив: exe + dll + ассеты + ЛИЦЕНЗИИ (обязательно, см. ROADMAP §3)
+
+      # Без стратегий релиз бесполезен: это половина продукта.
+      - name: Verify strategies and licenses
+        shell: pwsh
+        run: |
+          foreach ($f in @('assets/strategies/strategies.v1.json','assets/strategies/strategies.v2.json')) {
+            if (-not (Test-Path $f)) { throw "missing $f" }
+            $n = @((Get-Content $f -Raw -Encoding UTF8 | ConvertFrom-Json).strategies).Count
+            Write-Host "$f : $n"
+            if ($n -lt 20) { throw "$f has only $n strategies" }
+          }
+
+          foreach ($f in @('LICENSE','licenses/README.md','licenses/zapret-MIT.txt',
+                           'licenses/flowseal-MIT.txt','licenses/WinDivert-LGPLv3.txt')) {
+            if (-not (Test-Path $f)) { throw "missing $f - лицензии обязательны при распространении" }
+          }
+
+      # portable-архив: self-contained exe (.NET внутри) + loader + ассеты + ЛИЦЕНЗИИ
+      - name: Publish self-contained
+        shell: pwsh
+        run: |
+          dotnet publish AutoZapret.csproj -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:EnableCompressionInSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:DebugType=none -v minimal --nologo -o publish
+          if ($LASTEXITCODE -ne 0) { throw "publish failed" }
+          Copy-Item 'lib/webview2/WebView2Loader.dll' 'publish/' -Force
+
       - name: Assemble portable package
         shell: pwsh
         run: |
           $stage = 'stage/AutoZapret'
           New-Item -ItemType Directory -Path $stage -Force | Out-Null
 
-          Copy-Item 'bin/AutoZapret.exe'                      $stage
-          Copy-Item 'bin/WebView2Loader.dll'                  $stage
-          Copy-Item 'bin/Microsoft.Web.WebView2.Core.dll'     $stage
-          Copy-Item 'bin/Microsoft.Web.WebView2.WinForms.dll' $stage
+          Copy-Item 'publish/AutoZapret.exe'      $stage
+          Copy-Item 'publish/WebView2Loader.dll'  $stage
 
-          foreach ($extra in @('README.md','LICENSE','licenses')) {
-            if (Test-Path $extra) { Copy-Item $extra $stage -Recurse -Force }
-          }
+          # ассеты и стратегии - часть продукта, без них приложение пустое
+          Copy-Item 'assets' $stage -Recurse -Force
+
+          # лицензии обязательны (MIT/LGPL требования)
+          Copy-Item 'LICENSE'   $stage -Force
+          Copy-Item 'licenses'  $stage -Recurse -Force
+          if (Test-Path 'README.md') { Copy-Item 'README.md' $stage -Force }
 
           # движок zapret НЕ шипим (ROADMAP §P1): качается tools\fetch-engine.ps1
-          Set-Content -Path (Join-Path $stage 'ПРОЧТИ-МЕНЯ.txt') -Encoding UTF8 -Value @'
-AutoZapret - portable
+          #
+          # ВАЖНО: здесь массив строк, а не here-string (@' ... '@).
+          # В YAML содержимое run: | обязано быть с отступом, а закрывающий '@
+          # в PowerShell обязан быть в нулевой колонке - вместе это ломает YAML.
+          $readme = @(
+            'AutoZapret - portable',
+            '',
+            '1. Распакуйте в папку без кириллицы в пути (например C:\AutoZapret).',
+            '2. Если скачивали через браузер: правый клик по архиву -> Свойства -> Разблокировать.',
+            '3. Запустите AutoZapret.exe, согласитесь на UAC.',
+            '',
+            '.NET устанавливать НЕ нужно: он вшит в exe.',
+            'Нужен только Microsoft Edge WebView2 Runtime (в Windows 11 уже есть,',
+            'для Windows 10 - https://go.microsoft.com/fwlink/p/?LinkId=2124703).',
+            '',
+            'Движок обхода DPI (zapret) скачивается отдельно:',
+            '    powershell -ExecutionPolicy Bypass -File tools\fetch-engine.ps1',
+            '',
+            'Это не VPN. WinDivert может вызвать реакцию антивируса - это ожидаемо.',
+            '',
+            'Требуется: Windows 10 1607+ / Windows 11, x64.'
+          ) -join "`r`n"
 
-1. Распакуйте в папку без кириллицы в пути (например C:\AutoZapret).
-2. Если скачивали через браузер: правый клик по архиву -> Свойства -> Разблокировать.
-3. Запустите AutoZapret.exe, согласитесь на UAC.
-
-Движок обхода DPI (zapret) скачивается отдельно:
-    powershell -ExecutionPolicy Bypass -File tools\fetch-engine.ps1
-
-Это не VPN. WinDivert может вызвать реакцию антивируса - это ожидаемо.
-
-Требуется: Windows x64, .NET Framework 4.8, WebView2 Runtime.
-'@
+          Set-Content -Path (Join-Path $stage 'ПРОЧТИ-МЕНЯ.txt') -Value $readme -Encoding UTF8
 
           Compress-Archive -Path "$stage/*" -DestinationPath 'AutoZapret-portable.zip' -Force
-          Write-Host "package: $((Get-Item 'AutoZapret-portable.zip').Length) bytes"
+          $mb = [int]((Get-Item 'AutoZapret-portable.zip').Length / 1MB)
+          Write-Host "package: $mb MB"
+          if ($mb -lt 20) { throw "package too small ($mb MB)" }
+
+          # проверяем содержимое архива, а не только размер
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path 'AutoZapret-portable.zip'))
+          try {
+            $names = $zip.Entries | ForEach-Object { $_.FullName.Replace('\','/') }
+            foreach ($need in @('AutoZapret/AutoZapret.exe',
+                                'AutoZapret/WebView2Loader.dll',
+                                'AutoZapret/assets/strategies/strategies.v1.json',
+                                'AutoZapret/LICENSE',
+                                'AutoZapret/licenses/zapret-MIT.txt',
+                                'AutoZapret/licenses/WinDivert-LGPLv3.txt')) {
+              if (-not ($names -contains $need)) { throw "в архиве нет $need" }
+            }
+            Write-Host "содержимое архива проверено: $($names.Count) файлов"
+          } finally { $zip.Dispose() }
 
       - name: Checksums
         shell: pwsh

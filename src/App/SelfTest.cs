@@ -250,11 +250,25 @@ namespace AutoZapret.App
         {
             string runtime = AppInfo.WebView2RuntimeVersion();
             Check("WebView2 Runtime установлен", !string.IsNullOrEmpty(runtime), runtime ?? "не найден");
+
+            // Нативная библиотека WebView2 лежит рядом с exe и обязательна:
+            // в single-file она не встраивается, без неё окно не стартует.
             Check("WebView2Loader.dll рядом с exe",
                 File.Exists(Path.Combine(Paths.BaseDir, "WebView2Loader.dll")), "WebView2Loader.dll");
-            Check("Microsoft.Web.WebView2.Core.dll рядом с exe",
-                File.Exists(Path.Combine(Paths.BaseDir, "Microsoft.Web.WebView2.Core.dll")),
-                "Microsoft.Web.WebView2.Core.dll");
+
+            // Managed-сборка может быть как рядом с exe (обычная сборка),
+            // так и вшита в single-file. Проверяем, что тип реально резолвится,
+            // а не что файл лежит на диске.
+            bool managedOk;
+            try
+            {
+                Type t = Type.GetType("Microsoft.Web.WebView2.Core.CoreWebView2Environment, Microsoft.Web.WebView2.Core", false);
+                managedOk = t != null;
+            }
+            catch { managedOk = false; }
+
+            Check("сборка WebView2 доступна", managedOk,
+                managedOk ? "загружена" : "не найдена");
         }
 
         private static void TestLog()

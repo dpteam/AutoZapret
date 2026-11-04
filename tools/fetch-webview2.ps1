@@ -71,15 +71,21 @@ if ($size -lt 100000) {
 Write-Host "[2/3] распаковываю ..."
 $zip = [System.IO.Compression.ZipFile]::OpenRead($nupkg)
 try {
-    # путь внутри пакета зависит от версии (lib/net45, lib/net462, ...) - ищем по имени
+    # Путь внутри пакета зависит от версии и целевой платформы.
+    # Для .NET 9 (net*-windows) нужен lib_manual/netcoreapp3.0 - вариант,
+    # собранный под .NET Core 3.0+, он совместим и с .NET 5+.
+    # lib/net462 - для .NET Framework, тоже работает через шим, но это не путь.
     function Find-Entry([string]$fileName) {
         $cands = @($zip.Entries | Where-Object {
             $p = $_.FullName.Replace('\', '/')
-            $p -like "lib/net*/*" -and $p.EndsWith('/' + $fileName)
+            $p.EndsWith('/' + $fileName) -and (
+                $p -like "lib_manual/netcoreapp3.0/*" -or
+                $p -like "lib/net*/*"
+            )
         })
         if ($cands.Count -eq 0) { return $null }
-        # предпочитаем net462, затем net45, затем любой
-        foreach ($pref in @('lib/net462/', 'lib/net45/')) {
+
+        foreach ($pref in @('lib_manual/netcoreapp3.0/', 'lib/net462/', 'lib/net45/')) {
             $hit = $cands | Where-Object { $_.FullName.Replace('\','/').StartsWith($pref) } | Select-Object -First 1
             if ($hit) { return $hit }
         }

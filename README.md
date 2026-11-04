@@ -27,11 +27,13 @@
 
 ## Требования
 
-- **Windows 10/11 x64** (на Windows 7 x64 — с оговорками, см. ниже)
-- **.NET Framework 4.8** — есть в Windows 10 1903+ и Windows 11 из коробки
+- **Windows 10 (1607+) или Windows 11, x64**
+- **.NET устанавливать не нужно** — рантайм вшит в exe
 - **Microsoft Edge WebView2 Runtime** — есть в Windows 11; для Windows 10
   [скачать здесь](https://go.microsoft.com/fwlink/p/?LinkId=2124703)
 - **Права администратора** — нужны драйверу WinDivert для перехвата пакетов
+
+> Windows 7 и 8.1 больше не поддерживаются: .NET 9 работает только с Windows 10 1607 и новее.
 
 ---
 
@@ -104,13 +106,14 @@ AutoZapret.exe  (GUI, трей, прокси)
 
 ## Windows 7
 
-Работает, но требуется:
-- Windows 7 **x64** с обновлениями ESU, **или** замена файлов WinDivert из `engine/win7/`
-- .NET Framework 4.8 (ставится отдельно)
-- WebView2 Runtime (ставится отдельно)
+**Не поддерживается.** .NET 9 требует Windows 10 1607 или новее.
 
-Windows 8/10 могут потребовать **отключить Secure Boot** — WinDivert подписан, но
-политика Secure Boot иногда мешает загрузке драйвера.
+Если нужна работа на старой системе — используйте оригинальный
+[zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube)
+напрямую через `.bat`-файлы.
+
+На Windows 8/10 может потребоваться **отключить Secure Boot** — WinDivert подписан,
+но политика Secure Boot иногда мешает загрузке драйвера.
 
 ---
 

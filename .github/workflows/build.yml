@@ -14,7 +14,6 @@ env:
 
 jobs:
   build:
-    # .NET Framework 4.8 + x64: windows-latest уже содержит нужный таргетинг-пак
     runs-on: windows-latest
 
     steps:
@@ -67,6 +66,25 @@ jobs:
           Write-Host "AutoZapret.exe: $size bytes"
           if ($size -lt 100000) { throw "exe suspiciously small: $size" }
           if (-not (Test-Path 'bin/WebView2Loader.dll')) { throw "WebView2Loader.dll not copied" }
+          if (-not (Test-Path 'bin/AutoZapret.dll')) { throw "managed assembly missing" }
+          if (-not (Test-Path 'bin/AutoZapret.runtimeconfig.json')) { throw "runtimeconfig missing" }
+
+      # Стратегии лежат в репозитории как данные (assets/strategies/*.json).
+      # Если их нет - релиз уйдёт без стратегий, а это половина продукта.
+      # Проверяем ЗАРАНЕЕ, чтобы не узнать об этом после публикации.
+      - name: Verify strategies are committed
+        shell: pwsh
+        run: |
+          foreach ($f in @('assets/strategies/strategies.v1.json','assets/strategies/strategies.v2.json')) {
+            if (-not (Test-Path $f)) { throw "missing $f - стратегии должны быть в репозитории" }
+            $j = Get-Content $f -Raw -Encoding UTF8 | ConvertFrom-Json
+            $n = @($j.strategies).Count
+            Write-Host "$f : $n стратегий"
+            if ($n -lt 20) { throw "$f содержит всего $n стратегий" }
+          }
+          # абсолютных путей быть не должно: стратегии переносимы
+          $text = Get-Content 'assets/strategies/strategies.v1.json' -Raw -Encoding UTF8
+          if ($text -match '[A-Za-z]:\\\\') { throw "в strategies.v1.json есть абсолютные пути" }
 
       # --selftest проверяет настройки, json, атомарную запись, ресурсы UI,
       # списки, фейки, прокси-крипто и обновления.
@@ -127,7 +145,46 @@ jobs:
           name: AutoZapret-${{ github.sha }}
           path: |
             bin/AutoZapret.exe
+            bin/AutoZapret.dll
+            bin/AutoZapret.runtimeconfig.json
+            bin/AutoZapret.deps.json
             bin/WebView2Loader.dll
             bin/Microsoft.Web.WebView2.Core.dll
             bin/Microsoft.Web.WebView2.WinForms.dll
+          retention-days: 14
+
+      # Self-contained сборка: .NET у пользователя не нужен. Это то, что
+      # реально отдаётся людям, поэтому проверяем и её.
+      - name: Publish self-contained
+        shell: pwsh
+        run: |
+          dotnet publish AutoZapret.csproj -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:EnableCompressionInSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:DebugType=none -v minimal --nologo -o publish
+          if ($LASTEXITCODE -ne 0) { throw "publish failed" }
+
+          # нативная библиотека WebView2 в single-file не встраивается
+          Copy-Item 'lib/webview2/WebView2Loader.dll' 'publish/' -Force
+
+          # ассеты (иконка, стратегии) publish сам не копирует
+          Copy-Item 'assets' 'publish/assets' -Recurse -Force
+
+          $exe = 'publish/AutoZapret.exe'
+          if (-not (Test-Path $exe)) { throw "publish produced no exe" }
+          $mb = [int]((Get-Item $exe).Length / 1MB)
+          Write-Host "published exe: $mb MB"
+          if ($mb -lt 20) { throw "self-contained exe too small ($mb MB) - runtime not bundled?" }
+          if (-not (Test-Path 'publish/WebView2Loader.dll')) { throw "WebView2Loader.dll missing in publish" }
+          if (-not (Test-Path 'publish/assets/strategies/strategies.v1.json')) { throw "strategies missing in publish" }
+
+      - name: Upload self-contained
+        uses: actions/upload-artifact@v4
+        with:
+          name: AutoZapret-selfcontained-${{ github.sha }}
+          path: |
+            publish/AutoZapret.exe
+            publish/WebView2Loader.dll
+            publish/assets/strategies/*.json
           retention-days: 14

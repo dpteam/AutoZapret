@@ -10,24 +10,30 @@
 
 ## Жёсткие ограничения
 
-1. **.NET Framework 4.8, x64.** Не .NET 5/6/8/9/10. Не AnyCPU-в-32-бит:
+1. **.NET 9 (`net9.0-windows`), x64.** Не .NET Framework 4.8, не .NET 5/6/8 —
+   миграция сделана в 0.2.0. Windows 7/8.1 **не поддерживаются** (.NET 9 требует 10 1607+).
    `Environment.Is64BitProcess` проверяется на старте, иначе — внятный отказ.
    32-битного `winws.exe` не существует, `WinDivert64.sys` — единственный драйвер.
-2. **Никаких сторонних библиотек, NuGet, MSBuild, app.config.** Только BCL:
-   `System`, `System.Core`, `System.Xml`, `System.Drawing`, `System.Windows.Forms`.
+2. **Никаких сторонних библиотек, NuGet, app.config.** Только BCL:
+   `System`, `System.Core`, `System.IO.Compression`, `System.Windows.Forms`.
    Исключение ровно одно — **WebView2 SDK** из `lib/webview2` (managed DLL,
-   подключается как `/reference`, качается `tools\fetch-webview2.ps1`). Ничего другого.
+   подключается как `/reference`, качается `tools\fetch-webview2.ps1`).
+   Пакет `Microsoft.Web.WebView2` из NuGet **не использовать**: он тянет
+   зависимости и MSBuild-таргеты.
 3. **UI — WebView2, не WinForms-контролы.** Форма — только хост и трей. Вся вёрстка в `web/`,
-   вшивается `/resource:`. Никакого MSHTML, никакого IE-режима.
+   вшивается `/resource:`. WinForms нужен ровно для окна и `NotifyIcon`.
 4. **Мост — только `chrome.webview.postMessage`.** `window.external` и COM-скриптинг
    запрещены: они «мертвы» и небезопасны.
+   Обмен держим в двух функциях (`send` / `onMessage`) — это позволяет перенести
+   тот же HTML на Android без переписывания UI.
 5. **Запускать `winws.exe` напрямую**, не через `.bat`/`cmd start`. Иначе нельзя отследить
-   PID-дерево и код выхода. Аргументы — `ProcessStartInfo.ArgumentList`, **никогда** не
-   склейка строки с кавычками.
+   PID-дерево и код выхода. Аргументы — массив токенов, сквотированный `CommandLine.Build`.
 6. **Данные вместо кода.** Новая стратегия — запись в `assets/strategies/*.json`,
-   а не `if (name == "ALT7")`. Новый фейк — запись в `fakes.json`.
+   а не `if (name == "ALT7")`. Новый фейк — запись в библиотеку.
 7. **Код FluxRoute копировать нельзя.** GPL-3.0. Только идеи и переосмысленная реализация.
    zapret/zapret2/Flowseal — MIT (можно), WinDivert — LGPLv3 (отдельными файлами, не в exe).
+8. **Публикация — self-contained single-file** (`publish.cmd`). .NET у пользователя
+   быть не должно. Trimming и NativeAOT недоступны (WinForms), поэтому ~48 МБ — норма.
 
 ---
 
@@ -52,7 +58,8 @@
 ## Сборка и тесты
 
 ```bat
-build.cmd                              :: csc.exe, без MSBuild
+build.cmd                              :: быстрая сборка (нужен .NET 9 SDK)
+publish.cmd                            :: self-contained single-file (~48 МБ, .NET внутри)
 powershell -File tools\fetch-webview2.ps1
 powershell -File tools\fetch-engine.ps1
 AutoZapret.exe --selftest              :: пишет selftest.txt, код возврата 0/1
@@ -61,7 +68,12 @@ powershell -File tools\ci-test.ps1     :: всё сразу
 ```
 
 Правило: **не коммитить, если `build.cmd` или `--selftest` не зелёные.**
-Перед тестами остановить `AutoZapret.exe` и `winws.exe` (иначе `CS0016`: файл занят).
+Перед тестами остановить `AutoZapret.exe` и `winws.exe` (иначе файл занят и сборка падает).
+
+**build.cmd против publish.cmd.** `build.cmd` — для разработки: быстро, но требует
+.NET 9 на машине. `publish.cmd` — то, что отдаётся людям: self-contained single-file,
+.NET не нужен. `WebView2Loader.dll` в single-file **не встраивается** (нативная
+библиотека) — её копирует publish.cmd, без неё окно не запускается.
 
 **Про skip и CI.** `engine/` в `.gitignore`, поэтому на чистом клоне проверки движка
 дают `[skip]`, а не `[FAIL]` — иначе CI краснеет на нормальном состоянии.
@@ -164,6 +176,8 @@ CI качает движок (`tools\fetch-engine.ps1`) и запускает `-
 | `winws2` не считается за `winws` | У zapret2 процесс называется `winws2`. Проверка только `GetProcessesByName("winws")` даёт ложное «движок не запустился». Использовать `WinwsSupervisor.AnyWinwsRunning()` |
 | **IPv4 и IPv6 для одного имени — не конфликт** | В hosts спокойно живут обе записи (двухстек). Конфликт — только два разных адреса внутри одного семейства. Иначе 20 «конфликтов» из ниоткуда |
 | `out`-параметр внутри `&&` не считается присвоенным | `a.TryGetValue(k, out v) && v != null` — компилятор не гарантирует присвоение. Объявлять `string v = null;` заранее |
+| **`WebView2Loader.dll` не попадает в single-file** | Это нативная библиотека, не managed. `CopyToOutputDirectory` её в publish не переносит — копировать явно в `publish.cmd`, иначе `DllNotFoundException` при создании окружения WebView2 |
+| **WFO0003 про DPI** | С .NET 6 WinForms требует `ApplicationHighDpiMode` в csproj (или `SetHighDpiMode`), а не `<dpiAware>` в манифесте. Иначе предупреждение и режим может не примениться |
 
 ---
 

@@ -18,9 +18,11 @@ winws2.exe
 elevator.exe
 killall.exe
 
-# build output
+# .NET build output
 bin/
 obj/
+publish/
+stage/
 *.exe
 *.pdb
 *.ilk
@@ -28,6 +30,9 @@ obj/
 *.rsp
 *.suo
 *.user
+*.deps.json
+*.runtimeconfig.json
+AutoZapret.dll
 
 # WebView2 SDK is fetched by tools\fetch-webview2.ps1, keep it out of the repo
 lib/webview2/*.dll
@@ -48,6 +53,11 @@ data/lists/*.txt
 # generated payloads (the .bin fakes) - shipped subset lives in assets/fakes
 data/fakes/
 *.bin.upd
+
+# NOTE: assets/strategies/*.json IS committed on purpose.
+# It is the product's core data (44 strategies with ${BIN}/${LISTS} placeholders,
+# fully portable). Regenerating from .bat is a dev-time operation via
+# `AutoZapret.exe --strategies`, and CI has no refs/ to regenerate from.
 
 # secrets and signing
 *.pfx
@@ -72,7 +82,6 @@ scratch/
 *.bak
 
 # but DO keep the hand-written assets
-!assets/**/*.json
 !assets/**/*.ico
 !assets/**/*.png
 !assets/fakes/**/*.bin
