@@ -34,7 +34,6 @@
   "Открыть": "Open",
   "Что заблокировано, почему и чем это лечится": "What is blocked, why, and what fixes it",
   "Шаг 0 — проверки окружения": "Step 0 — environment checks",
-  "12 проверок системы": "12 system checks",
   "BFE, драйвер, timestamps, конфликтующие обходчики, VPN, антивирус…": "BFE, driver, timestamps, competing bypass tools, VPN, antivirus…",
   "Мост с приложением недоступен: страница открыта вне WebView2.": "Bridge to the app is unavailable: the page is open outside WebView2.",
   "Проверить всё": "Check all",
@@ -219,5 +218,6 @@
   "Шаг 1б — видит ли драйвер трафик": "Step 1b — does the driver see traffic",
   "Сниффер WinDivert": "WinDivert sniffer",
   "Слушает TCP/443 и показывает, что реально проходит мимо DPI. Если здесь пусто — стратегии не помогут": "Listens on TCP/443 and shows what actually goes past the DPI. If this stays empty, strategies will not help",
-  "Слушать 8 с": "Listen 8 s"
+  "Слушать 8 с": "Listen 8 s",
+  "13 проверок системы": "13 system checks"
 }

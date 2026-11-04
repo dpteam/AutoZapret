@@ -2877,7 +2877,7 @@ namespace AutoZapret.App
                     Check("environment: есть отпечаток сети",
                         environment.IndexOf("отпечаток", StringComparison.OrdinalIgnoreCase) >= 0, "ok");
 
-                    // ---- диагностика должна содержать все 12 проверок
+                    // ---- диагностика должна содержать все 13 проверок
                     string diagnostics = ReadEntry(zip.GetEntry("diagnostics.txt"));
                     int okMarks = 0, marks = 0;
                     foreach (string line in diagnostics.Split('\n'))
@@ -2889,7 +2889,7 @@ namespace AutoZapret.App
                             t.StartsWith("[skip]", StringComparison.Ordinal)) marks++;
                         if (t.StartsWith("[ok]", StringComparison.Ordinal)) okMarks++;
                     }
-                    Check("diagnostics: 12 строк-результатов", marks == 12, marks + " строк");
+                    Check("diagnostics: 13 строк-результатов", marks == 13, marks + " строк");
                     Check("diagnostics: есть хотя бы один [ok]", okMarks > 0, okMarks + " ok");
 
                     // ---- README обязан предупредить про пути
@@ -3078,10 +3078,10 @@ namespace AutoZapret.App
             Check("Cmd() возвращает вывод", output.IndexOf("chcp-test", StringComparison.Ordinal) >= 0,
                 output.Trim().Length > 0 ? "ok" : "пусто");
 
-            // ---- все 12 проверок выполняются и не бросают
+            // ---- все 13 проверок выполняются и не бросают
             List<AutoZapret.Diag.CheckResult> results = AutoZapret.Diag.SystemChecks.RunAll();
 
-            Check("проверок 12", results.Count == 12, results.Count.ToString());
+            Check("проверок 13", results.Count == 13, results.Count.ToString());
 
             int noName = 0;
             int noDetail = 0;

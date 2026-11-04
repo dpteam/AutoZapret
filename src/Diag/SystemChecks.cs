@@ -66,6 +66,7 @@ namespace AutoZapret.Diag
             results.Add(Safe("Права администратора", CheckAdmin, progress));
             results.Add(Safe("Свободное место", CheckDiskSpace, progress));
             results.Add(Safe("Время системы", CheckSystemTime, progress));
+            results.Add(Safe("Маршрут в интернет", CheckDefaultRoute, progress));
 
             return results;
         }
@@ -667,12 +668,119 @@ namespace AutoZapret.Diag
             return r;
         }
 
+        /// <summary>
+        /// Куда на самом деле уходит трафик.
+        ///
+        /// Зачем: если интернет идёт через VPN/TUN-адаптер (Hiddify, WireGuard,
+        /// Radmin, ZeroTier, Hyper-V), winws на физическом адаптере видит не тот
+        /// поток — движок запущен, аргументы правильные, а обхода нет. Это одна
+        /// из двух причин «всё по нулям», и по логам её раньше не было видно.
+        ///
+        /// Адрес определяем без отправки пакетов: connect на UDP-сокете только
+        /// выбирает маршрут, ничего не посылая.
+        /// </summary>
+        private static CheckResult CheckDefaultRoute()
+        {
+            CheckResult r = new CheckResult { Name = "Маршрут в интернет" };
+
+            string localIp = null;
+
+            try
+            {
+                using (System.Net.Sockets.Socket probe = new System.Net.Sockets.Socket(
+                    System.Net.Sockets.AddressFamily.InterNetwork,
+                    System.Net.Sockets.SocketType.Dgram,
+                    System.Net.Sockets.ProtocolType.Udp))
+                {
+                    probe.Connect("8.8.8.8", 65530);
+                    System.Net.IPEndPoint end = probe.LocalEndPoint as System.Net.IPEndPoint;
+                    if (end != null) localIp = end.Address.ToString();
+                }
+            }
+            catch (Exception ex)
+            {
+                r.Status = CheckStatus.Warn;
+                r.Detail = "не удалось определить: " + ex.Message;
+                r.Advice = "Нет маршрута по умолчанию — интернет недоступен.";
+                return r;
+            }
+
+            if (string.IsNullOrEmpty(localIp))
+            {
+                r.Status = CheckStatus.Warn;
+                r.Detail = "не удалось определить";
+                return r;
+            }
+
+            // какой адаптер владеет этим адресом
+            string adapterName = "";
+            string adapterType = "";
+
+            try
+            {
+                foreach (System.Net.NetworkInformation.NetworkInterface ni in
+                         System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (ni.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
+
+                    foreach (System.Net.NetworkInformation.UnicastIPAddressInformation addr in
+                             ni.GetIPProperties().UnicastAddresses)
+                    {
+                        if (addr.Address == null) continue;
+                        if (!string.Equals(addr.Address.ToString(), localIp, StringComparison.Ordinal)) continue;
+
+                        adapterName = ni.Name + " (" + ni.Description + ")";
+                        adapterType = ni.NetworkInterfaceType.ToString();
+                    }
+                }
+            }
+            catch { }
+
+            bool virtualAdapter = IsVirtualAdapter(adapterType, adapterName);
+
+            if (virtualAdapter)
+            {
+                r.Status = CheckStatus.Warn;
+                r.Detail = localIp + " через " +
+                           (adapterName.Length > 0 ? adapterName : adapterType);
+                r.Advice = "Интернет идёт через виртуальный/VPN-адаптер. WinDivert на нём может не " +
+                           "перехватывать трафик: обход будет выглядеть нерабочим при живом winws. " +
+                           "Отключите VPN/туннель и проверьте снова — либо используйте прокси вместо обхода.";
+                return r;
+            }
+
+            r.Status = CheckStatus.Ok;
+            r.Detail = localIp + (adapterName.Length > 0 ? " через " + adapterName : "");
+            return r;
+        }
+
+        /// <summary>
+        /// Похож ли адаптер на туннель. Признаки берём и по типу, и по описанию:
+        /// драйверы TAP/WinTun часто рапортуют себя обычным Ethernet.
+        /// </summary>
+        private static bool IsVirtualAdapter(string type, string name)
+        {
+            if (string.Equals(type, "Tunnel", StringComparison.OrdinalIgnoreCase)) return true;
+
+            string[] markers =
+            {
+                "vpn", "tap-", "tun", "wintun", "wireguard", "openvpn", "zerotier",
+                "tailscale", "radmin", "hyper-v", "vmware", "virtualbox", "hiddify",
+                "amnezia", "outline"
+            };
+
+            foreach (string m in markers)
+                if (name.IndexOf(m, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+
+            return false;
+        }
+
         // ------------------------------------------------------------ helpers
 
         /// <summary>
         /// Запуск внешней команды с принудительной английской кодировкой.
         ///
-        /// `chcp 437` — ключевой трюк: без него `netsh` и `sc` отвечают на языке
+        /// `chcp 437` - ключевой трюк: без него `netsh` и `sc` отвечают на языке
         /// системы, и любой парсинг ломается. CP437 понимает Encoding без
         /// CodePagesEncodingProvider, который в .NET Core требует NuGet.
         /// </summary>

@@ -1701,7 +1701,7 @@ namespace AutoZapret.App
             }
 
             string summary;
-            if (problems == 0 && warnings == 0) summary = "всё в порядке — 12 проверок пройдено";
+            if (problems == 0 && warnings == 0) summary = "всё в порядке — " + results.Count + " проверок пройдено";
             else if (problems == 0) summary = "предупреждений: " + warnings;
             else summary = "проблем: " + problems + ", предупреждений: " + warnings;
 
