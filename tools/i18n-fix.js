@@ -1,4 +1,4 @@
-// Разовая правка словаря: кэш DNS.
+// Разовая правка словаря: вшитые списки.
 const fs = require("fs");
 const path = require("path");
 
@@ -6,11 +6,11 @@ const p = path.join(__dirname, "..", "web", "i18n", "en.json");
 const dict = JSON.parse(fs.readFileSync(p, "utf8"));
 
 const add = {
-  "Сбросить кэш DNS": "Flush DNS cache",
-  "Windows держит ответы в кэше: после правки hosts или смены DNS старые адреса продолжают работать. Сбрасывается автоматически при записи hosts и при включении системного DNS — эта кнопка на всякий случай":
-    "Windows caches answers: after editing hosts or changing DNS the old addresses keep working. Flushed automatically when hosts is written and when system DNS is enabled - this button is for everything else",
-  "Сбросить кэш": "Flush cache",
-  "Сбрасываю…": "Flushing…"
+  "Запас в поставке": "Bundled fallback",
+  "Копия всех списков вшита в программу: работает без интернета, если GitHub недоступен":
+    "A copy of every list ships with the program: works without internet when GitHub is unreachable",
+  "Восстановить из поставки": "Restore from bundle",
+  "Восстанавливаю…": "Restoring…"
 };
 
 let added = 0;

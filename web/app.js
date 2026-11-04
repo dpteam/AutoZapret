@@ -1618,6 +1618,24 @@
             if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
             importIntoTextarea(e.dataTransfer.files[0], input, "any");
         });
+
+        var restore = document.getElementById("btn-lists-restore-bundled");
+        if (restore) restore.addEventListener("click", function () {
+            restore.disabled = true;
+            restore.textContent = "Восстанавливаю…";
+            send("lists.restoreBundled");
+        });
+    }
+
+    function renderBundledLists(msg) {
+        var btn = document.getElementById("btn-lists-restore-bundled");
+        if (btn) { btn.disabled = false; btn.textContent = "Восстановить из поставки"; }
+
+        var hint = document.getElementById("lists-bundled-hint");
+        if (hint && msg.message) {
+            hint.textContent = msg.message;
+            hint.className = "row-hint " + ((msg.restored || 0) > 0 ? "diag-ok" : "");
+        }
     }
 
     function renderListCatalog(msg) {
@@ -1637,6 +1655,14 @@
 
         if (current) sel.value = current;
         else if (sel.options.length > 0) sel.value = sel.options[0].value;
+
+        // в подписи — сколько вшито в поставку: человек должен знать, что
+        // запас есть, ещё до того, как сеть отвалится
+        var note = document.getElementById("list-any-note");
+        if (note && msg.bundled) {
+            note.textContent = "В поставке: " + msg.bundled +
+                (msg.bundledReady ? "" : " (вшитых списков нет)");
+        }
 
         if (sel.value) send("lists.get", { kind: sel.value });
     }
@@ -1888,13 +1914,22 @@
             if (!sel || !sel.value) return;
 
             var text = document.getElementById("hosts-raw-input").value;
-            var remote = sel.options[sel.selectedIndex].getAttribute("data-remote") === "1";
+            var kind = sel.options[sel.selectedIndex].getAttribute("data-kind") || "fix";
+            var careful = sel.options[sel.selectedIndex].getAttribute("data-careful") === "1";
+
+            // Большой hosts с блокировками (0.0.0.0) может сломать приложение:
+            // предупреждаем ДО, а не после. Человек должен понимать, что тянет.
+            if (careful && !window.confirm(
+                "В этом hosts есть блокировки рекламы и трекеров (0.0.0.0).\n\n" +
+                "Иногда они ломают приложения: реклама и аналитика бывают частью\n" +
+                "логики входа. Применяем в редактор — вы сможете посмотреть\n" +
+                "и убрать лишнее до сохранения. Продолжить?")) return;
 
             fixApply.disabled = true;
-            fixApply.textContent = remote ? "Скачиваю…" : "Применяю…";
+            fixApply.textContent = kind === "remote" ? "Скачиваю…" : "Применяю…";
 
-            if (remote) send("hosts.source.apply", { id: sel.value, text: text });
-            else send("hosts.fix.apply", { id: sel.value, text: text });
+            if (kind === "fix") send("hosts.fix.apply", { id: sel.value, text: text });
+            else send("hosts.source.apply", { id: sel.value, text: text });
         });
     }
 
@@ -2007,10 +2042,15 @@
         items.forEach(function (f) {
             var opt = document.createElement("option");
             opt.value = f.id;
-            // у скачиваемых источников нет фиксированного числа записей:
-            // показывать «(0)» было бы враньём, поэтому помечаем словом
-            opt.textContent = f.name + (f.remote ? " · из сети" : " (" + f.count + ")");
-            opt.setAttribute("data-remote", f.remote ? "1" : "0");
+
+            // три вида: статичный фикс, вшитый файл, скачиваемый список
+            var kind = f.remote ? "remote" : (f.bundled ? "bundled" : "fix");
+
+            opt.textContent = f.name +
+                (kind === "remote" ? " · из сети" : (kind === "bundled" ? " · из поставки" : " (" + f.count + ")"));
+
+            opt.setAttribute("data-kind", kind);
+            opt.setAttribute("data-careful", f.careful ? "1" : "0");
             if (f.note) opt.title = f.note;
             sel.appendChild(opt);
         });
@@ -2380,6 +2420,10 @@
 
             case "lists.catalog":
                 renderListCatalog(msg);
+                break;
+
+            case "lists.bundled":
+                renderBundledLists(msg);
                 break;
 
             case "auto":

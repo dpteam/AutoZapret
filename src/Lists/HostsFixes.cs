@@ -35,6 +35,12 @@ namespace AutoZapret.Lists
 
         /// <summary>Что загружать при недоступности сети: файл в assets/hosts/cache.</summary>
         public string CacheFile = "";
+
+        /// <summary>true — файл лежит рядом с программой и качать ничего не нужно.</summary>
+        public bool Bundled;
+
+        /// <summary>true — содержит блокировки (0.0.0.0), применять осознанно.</summary>
+        public bool Careful;
     }
 
     /// <summary>
@@ -119,41 +125,62 @@ namespace AutoZapret.Lists
         /// <summary>Скачиваемые источники: Flowseal и malw.link по умолчанию.</summary>
         public static List<HostsSource> Sources()
         {
+            return ReadList("sources", false);
+        }
+
+        /// <summary>
+        /// Вшитые файлы из assets/hosts: работают без сети.
+        ///
+        /// Это запас на случай, когда GitHub недоступен: у человека должен
+        /// оставаться рабочий hosts, а не пустота. «careful» помечает файлы,
+        /// где есть блокировки через 0.0.0.0 — их применяют осознанно.
+        /// </summary>
+        public static List<HostsSource> Bundled()
+        {
+            return ReadList("bundled", true);
+        }
+
+        private static List<HostsSource> ReadList(string key, bool bundled)
+        {
             List<HostsSource> result = new List<HostsSource>();
 
             try
             {
-                if (File.Exists(Path))
+                if (!File.Exists(Path)) return result;
+
+                Dictionary<string, object> root = Json.ParseObjectSafe(File.ReadAllText(Path, Encoding.UTF8));
+                List<object> sources = root == null ? null : Json.GetArray(root, key);
+
+                if (sources == null) return result;
+
+                foreach (object item in sources)
                 {
-                    Dictionary<string, object> root = Json.ParseObjectSafe(File.ReadAllText(Path, Encoding.UTF8));
-                    List<object> sources = root == null ? null : Json.GetArray(root, "sources");
+                    Dictionary<string, object> map = item as Dictionary<string, object>;
+                    if (map == null) continue;
 
-                    if (sources != null)
+                    HostsSource source = new HostsSource
                     {
-                        foreach (object item in sources)
-                        {
-                            Dictionary<string, object> map = item as Dictionary<string, object>;
-                            if (map == null) continue;
+                        Id = Json.GetString(map, "id", ""),
+                        Name = Json.GetString(map, "name", ""),
+                        Url = Json.GetString(map, "url", ""),
+                        Note = Json.GetString(map, "note", ""),
+                        CacheFile = Json.GetString(map, "file", ""),
+                        Bundled = bundled,
+                        Careful = Json.GetBool(map, "careful", false)
+                    };
 
-                            HostsSource source = new HostsSource
-                            {
-                                Id = Json.GetString(map, "id", ""),
-                                Name = Json.GetString(map, "name", ""),
-                                Url = Json.GetString(map, "url", ""),
-                                Note = Json.GetString(map, "note", ""),
-                                CacheFile = Json.GetString(map, "cache", "")
-                            };
+                    if (source.Id.Length == 0) continue;
 
-                            if (source.Id.Length == 0 || source.Url.Length == 0) continue;
+                    // у скачиваемого нужен URL, у вшитого — файл
+                    if (bundled && source.CacheFile.Length == 0) continue;
+                    if (!bundled && source.Url.Length == 0) continue;
 
-                            result.Add(source);
-                        }
-                    }
+                    result.Add(source);
                 }
             }
             catch (Exception ex)
             {
-                Log.Exception("HOSTS", "чтение источников hosts", ex);
+                Log.Exception("HOSTS", "чтение " + key + " hosts", ex);
             }
 
             return result;
@@ -164,7 +191,18 @@ namespace AutoZapret.Lists
             foreach (HostsSource source in Sources())
                 if (string.Equals(source.Id, id, StringComparison.OrdinalIgnoreCase)) return source;
 
+            foreach (HostsSource source in Bundled())
+                if (string.Equals(source.Id, id, StringComparison.OrdinalIgnoreCase)) return source;
+
             return null;
+        }
+
+        /// <summary>Полный путь ко вшитому файлу hosts.</summary>
+        public static string BundledPath(HostsSource source)
+        {
+            if (source == null || source.CacheFile.Length == 0) return "";
+
+            return System.IO.Path.Combine(Paths.BaseDir, "assets", "hosts", source.CacheFile);
         }
 
         /// <summary>

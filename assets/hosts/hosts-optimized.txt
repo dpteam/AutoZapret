@@ -1,0 +1,1702 @@
+# OPTIMIZED HOSTS
+# Organized by service and route type. Built 2026-11-04.
+# System hosts was not modified.
+# Regional routes: WLRUS 191.217.212.16; GeoHide EU; dns.malw.link 31.58.216.201.
+# Blocks are intentionally placed at the end of this file.
+
+127.0.0.1 localhost
+::1 ip6-localhost
+
+# ============================================================
+# SERVICE: Adobe
+# Entries: 4
+# ============================================================
+
+# TYPE: WLRUS / regional transit
+191.217.212.16 adobe.io
+191.217.212.16 behance.net
+191.217.212.16 www.adobe.io
+191.217.212.16 www.behance.net
+
+# ============================================================
+# SERVICE: Anthropic / Claude
+# Entries: 17
+# ============================================================
+
+# TYPE: WLRUS / regional transit
+191.217.212.16 a-api.anthropic.com
+191.217.212.16 a-cdn.anthropic.com
+191.217.212.16 anthropic.com
+191.217.212.16 api.anthropic.com
+191.217.212.16 api.console.anthropic.com
+191.217.212.16 assets-proxy.anthropic.com
+191.217.212.16 auth.anthropic.com
+191.217.212.16 claudemcpclient.com
+191.217.212.16 claudeusercontent.com
+191.217.212.16 console.anthropic.com
+191.217.212.16 s-cdn.anthropic.com
+191.217.212.16 statsig.anthropic.com
+191.217.212.16 status.anthropic.com
+191.217.212.16 support.anthropic.com
+191.217.212.16 www.anthropic.com
+191.217.212.16 www.claudemcpclient.com
+191.217.212.16 www.claudeusercontent.com
+
+# ============================================================
+# SERVICE: Autodesk
+# Entries: 15
+# ============================================================
+
+# TYPE: Direct or user-defined route
+37.230.192.51 accounts.autodesk.com
+23.21.189.113 autodesk.ae
+50.19.149.4 autodesk.be
+32.186.61.181 autodesk.eu
+
+# TYPE: WLRUS / regional transit
+191.217.212.16 autocad.com
+191.217.212.16 autodesk.com
+191.217.212.16 autodesk.net
+191.217.212.16 autodesk360.com
+191.217.212.16 www.autocad.com
+191.217.212.16 www.autodesk.ae
+191.217.212.16 www.autodesk.be
+191.217.212.16 www.autodesk.com
+191.217.212.16 www.autodesk.eu
+191.217.212.16 www.autodesk.net
+191.217.212.16 www.autodesk360.com
+
+# ============================================================
+# SERVICE: Canva
+# Entries: 8
+# ============================================================
+
+# TYPE: Direct or user-defined route
+65.9.62.50 canva.com
+8.47.69.0 canva.dev
+8.6.112.0 www.canva.dev
+8.6.112.0 www.canva-apps.com
+
+# TYPE: dns.malw.link / static route
+31.58.216.201 content-management-files.canva.com
+31.58.216.201 static.canva.com
+31.58.216.201 www.canva.com
+
+# TYPE: GeoHide EU / static route
+5.175.161.3 canva-apps.com
+
+# ============================================================
+# SERVICE: Cursor
+# Entries: 27
+# ============================================================
+
+# TYPE: Direct or user-defined route
+34.225.159.174 agentn.api2.cursor.sh
+109.120.177.170 agentn.api3.cursor.sh
+109.120.177.170 agentn.api4.cursor.sh
+34.229.67.192 agentn.api5.cursor.sh
+34.225.159.174 agentn.global.api2.cursor.sh
+109.120.177.170 agentn.global.api3.cursor.sh
+109.120.177.170 agentn.global.api4.cursor.sh
+63.181.192.238 agentn.global.api5.cursor.sh
+104.18.18.125 api2.cursor.sh
+104.18.19.125 api3.cursor.sh
+13.248.241.7 api4.cursor.sh
+109.120.177.170 api5.cursor.sh
+8.6.112.0 authenticate.cursor.sh
+8.6.112.0 authenticator.cursor.sh
+76.76.21.21 cursor.com
+8.47.69.0 cursor-cdn.com
+89.22.224.205 cursorvm.com
+104.18.13.243 download.todesktop.com
+104.18.16.128 downloads.cursor.com
+52.70.65.227 origin.cursor.com
+98.87.193.55 repo42.cursor.sh
+109.120.177.170 us-asia.gcpp.cursor.sh
+109.120.177.170 us-eu.gcpp.cursor.sh
+99.83.165.34 us-only.gcpp.cursor.sh
+66.33.60.35 www.cursor.com
+89.22.224.205 www.cursor-cdn.com
+89.22.224.205 www.cursorvm.com
+
+# ============================================================
+# SERVICE: DeepL
+# Entries: 36
+# ============================================================
+
+# TYPE: Direct or user-defined route
+194.124.204.71 api.deepl.com
+8.47.69.0 community-auth.deepl.com
+76.76.21.164 developers.deepl.com
+172.64.151.134 dict-audio.deepl.com
+109.120.177.170 experimentation.deepl.com
+109.120.177.170 experimentation-grpc.deepl.com
+8.47.69.0 home.deepl.com
+199.60.103.31 hs.deepl.com
+52.18.206.7 internal.deepl.com
+8.47.69.0 jobs.deepl.com
+34.150.228.201 sl.deepl.com
+8.47.69.0 static.deepl.com
+216.198.53.11 support.deepl.com
+
+# TYPE: dns.malw.link / static route
+31.58.216.201 api-free.deepl.com
+31.58.216.201 auth.deepl.com
+31.58.216.201 backend.deepl.com
+31.58.216.201 checkout.www.deepl.com
+31.58.216.201 clearance.deepl.com
+31.58.216.201 deepl.com
+31.58.216.201 dict.deepl.com
+31.58.216.201 errortracking.deepl.com
+31.58.216.201 gtm.deepl.com
+31.58.216.201 ita-free.app.deepl.com
+31.58.216.201 ita-free.www.deepl.com
+31.58.216.201 login-wall.deepl.com
+31.58.216.201 oneshot-free.www.deepl.com
+31.58.216.201 ott.deepl.com
+31.58.216.201 s.deepl.com
+31.58.216.201 shield.deepl.com
+31.58.216.201 voice-proxy.www.deepl.com
+31.58.216.201 w.deepl.com
+31.58.216.201 write-free.www.deepl.com
+31.58.216.201 www.deepl.com
+31.58.216.201 www2.deepl.com
+
+# TYPE: GeoHide EU / static route
+37.221.93.141 deepl.app
+5.175.161.40 www.deepl.app
+
+# ============================================================
+# SERVICE: EA / NFS
+# Entries: 6
+# ============================================================
+
+# TYPE: Direct or user-defined route
+51.254.141.170 pcburnout08.ea.com
+51.254.141.170 pccoach06.ea.com
+51.254.141.170 pcfifa09.ea.com
+51.254.141.170 pcnfs05.ea.com
+51.254.141.170 pcnfs06.ea.com
+51.254.141.170 ps2nfs04.ea.com
+
+# ============================================================
+# SERVICE: ElevenLabs
+# Entries: 9
+# ============================================================
+
+# TYPE: Direct or user-defined route
+35.190.88.92 elevenmusic.io
+34.98.93.216 eleven-public-cdn.elevenlabs.io
+34.54.252.193 payload.elevenlabs.io
+34.54.252.193 www.elevenlabs.io
+35.190.88.92 www.elevenmusic.io
+
+# TYPE: dns.malw.link / static route
+31.58.216.201 api.elevenlabs.io
+31.58.216.201 api.us.elevenlabs.io
+31.58.216.201 elevenlabs.io
+31.58.216.201 help.elevenlabs.io
+
+# ============================================================
+# SERVICE: GitHub / Copilot
+# Entries: 3
+# ============================================================
+
+# TYPE: dns.malw.link / static route
+31.58.216.201 api.github.com
+31.58.216.201 api.individual.githubcopilot.com
+31.58.216.201 proxy.individual.githubcopilot.com
+
+# ============================================================
+# SERVICE: Google / Gemini
+# Entries: 63
+# ============================================================
+
+# TYPE: Direct or user-defined route
+172.217.116.4 aicode.googleapis.com
+172.217.119.4 aida.googleapis.com
+172.217.112.4 aisandbox-pa.googleapis.com
+192.178.183.141 aitestkitchen.withgoogle.com
+34.111.134.1 antigravity.google
+172.217.119.4 antigravity.googleapis.com
+172.217.116.4 antigravity-pa.googleapis.com
+34.54.84.110 antigravity-unleash.goog
+74.125.205.196 apis.google.com
+142.251.20.95 appcatalyst.pa.googleapis.com
+172.217.114.4 assistant-s3-pa.googleapis.com
+142.251.13.100 datastudio.google.com
+216.239.34.21 deepmind.google
+172.217.116.4 developerprofiles-pa.googleapis.com
+8.8.4.4 dns.google
+142.250.154.102 fitbit.google.com
+172.217.114.4 fitbit-pa.googleapis.com
+172.217.119.4 fitbitvestibuleshim-pa.googleapis.com
+216.239.32.29 flow.google
+64.233.163.113 flow.google.com
+216.239.32.61 gemini.google
+64.233.161.113 geminiweb-pa.clients.google.com
+216.239.32.29 generativeai.google
+216.239.32.27 jules.google
+142.251.110.101 jules.google.com
+142.251.14.139 labs.google.com
+142.250.154.95 labstailwind.pa.googleapis.com
+192.178.183.138 lookerstudio.google.com
+172.217.113.4 notebook-pa.googleapis.com
+74.125.131.94 o.pki.goog
+34.8.221.189 opal.google
+142.251.20.138 opal.google.com
+34.49.76.124 opal.withgoogle.com
+74.125.131.95 people-pa.clients6.google.com
+216.239.32.27 playground.google
+142.251.20.102 stitch.withgoogle.com
+64.233.164.100 suggestqueries.google.com
+34.111.134.1 www.antigravity.google
+45.86.65.181 www.antigravity-unleash.goog
+216.239.32.29 www.flow.google
+45.86.65.181 www.flow.google.com
+
+# TYPE: WLRUS / regional transit
+191.217.212.16 aistudio.google.com
+191.217.212.16 alkalicore-pa.clients6.google.com
+191.217.212.16 alkalimakersuite-pa.clients6.google.com
+191.217.212.16 bard.google.com
+191.217.212.16 daily-cloudcode-pa.googleapis.com
+191.217.212.16 geller-pa.googleapis.com
+191.217.212.16 gemini.google.com
+191.217.212.16 geminiweb-pa.clients6.google.com
+191.217.212.16 generativelanguage.googleapis.com
+191.217.212.16 labs.google
+191.217.212.16 makersuite.google.com
+191.217.212.16 notebook.google
+191.217.212.16 notebook.google.com
+191.217.212.16 notebooklm.google
+191.217.212.16 notebooklm.google.com
+191.217.212.16 notebooklm-pa.googleapis.com
+191.217.212.16 proactivebackend-pa.googleapis.com
+191.217.212.16 robinfrontend-pa.googleapis.com
+191.217.212.16 signaler-pa.clients6.google.com
+191.217.212.16 waa-pa.clients6.google.com
+191.217.212.16 webchannel-alkalimakersuite-pa.clients6.google.com
+191.217.212.16 www.notebook.google
+
+# ============================================================
+# SERVICE: JetBrains
+# Entries: 8
+# ============================================================
+
+# TYPE: WLRUS / regional transit
+191.217.212.16 account.jetbrains.com
+191.217.212.16 datalore.jetbrains.com
+191.217.212.16 download.jetbrains.com
+191.217.212.16 jetbrains.com
+191.217.212.16 jetbrains.space
+191.217.212.16 plugins.jetbrains.com
+191.217.212.16 www.jetbrains.com
+191.217.212.16 www.jetbrains.space
+
+# ============================================================
+# SERVICE: Last.fm
+# Entries: 13
+# ============================================================
+
+# TYPE: Direct or user-defined route
+10.22.234.59 jira.last.fm
+34.96.123.111 last.fm
+129.213.45.124 s.last.fm
+151.101.130.132 secure.last.fm
+23.227.38.74 shop.last.fm
+23.227.38.74 store.last.fm
+184.105.99.43 support.last.fm
+10.22.234.5 wiki.last.fm
+34.49.30.2 ws.audioscrobbler.com
+151.101.2.132 www.last.fm
+
+# TYPE: GeoHide EU / static route
+37.221.93.141 audioscrobbler.com
+37.221.93.141 lastfm.freetls.fastly.net
+
+# TYPE: WLRUS / regional transit
+191.217.212.16 autodiscover.last.fm
+
+# ============================================================
+# SERVICE: Linear
+# Entries: 8
+# ============================================================
+
+# TYPE: Direct or user-defined route
+8.6.112.0 www.linear.app
+
+# TYPE: dns.malw.link / static route
+31.58.216.201 client-api.linear.app
+31.58.216.201 constellation.linear.app
+31.58.216.201 linear.app
+31.58.216.201 public.linear.app
+31.58.216.201 s.linear.app
+31.58.216.201 static.linear.app
+31.58.216.201 uploads.linear.app
+
+# ============================================================
+# SERVICE: Meta / Instagram
+# Entries: 14
+# ============================================================
+
+# TYPE: Direct or user-defined route
+157.240.0.174 b.i.instagram.com
+57.144.248.1 facebook.com
+57.144.248.1 fb.com
+57.144.248.1 fbcdn.net
+57.144.248.1 fbsbx.com
+157.240.0.174 help.instagram.com
+157.240.0.174 instagram.com
+57.144.244.128 scontent.xx.fbcdn.net
+157.240.205.11 scontent-hel3-1.xx.fbcdn.net
+57.144.244.128 static.xx.fbcdn.net
+57.144.248.1 www.facebook.com
+57.144.248.1 www.fbcdn.net
+157.240.0.174 www.instagram.com
+57.144.244.34 z-p42-chat-e2ee-ig.facebook.com
+
+# ============================================================
+# SERVICE: Microsoft / Copilot
+# Entries: 7
+# ============================================================
+
+# TYPE: Direct or user-defined route
+23.210.168.176 designer.microsoft.com
+
+# TYPE: dns.malw.link / static route
+31.58.216.201 rewards.bing.com
+31.58.216.201 sydney.bing.com
+
+# TYPE: WLRUS / regional transit
+191.217.212.16 copilot.microsoft.com
+191.217.212.16 ecs.office.com
+191.217.212.16 edgeservices.bing.com
+191.217.212.16 login.live.com
+
+# ============================================================
+# SERVICE: Notion
+# Entries: 7
+# ============================================================
+
+# TYPE: Direct or user-defined route
+208.103.161.1 calendar.notion.com
+208.103.161.2 notion.com
+208.103.161.2 notion.so
+208.103.161.1 www.notion.com
+
+# TYPE: dns.malw.link / static route
+31.58.216.201 app.notion.com
+31.58.216.201 calendar.notion.so
+31.58.216.201 www.notion.so
+
+# ============================================================
+# SERVICE: NVIDIA
+# Entries: 3
+# ============================================================
+
+# TYPE: WLRUS / regional transit
+191.217.212.16 build.nvidia.com
+191.217.212.16 developer.nvidia.com
+191.217.212.16 ngc.nvidia.com
+
+# ============================================================
+# SERVICE: OpenAI / ChatGPT
+# Entries: 29
+# ============================================================
+
+# TYPE: WLRUS / regional transit
+191.217.212.16 ab.chatgpt.com
+191.217.212.16 android.chat.openai.com
+191.217.212.16 api.openai.com
+191.217.212.16 auth.openai.com
+191.217.212.16 auth0.openai.com
+191.217.212.16 bps.openai.com
+191.217.212.16 cdn.oaistatic.com
+191.217.212.16 cdn.platform.openai.com
+191.217.212.16 chatgpt.com
+191.217.212.16 developers.openai.com
+191.217.212.16 files.oaiusercontent.com
+191.217.212.16 ios.chat.openai.com
+191.217.212.16 oaistatic.com
+191.217.212.16 oaiusercontent.com
+191.217.212.16 openai.com
+191.217.212.16 operator.chatgpt.com
+191.217.212.16 platform.openai.com
+191.217.212.16 sdmntpritalynorth.oaiusercontent.com
+191.217.212.16 sdmntprnortheu.oaiusercontent.com
+191.217.212.16 sdmntprpolandcentral.oaiusercontent.com
+191.217.212.16 sdmntprukwest.oaiusercontent.com
+191.217.212.16 sora.chatgpt.com
+191.217.212.16 tcr9i.chat.openai.com
+191.217.212.16 videos.openai.com
+191.217.212.16 webrtc.chatgpt.com
+191.217.212.16 www.chatgpt.com
+191.217.212.16 www.oaistatic.com
+191.217.212.16 www.oaiusercontent.com
+191.217.212.16 www.openai.com
+
+# ============================================================
+# SERVICE: Other services
+# Entries: 697
+# ============================================================
+
+# TYPE: Direct or user-defined route
+8.47.69.0 37signals.com
+8.6.112.0 aave.com
+162.159.140.167 access.broadcom.com
+35.241.43.115 accounts.chaos.com
+95.100.177.169 aeronube.csm.naukri.com
+184.24.152.98 afcs.dellcdn.com
+8.47.69.0 affinity.studio
+95.100.178.158 amd.com
+137.71.173.128 analog.com
+44.227.136.144 api.blue.mongodb.com
+190.115.31.204 api.cdnlibs.org
+8.6.112.0 api.cerebras.ai
+172.217.116.4 api.fitbit.com
+104.21.93.123 api.fmhy.net
+8.47.69.0 api.groq.com
+63.188.153.233 api.home-connect.com
+143.20.64.55 api.imgur.com
+54.210.148.62 api.manus.im
+104.21.43.147 api.radarr.video
+23.195.23.8 api.trae.ai
+8.6.112.0 api.workos.com
+23.195.23.40 api16-normal-alisg.mchost.guru
+95.100.177.169 apis.naukri.com
+23.195.23.34 api-sg-central.trae.ai
+34.111.111.30 app.reve.com
+185.205.69.235 app.test.tuta.com
+185.205.69.10 app.tuta.com
+3.215.204.24 app.zerossl.com
+95.100.177.169 apply.naukri.com
+103.214.122.50 applyintegration.naukri.com
+95.100.177.169 arabicstatic.naukimg.com
+65.9.46.111 arduino.cc
+143.204.238.126 arkoselabs.com
+20.82.28.58 arrow.com
+47.131.40.45 assessment.nc.naukri.com
+172.202.104.163 assessments.naukri.com
+172.202.104.163 assessments.nc.naukri.com
+52.85.78.48 assets.staging.assessment.nc.naukri.com
+104.18.137.67 assets-configurator.chess.com
+13.249.8.29 atlassian.com
+151.101.130.132 audacy.com
+95.100.177.169 autodiscover.csm.naukri.com
+23.12.157.137 avast.com
+23.72.36.179 avast.ru
+103.75.71.79 aybest.xyz
+34.3.92.123 badoo.app
+31.222.67.112 badoo.com
+31.222.66.68 badoocdn.com
+8.6.112.0 basecamp.com
+23.12.157.27 bestbuy.com
+23.72.36.177 bike24.com
+18.194.224.233 bike-components.de
+95.100.177.169 blogs.naukri.com
+104.21.21.83 blogs.sap.com
+2.19.217.70 bms.naukimg.com
+18.64.211.16 brave.com
+34.95.71.106 buf.build
+31.222.67.113 bumble.com
+8.47.69.0 buymeacoffee.com
+8.47.69.0 camelai.com
+2.19.183.26 capcut.com
+2.19.217.70 careernavigator.naukri.com
+2.19.217.70 careers.naukri.com
+103.214.122.49 careersite.secure.naukri.com
+2.19.217.70 ccs-service.naukri.com
+18.64.211.102 cdn.web-platform.io
+76.76.21.21 cerebras.ai
+2.19.217.70 chatbot.naukri.com
+2.19.217.70 chatclient.naukri.com
+2.19.217.70 chatclient-mobile.naukri.com
+8.47.69.0 chatgpt.site
+104.18.137.67 chess.com
+23.195.23.20 cici.com
+13.249.8.83 ciscobinary.openh264.org
+13.249.8.77 clickup.com
+104.16.249.249 cloudflare-dns.com
+2.19.217.70 cm.naukri.com
+172.64.147.33 cms-images.mmst.eu
+109.120.177.170 codeiumdata.com
+2.19.217.70 communication.naukri.com
+104.21.21.83 community.sap.com
+2.19.217.70 companies.naukri.com
+95.100.177.169 company.naukri.com
+13.249.8.36 consent.badoo.com
+52.85.154.10 consent.trustarc.com
+8.47.69.0 console.groq.com
+8.6.112.0 console.neon.tech
+95.100.177.169 contentcdn.naukri.com
+65.9.46.124 contest.nc.naukri.com
+192.200.0.109 controlplane.tailscale.com
+8.47.69.0 coreweave.com
+95.100.177.169 corp.naukri.com
+8.47.69.0 corsair.com
+95.100.177.169 cps.naukri.com
+23.12.157.162 csm.naukri.com
+23.12.157.162 csmmail.naukri.com
+23.12.157.162 css.naukimg.com
+23.12.157.162 css.naukri.com
+192.124.249.180 cummins.com
+103.214.122.24 dashboard.naukri.com
+95.100.176.23 dds.dell.com
+216.239.34.21 deepmind.com
+34.117.197.73 delivery.naukri.com
+143.166.30.172 dell.com
+95.100.176.8 demologin.resdex.naukri.com
+23.12.157.162 demoresdex.naukri.com
+104.21.91.150 deniko.xyz
+8.6.112.0 designify.com
+204.221.76.76 digikey.com
+204.221.76.76 digikeyassets.com
+104.17.22.111 dl.teamviewer.com
+223.5.5.5 dns.alidns.com
+9.9.9.9 dns.quad9.net
+194.169.169.169 dns.surfsharkdns.com
+104.21.69.53 dnsspeedtest.online
+185.228.168.168 doh.cleanbrowsing.org
+146.112.41.2 doh.opendns.com
+23.73.2.136 dola.com
+104.17.22.111 download.teamviewer.com
+23.251.63.52 dr.miromind.ai
+20.50.64.5 dtm8.dinamicagenerale.com
+172.66.2.169 dyson.de
+162.159.142.173 dyson.se
+2.19.217.70 echo.naukri.com
+77.73.113.1 ecosia.org
+103.75.71.79 efsanetv.xyz
+2.19.217.70 e-learning.naukri.com
+3.174.2.124 elgato.com
+103.75.71.79 elmastvnet.xyz
+8.6.112.0 eneba.com
+2.19.217.70 engineering.naukri.com
+34.149.157.193 enscape3d.com
+2.19.217.70 enterprise.naukri.com
+151.101.129.224 etsy.com
+141.101.90.107 eu.openrouter.ai
+3.40.5.191 eu.posthog.com
+151.101.129.91 eu1.ecdn2.badoocdn.com
+95.100.98.72 euro.com.pl
+104.16.210.16 evike.com
+188.114.97.1 eyyo.xyz
+95.100.107.184 f00.esfr.pl
+103.214.122.30 feeds.naukri.com
+2.19.217.70 fflms.naukri.com
+18.239.69.60 files.manuscdn.com
+2.19.217.70 files.naukri.com
+159.69.171.121 files-s2pb.pbsync.com
+2.19.217.70 filevalidation.naukri.com
+8.47.69.0 flowmusic.app
+5.79.75.210 fmhy.lol
+104.21.93.123 fmhy.net
+143.204.238.96 fn-hackathon-ui.nc.naukri.com
+75.2.124.44 formula1.com
+13.249.8.13 framer.com
+8.6.112.0 freakhosting.com
+76.76.2.11 freedns.controld.com
+2.19.217.70 freesearch.naukri.com
+8.6.112.0 frontend-api-v3.pump.fun
+8.6.112.0 g2a.com
+31.25.239.132 game.boombeachgame.com
+31.25.239.132 game.mocogame.com
+143.204.238.66 game8.co
+65.9.62.122 game8.co.jp
+54.192.138.40 game8.jp
+108.157.214.121 gamestop.com
+8.47.69.0 genspark.ai
+8.47.69.0 guidedhacking.com
+172.241.213.98 guides.fmhy.lol
+65.9.62.10 guilded.gg
+186.2.163.121 hapi.hentaicdn.org
+2.19.217.70 hiring.naukri.com
+216.150.1.1 hume.ai
+2.19.217.216 i.dell.com
+65.9.62.18 id.trimble.com
+104.18.12.173 ikea.com
+104.17.169.191 images.contentstack.io
+206.183.108.6 images.naukri.com
+3.174.2.11 images.pump.fun
+8.47.69.0 img.modivo.cloud
+95.100.177.169 img.naukimg.com
+95.100.177.169 img.naukri.com
+31.43.161.6 inceptionlabs.ai
+162.159.129.67 indeed.com
+145.224.205.238 insights.naukri.com
+13.91.95.74 intel.com
+13.91.95.74 intel.de
+13.91.95.74 intel.se
+172.67.145.1 iperf3serverlist.net
+95.100.177.169 jatracking.naukri.com
+95.100.177.169 jobsearch.naukri.com
+95.100.177.169 js.naukimg.com
+95.100.177.169 js.naukri.com
+8.47.69.0 kaleido.ai
+162.159.140.167 knowledge.broadcom.com
+95.100.177.169 learning.naukri.com
+13.226.244.78 lego.com
+95.100.177.169 lg.naukri.com
+194.124.204.71 linguee.com
+121.243.22.157 lms.naukri.com
+95.100.177.169 login.naukri.com
+95.100.177.169 login.recruit.naukri.com
+2.23.245.156 logs.naukri.com
+95.100.177.169 m.naukri.com
+104.21.38.138 m3u.in
+198.64.159.69 m75.naukri.com
+198.64.159.77 m83.naukri.com
+103.214.122.38 m9.naukri.com
+161.58.186.109 m91.naukri.com
+157.230.102.177 madmapper.com
+2.19.217.70 maestrorecruiter.naukri.com
+198.65.102.108 mail.naukri.com
+103.214.122.38 mailersystem.naukri.com
+103.214.122.38 mailtracking.naukri.com
+104.18.37.111 make.com
+8.6.112.0 makita.ca
+35.168.54.230 makita.cl
+180.92.195.10 makita.co.nz
+8.47.69.0 makita.com.au
+188.114.96.1 makita.com.kh
+172.67.139.201 makita.com.tw
+195.181.248.173 makita.sk
+5.79.99.4 makita.ua
+72.167.227.146 makitalatinamerica.com
+192.0.66.233 malwarebytes.com
+108.157.229.118 manus.im
+8.47.69.0 manybooks.net
+109.120.177.170 marketplace.cursorapi.com
+2.19.217.70 media.naukri.com
+18.165.140.71 mediacdn.naukri.com
+8.47.69.0 mediaexpert.pl
+141.101.90.96 mediamarkt.pl
+57.144.248.141 meta.ai
+8.47.69.0 microcenter.com
+23.36.210.24 microchip.com
+77.112.91.203 minicircuits.com
+18.65.39.11 miro.com
+104.21.74.88 misterfpga.org
+2.19.217.70 mobile.naukri.com
+104.17.251.184 modivo.pl
+15.197.135.80 mongodb.com
+13.249.8.92 monica.im
+12.5.163.52 mouser.com
+185.205.69.235 mta-sts.test.tuta.com
+185.205.69.10 mta-sts.tuta.com
+34.120.120.42 my.chaos.com
+2.19.217.70 my.naukri.com
+8.6.112.0 n8n.cloud
+161.58.185.13 naukimg.com
+23.215.2.103 naukri.com
+2.19.217.70 naukrirecruiter.naukri.com
+192.0.66.174 ndi.video
+52.173.245.249 netapp.com
+2.19.217.216 nexus.dell.com
+23.12.157.162 nimg.naukri.com
+103.214.115.103 nmail-103-214-115-103.naukri.com
+103.214.115.125 nmail-103-214-115-125.naukri.com
+180.179.180.193 nmail193.naukri.com
+103.214.115.122 nmail-one03-two14-one15-one22.naukri.com
+103.214.115.124 nmail-one03-two14-one15-one24.naukri.com
+103.214.115.132 nmail-one03-two14-one15-one32.naukri.com
+103.214.115.133 nmail-one03-two14-one15-one33.naukri.com
+103.214.115.134 nmail-one03-two14-one15-one34.naukri.com
+103.214.115.138 nmail-one03-two14-one15-one38.naukri.com
+103.214.115.139 nmail-one03-two14-one15-one39.naukri.com
+103.214.115.193 nmail-one03-two14-one15-one93.naukri.com
+103.214.115.194 nmail-one03-two14-one15-one94.naukri.com
+103.214.115.195 nmail-one03-two14-one15-one95.naukri.com
+103.214.115.196 nmail-one03-two14-one15-one96.naukri.com
+103.214.115.197 nmail-one03-two14-one15-one97.naukri.com
+103.214.115.213 nmail-one03-two14-one15-two13.naukri.com
+103.214.115.214 nmail-one03-two14-one15-two14.naukri.com
+103.214.115.215 nmail-one03-two14-one15-two15.naukri.com
+47.131.125.93 noinsight.naukri.com
+23.12.157.162 notifications.naukri.com
+23.12.157.162 np.naukimg.com
+149.154.167.220 oauth.tg.dev
+62.153.73.242 octanorm.com
+62.153.73.242 octanorm.expo.shop
+104.21.93.123 old.fmhy.net
+62.233.36.136 old.yummyani.me
+1.1.1.1 one.one.one.one
+3.174.2.75 onlinetest.nc.naukri.com
+172.65.90.20 opencode.ai
+8.47.69.0 openrouter.ai
+138.1.33.162 oracle.com
+23.12.157.162 p.naukimg.com
+23.12.157.162 p.naukri.com
+54.218.241.98 padi.com
+91.216.218.44 pandasecurity.com
+104.26.3.172 panic.com
+104.21.93.123 paste.fmhy.net
+104.21.93.123 pastes.fmhy.net
+217.60.179.6 patreon.com
+185.205.69.235 pay.test.tuta.com
+185.205.69.10 pay.tuta.com
+104.16.21.118 pcmag.com
+23.12.157.162 pg.naukri.com
+172.64.148.124 pi.ai
+216.150.16.1 platform.parallel.ai
+8.6.112.0 play.date
+23.12.157.162 posting.naukri.com
+8.47.69.0 powertoolsuk.co.uk
+195.201.207.45 pr0gramm.com
+34.102.145.198 preview.reve.art
+2.19.217.70 productupdates.naukri.com
+162.159.140.167 profile.broadcom.com
+8.6.112.0 promods.net
+172.67.130.145 prowlarr.servarr.com
+23.12.157.162 pt.naukri.com
+23.12.157.162 pulse.naukri.com
+8.6.112.0 pump.fun
+139.95.0.9 qoder.com
+50.17.152.14 qualtrics.com
+51.91.151.171 qwant.com
+23.12.157.162 rdxfootmark.naukri.com
+23.12.157.162 recruit.naukri.com
+23.12.157.162 recruiterfaq.naukri.com
+23.12.157.162 recruiters.naukri.com
+23.12.157.162 recruitersurvey.naukri.com
+23.12.157.162 recruiterzone.naukri.com
+104.21.93.123 redlib.fmhy.net
+23.12.157.162 referral.naukri.com
+8.47.69.0 remove.bg
+23.12.156.99 res.cloudinary.com
+23.12.157.162 resbilling.naukri.com
+23.12.157.162 resdex.naukri.com
+23.12.157.162 resht.naukri.com
+23.12.157.162 response.naukri.com
+23.12.157.162 restservices.naukri.com
+23.12.157.162 resume.naukri.com
+221.134.28.238 resumeservices.naukri.com
+34.102.145.198 reve.art
+34.111.54.145 reve.com
+23.12.157.162 rms.naukri.com
+23.12.157.162 rmsbulkupload.naukri.com
+23.12.157.162 rmsmail.naukri.com
+172.67.129.105 romsgames.net
+151.101.66.152 scribd.com
+34.227.236.7 se.com
+104.21.93.123 searx.fmhy.net
+8.6.112.0 securitytrails.com
+20.33.66.163 singlekey-id.com
+65.9.46.52 sketchup.com
+15.197.167.90 sketchup.trimble.com
+108.156.60.79 slack-imgs.com
+128.121.238.174 smtp.naukri.com
+35.186.224.24 spotify.dev
+35.241.43.115 ssooauth.chaos.com
+54.179.38.205 staging.assessment.nc.naukri.com
+65.9.46.129 staging.contest.nc.naukri.com
+13.249.8.108 staging.fn-hackathon-ui.nc.naukri.com
+3.164.240.33 staging.onlinetest.nc.naukri.com
+23.12.157.162 static.naukimg.com
+23.12.157.162 static.naukri.com
+18.66.102.125 static.staging.assessment.nc.naukri.com
+104.21.93.123 stats.fmhy.net
+104.21.93.123 status.fmhy.net
+51.79.77.52 status.tuta.com
+8.6.112.0 stream.camelai.com
+2.19.217.70 streamgenai.naukri.com
+2.19.216.79 streams.bestbuy.com
+103.214.122.10 suggest.naukimg.com
+2.19.217.70 suggest.naukri.com
+23.12.157.162 suggestor.naukri.com
+103.214.122.44 suggest-staging.naukri.com
+8.47.69.0 superpharm.pl
+162.159.140.167 support.broadcom.com
+8.47.69.0 swap-api.pump.fun
+2.16.27.92 tableau.com
+172.16.2.22 tableau.naukri.com
+23.12.157.162 taxonomy-suggest.naukri.com
+185.205.69.237 test.tuta.com
+149.154.167.220 tg.dev
+195.181.174.4 thumb-cdn77.xvideos-cdn.com
+198.47.23.159 ti.com
+8.6.112.0 tokenharbor.ai
+23.215.2.136 trae-api-sg.mchost.guru
+8.47.69.0 tria.ge
+3.33.186.135 trimble.com
+104.20.47.71 trueachievements.com
+23.12.157.162 trust.naukri.com
+185.205.69.12 tuta.com
+185.205.69.12 tutanota.com
+46.101.168.144 uainvest.com.ua
+104.21.93.123 ui.fmhy.net
+8.47.69.0 ultimaker.com
+8.47.69.0 unscreen.com
+172.65.90.20 us.openrouter.ai
+34.149.206.255 users.wix.com
+23.12.157.162 verify.naukri.com
+203.188.174.43 vipvera.com
+188.40.133.51 w1.api.test.tuta.com
+185.205.69.10 w10.api.tuta.com
+23.12.157.162 w10.naukri.com
+185.205.69.11 w11.api.tuta.com
+185.205.69.12 w12.api.tuta.com
+185.205.69.13 w13.api.tuta.com
+185.205.69.14 w14.api.tuta.com
+185.205.69.15 w15.api.tuta.com
+185.205.69.16 w16.api.tuta.com
+23.12.157.162 w16.naukri.com
+188.40.133.52 w2.api.test.tuta.com
+23.12.157.162 w28.naukri.com
+188.40.133.53 w3.api.test.tuta.com
+188.40.133.54 w4.api.test.tuta.com
+23.12.157.162 w4.naukri.com
+185.205.69.235 w5.api.test.tuta.com
+23.12.157.162 w5.naukri.com
+185.205.69.236 w6.api.test.tuta.com
+185.205.69.237 w7.api.test.tuta.com
+185.205.69.238 w8.api.test.tuta.com
+185.205.69.9 w9.api.tuta.com
+206.223.251.18 wbagora.com
+3.164.240.128 wbgames.com
+108.157.229.117 webassets.mongodb.com
+2.19.217.70 webhooks.naukri.com
+83.136.17.131 weborama.nl
+198.64.153.241 webtracker.naukri.com
+8.6.112.0 whimsical.com
+2.19.217.70 whitehat.naukri.com
+185.71.138.138 wikimedia-dns.org
+82.208.41.65 windguru.cz
+8.47.69.0 wise.com
+2.19.217.70 wtg.csm.naukri.com
+8.6.112.0 www.37signals.com
+104.18.21.145 www.aave.com
+8.47.69.0 www.affinity.studio
+2.19.216.108 www.amd.com
+23.58.206.170 www.analog.com
+104.18.12.135 www.arduino.cc
+198.202.211.1 www.arkoselabs.com
+23.58.201.215 www.arrow.com
+13.227.180.4 www.atlassian.com
+151.101.130.132 www.audacy.com
+2.19.217.165 www.avast.com
+23.72.36.115 www.avast.ru
+31.222.67.112 www.badoo.com
+8.47.69.0 www.basecamp.com
+95.100.177.24 www.bestbuy.com
+23.215.2.13 www.bike24.com
+95.100.107.182 www.bike-components.de
+3.164.68.113 www.brave.com
+34.49.132.220 www.buf.build
+31.222.67.113 www.bumble.com
+8.6.112.0 www.buymeacoffee.com
+8.47.69.0 www.camelai.com
+2.19.183.23 www.capcut.com
+66.33.60.35 www.cerebras.ai
+13.249.8.45 www.cgtrader.com
+35.186.242.181 www.chaos.com
+8.47.69.0 www.chatgpt.site
+104.18.139.67 www.chess.com
+23.215.2.147 www.cici.com
+18.239.18.88 www.clickup.com
+8.47.69.0 www.coreweave.com
+8.47.69.0 www.corsair.com
+104.18.33.95 www.cummins.com
+95.100.176.23 www.dell.com
+2.19.217.216 www.dellcdn.com
+8.47.69.0 www.designify.com
+104.18.12.179 www.digikey.com
+204.221.76.76 www.digikeyassets.com
+23.215.2.134 www.dola.com
+162.159.142.173 www.dyson.de
+162.159.142.173 www.dyson.se
+54.251.99.37 www.echo.naukri.com
+104.18.37.185 www.ecosia.org
+2.19.217.70 www.e-learning.naukri.com
+8.6.112.0 www.elgato.com
+8.6.112.0 www.eneba.com
+151.101.3.52 www.etsy.com
+95.100.107.158 www.euro.com.pl
+104.16.210.16 www.evike.com
+8.6.112.0 www.flowmusic.app
+212.92.104.118 www.fmhy.lol
+104.21.93.123 www.fmhy.net
+3.164.240.54 www.formula1.com
+31.43.161.19 www.framer.com
+8.6.112.0 www.freakhosting.com
+2.19.217.129 www.g2a.com
+13.33.235.102 www.game8.co.jp
+13.33.235.36 www.game8.jp
+104.18.35.69 www.gamestop.com
+8.6.112.0 www.genspark.ai
+8.6.112.0 www.guidedhacking.com
+65.8.131.113 www.guilded.gg
+216.150.1.129 www.hume.ai
+104.18.10.81 www.ikea.com
+31.43.160.6 www.inceptionlabs.ai
+162.159.129.67 www.indeed.com
+2.21.207.151 www.intel.com
+23.58.206.87 www.intel.de
+23.58.206.87 www.intel.se
+172.67.145.1 www.iperf3serverlist.net
+8.6.112.0 www.kaleido.ai
+2.19.217.70 www.learning.naukri.com
+8.6.112.0 www.lego.com
+194.124.204.71 www.linguee.com
+104.21.38.138 www.m3u.in
+217.70.184.56 www.madmapper.com
+104.18.37.111 www.make.com
+8.47.69.0 www.makita.ca
+35.168.54.230 www.makita.cl
+180.92.195.10 www.makita.co.nz
+8.47.69.0 www.makita.com.au
+104.21.8.166 www.makita.com.tw
+195.181.248.173 www.makita.sk
+5.79.99.4 www.makita.ua
+72.167.227.146 www.makitalatinamerica.com
+192.0.66.233 www.malwarebytes.com
+108.157.229.87 www.manus.im
+8.47.69.0 www.manybooks.net
+8.47.69.0 www.mediaexpert.pl
+141.101.90.96 www.mediamarkt.pl
+57.144.244.141 www.meta.ai
+8.47.69.0 www.microcenter.com
+23.58.206.213 www.microchip.com
+77.112.91.203 www.minicircuits.com
+3.164.68.15 www.miro.com
+172.67.168.1 www.misterfpga.org
+104.17.251.184 www.modivo.pl
+18.165.140.33 www.mongodb.com
+13.249.8.92 www.monica.im
+23.12.156.204 www.mouser.com
+8.6.112.0 www.n8n.cloud
+2.19.217.70 www.naukri.com
+192.0.66.174 www.ndi.video
+95.100.98.122 www.netapp.com
+62.153.73.242 www.octanorm.com
+8.47.69.0 www.opencode.ai
+8.47.69.0 www.openrouter.ai
+95.100.177.113 www.oracle.com
+104.18.30.210 www.padi.com
+104.96.144.114 www.pandasecurity.com
+8.47.69.0 www.panic.com
+143.20.64.55 www.patreon.com
+104.16.21.118 www.pcmag.com
+8.47.69.0 www.pi.ai
+8.47.69.0 www.play.date
+8.47.69.0 www.powertoolsuk.co.uk
+88.198.134.233 www.pr0gramm.com
+8.6.112.0 www.promods.net
+204.57.243.1 www.pubnubapi.com
+139.95.0.9 www.qoder.com
+95.100.176.137 www.qualtrics.com
+51.91.211.16 www.qwant.com
+172.64.153.100 www.remove.bg
+2.19.217.70 www.resume.naukri.com
+34.102.145.198 www.reve.art
+34.111.54.145 www.reve.com
+172.67.129.105 www.romsgames.net
+151.101.2.152 www.scribd.com
+151.101.130.152 www.scribdassets.com
+23.58.201.223 www.se.com
+8.6.112.0 www.securitytrails.com
+20.33.66.163 www.singlekey-id.com
+15.197.167.90 www.sketchup.com
+104.18.19.242 www.superpharm.eu
+8.47.69.0 www.superpharm.pl
+95.100.98.74 www.tableau.com
+23.58.206.254 www.ti.com
+66.33.60.35 www.tokenharbor.ai
+8.6.112.0 www.tria.ge
+3.33.186.135 www.trimble.com
+8.6.112.0 www.trueachievements.com
+8.47.69.0 www.truthsocial.com
+185.205.69.12 www.tuta.com
+46.101.168.144 www.uainvest.com.ua
+8.47.69.0 www.ultimaker.com
+8.6.112.0 www.unscreen.com
+3.164.240.92 www.wbgames.com
+83.136.17.131 www.weborama.nl
+8.6.112.0 www.whimsical.com
+82.208.41.65 www.windguru.cz
+8.6.112.0 www.wise.com
+2.19.183.14 www.xerox.com
+78.129.218.159 www.xiaomi.eu
+51.210.24.169 www.yeggi.com
+216.150.1.129 www.yupp.ai
+108.156.22.109 www.zapier.com
+64.239.123.129 www.zapier-deployment.com
+13.8.148.11 xerox.com
+78.129.218.159 xiaomi.eu
+51.210.24.169 yeggi.com
+216.150.1.1 yupp.ai
+3.174.2.72 zapier.com
+64.239.123.65 zapier-deployment.com
+
+# TYPE: dns.malw.link / static route
+31.58.216.201 deezer.com
+31.58.216.201 dyson.com
+31.58.216.201 elevenreader.io
+31.58.216.201 geolocation.onetrust.com
+31.58.216.201 payment.deezer.com
+31.58.216.201 static-assets-1.truthsocial.com
+31.58.216.201 truthsocial.com
+31.58.216.201 www.deezer.com
+31.58.216.201 www.dyson.com
+31.58.216.201 www.dyson.fr
+
+# TYPE: GeoHide EU / static route
+37.221.93.141 a-lemmy.fmhy.net
+37.221.93.141 astockcdn.net
+37.221.93.128 autodiscover.login.recruit.naukri.com
+5.175.161.3 autodiscover.naukimg.com
+5.175.161.3 avasin.naukri.com
+37.221.93.141 basecampapi.com
+5.175.161.40 careersite.naukri.com
+5.175.161.40 careersitescdn.naukri.com
+5.175.161.3 cat.fmhy.net
+5.175.161.3 dellcdn.com
+37.221.93.128 dynmap.fmhy.net
+37.221.93.128 eapps.naukri.com
+5.175.161.40 evs.blue.mongodb.co
+37.221.93.141 filestg.naukri.com
+37.221.93.128 i.fmhy.net
+37.221.93.128 in.naukri.com
+37.221.93.128 insightsapi.naukri.com
+5.175.161.3 jobfeeds.naukri.com
+5.175.161.3 jobs.naukri.com
+5.175.161.40 jpreports.naukri.com
+5.175.161.3 lemmy.fmhy.net
+37.221.93.128 lyncdiscover.naukri.com
+5.175.161.3 m102.naukri.com
+37.221.93.128 messenger.naukri.com
+37.221.93.141 m-lemmy.fmhy.net
+37.221.93.141 mscanus.naukri.com
+37.221.93.141 naukriconfidential.naukri.com
+37.221.93.128 naukrihiringsuite.naukri.com
+37.221.93.141 ndi.tv
+5.175.161.3 nmail214.naukri.com
+5.175.161.40 noidacas01.naukri.com
+37.221.93.128 old.lemmy.fmhy.net
+5.175.161.3 old-lemmy.fmhy.net
+37.221.93.128 op.fmhy.net
+5.175.161.40 p-lemmy.fmhy.net
+37.221.93.128 pop.naukri.com
+5.175.161.40 ppkas.com
+37.221.93.141 pubnubapi.com
+5.175.161.40 recruiter.naukri.com
+37.221.93.141 resdex.base.naukri.com
+37.221.93.141 resman.naukri.com
+37.221.93.141 resumepedia.naukri.com
+37.221.93.141 scribdassets.com
+5.175.161.3 sip.naukri.com
+37.221.93.141 slack-core.com
+5.175.161.3 slack-edge.com
+37.221.93.128 stgmtstap.naukri.com
+5.175.161.40 stgmtstjs.naukri.com
+5.175.161.40 stgmtstmnj.naukri.com
+37.221.93.128 stgmtstwb.naukri.com
+5.175.161.3 stream.naukri.com
+5.175.161.40 sub.whoogle.fmhy.net
+5.175.161.40 suggestlg.naukimg.com
+37.221.93.128 suggestlg.naukri.com
+5.175.161.3 superpharm.eu
+5.175.161.40 target.naukri.com
+5.175.161.3 vmscanus.naukri.com
+5.175.161.40 w.naukri.com
+37.221.93.128 w37.naukri.com
+37.221.93.128 web-platform.io
+37.221.93.141 whatismyipaddress.com
+5.175.161.40 whoogle.fmhy.net
+5.175.161.40 www.astockcdn.net
+5.175.161.40 www.aybest.xyz
+5.175.161.40 www.basecampapi.com
+5.175.161.40 www.deniko.xyz
+5.175.161.40 www.dnsspeedtest.online
+5.175.161.40 www.efsanetv.xyz
+37.221.93.141 www.elmastvnet.xyz
+37.221.93.128 www.eyyo.xyz
+5.175.161.3 www.game8.co
+5.175.161.40 www.naukimg.com
+37.221.93.128 www.ndi.tv
+37.221.93.141 www.ppkas.com
+37.221.93.128 www.slack-core.com
+5.175.161.40 www.slack-edge.com
+37.221.93.141 www.slack-imgs.com
+5.175.161.3 www.vipvera.com
+5.175.161.3 www.wbagora.com
+5.175.161.3 www.web-platform.io
+5.175.161.3 yahoo.naukri.com
+
+# TYPE: WLRUS / regional transit
+191.217.212.16 a.claude.ai
+191.217.212.16 ai.google.dev
+191.217.212.16 api.claude.ai
+191.217.212.16 api.claude.com
+191.217.212.16 api.jetbrains.ai
+191.217.212.16 autodiscover.naukri.com
+191.217.212.16 autodiscover.rms.naukri.com
+191.217.212.16 claude.ai
+191.217.212.16 claude.com
+191.217.212.16 crunchyroll.com
+191.217.212.16 downloads.claude.ai
+191.217.212.16 myjetbrains.com
+191.217.212.16 platform.claude.ai
+191.217.212.16 platform.claude.com
+191.217.212.16 www.claude.ai
+191.217.212.16 www.claude.com
+191.217.212.16 www.crunchyroll.com
+191.217.212.16 www.myjetbrains.com
+191.217.212.16 www.spotify.dev
+
+# ============================================================
+# SERVICE: Other user routes
+# Entries: 7
+# ============================================================
+
+# TYPE: Direct or user-defined route
+31.131.253.250 app.4pda.to
+104.18.13.15 d.rutor.info
+104.18.13.15 d.rutor.is
+130.255.77.28 ntc.party
+104.18.13.15 rutor.info
+104.18.13.15 rutor.is
+52.223.13.41 tracker.openbittorrent.com
+
+# ============================================================
+# SERVICE: Parsec
+# Entries: 1
+# ============================================================
+
+# TYPE: dns.malw.link / static route
+31.58.216.201 builds.parsec.app
+
+# ============================================================
+# SERVICE: Slack
+# Entries: 4
+# ============================================================
+
+# TYPE: Direct or user-defined route
+3.68.170.153 slack.com
+3.68.124.168 slack-files.com
+3.68.124.95 www.slack.com
+3.68.124.95 www.slack-files.com
+
+# ============================================================
+# SERVICE: Spotify
+# Entries: 16
+# ============================================================
+
+# TYPE: WLRUS / regional transit
+191.217.212.16 accounts.scdn.co
+191.217.212.16 accounts.spotify.com
+191.217.212.16 aet.spotify.com
+191.217.212.16 api.spotify.com
+191.217.212.16 api-partner.spotify.com
+191.217.212.16 encore.scdn.co
+191.217.212.16 gew1-dealer.spotify.com
+191.217.212.16 gew1-spclient.spotify.com
+191.217.212.16 login5.spotify.com
+191.217.212.16 open.spotify.com
+191.217.212.16 scdn.co
+191.217.212.16 spclient.wg.spotify.com
+191.217.212.16 spotify.com
+191.217.212.16 www.scdn.co
+191.217.212.16 www.spotify.com
+191.217.212.16 www-growth.scdn.co
+
+# ============================================================
+# SERVICE: Square
+# Entries: 4
+# ============================================================
+
+# TYPE: Direct or user-defined route
+162.159.137.66 squareup.com
+172.66.0.28 www.squareup.com
+
+# TYPE: dns.malw.link / static route
+31.58.216.201 api.squareup.com
+31.58.216.201 api-global.squareup.com
+
+# ============================================================
+# SERVICE: Strava
+# Entries: 29
+# ============================================================
+
+# TYPE: Direct or user-defined route
+141.193.213.10 blog.strava.com
+13.249.8.64 business.strava.com
+34.225.221.45 c.strava.com
+3.164.240.23 cdn-1.strava.com
+13.249.8.80 communityhub.strava.com
+65.9.62.44 content-a.strava.com
+89.22.224.205 dam.strava.com
+89.22.224.205 dev.strava.com
+104.18.30.128 graphql.strava.com
+89.22.224.205 interview.strava.com
+52.11.118.109 links.strava.com
+143.204.238.37 metro.strava.com
+3.213.242.146 mi.strava.com
+104.196.13.68 promo.strava.com
+35.194.24.184 scim.strava.com
+23.227.38.74 shop.strava.com
+10.0.57.113 staging.strava.com
+52.85.154.74 status.strava.com
+3.164.240.124 store.strava.com
+65.9.46.75 stories.strava.com
+3.164.240.124 strava.com
+8.6.112.0 support.strava.com
+108.157.214.16 tiles.strava.com
+89.22.224.205 watch.samsung.strava.com
+141.193.213.10 www.blog.strava.com
+89.22.224.205 www.business.strava.com
+18.165.140.70 www.metro.strava.com
+104.196.13.68 www.promo.strava.com
+3.164.240.33 www.strava.com
+
+# ============================================================
+# SERVICE: Supercell / Games
+# Entries: 12
+# ============================================================
+
+# TYPE: Direct or user-defined route
+185.246.223.127 game.brawlstarsgame.com
+62.133.62.97 game.clashroyaleapp.com
+108.61.167.26 game.squadbustersgame.com
+193.23.209.189 gamea.clashofclans.com
+
+# TYPE: dns.malw.link / static route
+31.58.216.201 accounts.supercell.com
+31.58.216.201 cdn.id.supercell.com
+31.58.216.201 clashofclans.inbox.supercell.com
+31.58.216.201 game-assets.brawlstarsgame.com
+31.58.216.201 game-assets.clashofclans.com
+31.58.216.201 game-assets.clashroyaleapp.com
+31.58.216.201 security.id.supercell.com
+31.58.216.201 store.supercell.com
+
+# ============================================================
+# SERVICE: Telegram
+# Entries: 34
+# ============================================================
+
+# TYPE: Direct or user-defined route
+149.154.167.220 api.telegram.org
+149.154.167.220 cdn.telesco.pe
+149.154.167.220 cdn1.telesco.pe
+149.154.167.220 cdn2.telesco.pe
+149.154.167.220 cdn3.telesco.pe
+149.154.167.220 cdn4.telesco.pe
+149.154.167.220 cdn5.telesco.pe
+149.154.167.220 cdn6.telesco.pe
+149.154.167.220 core.telegram.org
+149.154.167.220 desktop.telegram.org
+149.154.167.220 kws2.web.telegram.org
+149.154.167.220 kws2-1.web.telegram.org
+149.154.167.220 kws4.web.telegram.org
+149.154.167.220 kws4-1.web.telegram.org
+149.154.167.220 macos.telegram.org
+149.154.167.220 my.telegram.org
+149.154.167.220 oauth.telegram.org
+149.154.167.220 osx.telegram.org
+149.154.167.220 t.me
+149.154.167.220 td.telegram.org
+149.154.167.220 telegram.dog
+149.154.167.220 telegram.me
+149.154.167.220 telegram.org
+149.154.167.220 telegram.space
+149.154.167.220 telesco.pe
+149.154.167.220 venus.web.telegram.org
+149.154.167.220 venus-1.web.telegram.org
+149.154.167.220 vesta.web.telegram.org
+149.154.167.220 vesta-1.web.telegram.org
+149.154.167.220 web.telegram.org
+149.154.167.220 zws2.web.telegram.org
+149.154.167.220 zws2-1.web.telegram.org
+149.154.167.220 zws4.web.telegram.org
+149.154.167.220 zws4-1.web.telegram.org
+
+# ============================================================
+# SERVICE: Tidal
+# Entries: 9
+# ============================================================
+
+# TYPE: Direct or user-defined route
+103.27.157.38 api.tidal.com
+103.27.157.38 auth.tidal.com
+103.27.157.38 dd.tidal.com
+103.27.157.38 fsu.fa.tidal.com
+103.27.157.38 images.tidal.com
+103.27.157.38 link.tidal.com
+103.27.157.38 listen.tidal.com
+103.27.157.38 login.tidal.com
+103.27.157.38 resources.tidal.com
+
+# ============================================================
+# SERVICE: TikTok
+# Entries: 1
+# ============================================================
+
+# TYPE: Direct or user-defined route
+217.60.179.6 www.tiktok.com
+
+# ============================================================
+# SERVICE: Twitch
+# Entries: 2
+# ============================================================
+
+# TYPE: Direct or user-defined route
+151.101.130.214 gql.twitch.tv
+
+# TYPE: dns.malw.link / static route
+31.58.216.201 usher.ttvnw.net
+
+# ============================================================
+# SERVICE: Weather
+# Entries: 11
+# ============================================================
+
+# TYPE: Direct or user-defined route
+54.160.9.107 wund.com
+104.96.144.171 wunderground.com
+23.52.28.120 www.weather.com
+54.71.163.27 www.wund.com
+23.52.28.120 www.wunderground.com
+54.71.163.27 www.wxug.com
+18.158.212.228 wxug.com
+
+# TYPE: dns.malw.link / static route
+31.58.216.201 upsx.weather.com
+31.58.216.201 weather.com
+
+# TYPE: GeoHide EU / static route
+37.221.93.141 www.w-x.co
+5.175.161.40 w-x.co
+
+# ============================================================
+# SERVICE: Web Archive
+# Entries: 1
+# ============================================================
+
+# TYPE: dns.malw.link / static route
+31.58.216.201 web.archive.org
+
+# ============================================================
+# SERVICE: Windsurf / Codeium
+# Entries: 10
+# ============================================================
+
+# TYPE: Direct or user-defined route
+76.76.21.21 codeium.com
+192.34.20.166 inference.codeium.com
+35.223.238.178 marketplace.windsurf.com
+35.223.238.178 server.codeium.com
+35.223.238.178 unleash.codeium.com
+35.223.238.178 web-backend.codeium.com
+76.76.21.21 windsurf.com
+35.223.238.178 windsurf-stable.codeium.com
+35.223.238.178 windsurf-telemetry.codeium.com
+66.33.60.35 www.codeium.com
+
+# ============================================================
+# SERVICE: xAI / Grok
+# Entries: 30
+# ============================================================
+
+# TYPE: GeoHide EU / static route
+37.221.93.141 asia-south1-livekit.grok.com
+37.221.93.141 console.x.ai
+37.221.93.141 data.x.ai
+37.221.93.141 deferred-chat.x.ai
+37.221.93.141 docs.x.ai
+37.221.93.141 eu-west-1.api.x.ai
+37.221.93.141 imgen.x.ai
+37.221.93.141 jf.x.ai
+37.221.93.141 livekit.grok.com
+37.221.93.141 login.x.ai
+37.221.93.141 ssff.grok.com
+37.221.93.141 status.x.ai
+37.221.93.141 transcription.grok-v2.x.ai
+37.221.93.141 trust.x.ai
+37.221.93.141 typeahead.grok.com
+37.221.93.141 us-east-1.api.x.ai
+37.221.93.141 us-east-4-raw.api.x.ai
+37.221.93.141 us-south-1-pltr.api.x.ai
+37.221.93.141 us-west-1.api.x.ai
+37.221.93.141 us-west-1-raw.api.x.ai
+
+# TYPE: WLRUS / regional transit
+191.217.212.16 accounts.x.ai
+191.217.212.16 api.x.ai
+191.217.212.16 assets.grok.com
+191.217.212.16 assets.x.ai
+191.217.212.16 grok.com
+191.217.212.16 grok.x.ai
+191.217.212.16 grok.x.com
+191.217.212.16 www.grok.com
+191.217.212.16 www.x.ai
+191.217.212.16 x.ai
+
+# ============================================================
+# SERVICE: Xbox
+# Entries: 8
+# ============================================================
+
+# TYPE: Direct or user-defined route
+20.41.13.162 gssv-play-prod.xboxlive.com
+52.156.94.70 titlestorage.xboxlive.com
+
+# TYPE: dns.malw.link / static route
+31.58.216.201 xgpuweb.gssv-play-prod.xboxlive.com
+31.58.216.201 xgpuwebf2p.gssv-play-prod.xboxlive.com
+
+# TYPE: WLRUS / regional transit
+191.217.212.16 auth.xboxlive.com
+191.217.212.16 user.auth.xboxlive.com
+191.217.212.16 xboxdesignlab.xbox.com
+191.217.212.16 xsts.auth.xboxlive.com
+
+# ============================================================
+# BLOCKS / ADVERTISING / TELEMETRY / ACTIVATION
+# Entries: 241
+# ============================================================
+
+# TYPE: 0.0.0.0 null-route blocks
+0.0.0.0 1l-hit.mail.ru
+0.0.0.0 1l-hit.vkplay.ru
+0.0.0.0 2mdn.net
+0.0.0.0 2mdn-cn.net
+0.0.0.0 a.market.xiaomi.com
+0.0.0.0 activation.acronis.com
+0.0.0.0 ad.intl.xiaomi.com
+0.0.0.0 ad.mail.ru
+0.0.0.0 ad.mi.com
+0.0.0.0 ad.ozone.ru
+0.0.0.0 ad.xiaomi.com
+0.0.0.0 ad1.xiaomi.com
+0.0.0.0 ad4.mail.ru
+0.0.0.0 adblogger.vk.com
+0.0.0.0 adblogger.vk.ru
+0.0.0.0 adeventtracker.spotify.com
+0.0.0.0 adfox.ru
+0.0.0.0 adfox.yandex.ru
+0.0.0.0 adfstat.yandex.ru
+0.0.0.0 admetrica.ru
+0.0.0.0 admob.com
+0.0.0.0 admob.xiaomi.com
+0.0.0.0 admob-cn.com
+0.0.0.0 ads.icq.com
+0.0.0.0 ads.viqeo.tv
+0.0.0.0 ads.vk.ru
+0.0.0.0 ads.wildberries.ru
+0.0.0.0 ads.yandex
+0.0.0.0 ads.yandex.com
+0.0.0.0 ads.yandex.ru
+0.0.0.0 ads.yango.com
+0.0.0.0 ads.youtube.com
+0.0.0.0 adsadvisor.io
+0.0.0.0 adsdk.yandex.ru
+0.0.0.0 adsense.com
+0.0.0.0 adsensecustomsearchads.com
+0.0.0.0 adsenseformobileapps.com
+0.0.0.0 adservice.google.com
+0.0.0.0 ads-gate.wildberries.ru
+0.0.0.0 ads-media.wildberries.ru
+0.0.0.0 adstudio-assets.scdn.co
+0.0.0.0 adtrafficquality.google
+0.0.0.0 adv.ozon.ru
+0.0.0.0 adv.sec.intl.miui.com
+0.0.0.0 adv.sec.miui.com
+0.0.0.0 adv.vk.com
+0.0.0.0 adv.vk.ru
+0.0.0.0 adv.yandex.com
+0.0.0.0 adv.yandex.ru
+0.0.0.0 advert-api.wb.ru
+0.0.0.0 advert-api.wildberries.ru
+0.0.0.0 advert-api-sandbox.wb.ru
+0.0.0.0 advert-api-sandbox.wildberries.ru
+0.0.0.0 advertisercommunity.com
+0.0.0.0 advertiserscommunity.com
+0.0.0.0 advert-media-api.wb.ru
+0.0.0.0 advert-media-api.wildberries.ru
+0.0.0.0 advk.vk.ru
+0.0.0.0 adwords.com
+0.0.0.0 adwords-community.com
+0.0.0.0 adwordsexpress.com
+0.0.0.0 agency-adv.ozon.ru
+0.0.0.0 alt-ad.mail.ru
+0.0.0.0 alt-r.my.com
+0.0.0.0 amc.yandex.ru
+0.0.0.0 an.mail.ru
+0.0.0.0 an.yandex.ru
+0.0.0.0 analytics.facebook.com
+0.0.0.0 analytics.mobile.yandex.net
+0.0.0.0 analytics.vk.com
+0.0.0.0 analytics.wildberries.ru
+0.0.0.0 analytics-adv.ozon.ru
+0.0.0.0 analytics-alv.google.com
+0.0.0.0 analytics-stage.wildberries.ru
+0.0.0.0 aodahl.com
+0.0.0.0 app-analytics-services.com
+0.0.0.0 app-analytics-services-att.com
+0.0.0.0 app-measurement.com
+0.0.0.0 app-measurement-cn.com
+0.0.0.0 appmetrica.yandex.com
+0.0.0.0 appmetrica.yandex.net
+0.0.0.0 appmetrica.yandex.ru
+0.0.0.0 appmetrica.yango.com
+0.0.0.0 apptracer.ru
+0.0.0.0 b2.mail.ru
+0.0.0.0 beginners-adv.ozon.ru
+0.0.0.0 bloodhound.spotify.com
+0.0.0.0 bs.mail.ru
+0.0.0.0 bs.yandex.ru
+0.0.0.0 clarity.ms
+0.0.0.0 clck.yandex.com
+0.0.0.0 clck.yandex.net
+0.0.0.0 clck.yandex.ru
+0.0.0.0 clck.yango.com
+0.0.0.0 counter.yandex.ru
+0.0.0.0 cxhub.ru
+0.0.0.0 dahl.su
+0.0.0.0 dahlmessenger.com
+0.0.0.0 data.mistat.india.xiaomi.com
+0.0.0.0 data.mistat.intl.xiaomi.com
+0.0.0.0 data.mistat.rus.xiaomi.com
+0.0.0.0 data.mistat.xiaomi.com
+0.0.0.0 doubleclick.cn
+0.0.0.0 doubleclick.com
+0.0.0.0 doubleclick.net
+0.0.0.0 doubleclick-cn.net
+0.0.0.0 email.strava.com
+0.0.0.0 email1.strava.com
+0.0.0.0 facebookads.com
+0.0.0.0 fcmatch.google.com
+0.0.0.0 gocart-web-prod-ue1-alb-1461435473.us-east-1.elb.amazonaws.com
+0.0.0.0 googleadapis.com
+0.0.0.0 googleadapis.l.google.com
+0.0.0.0 googleads.com
+0.0.0.0 googleads-cn.com
+0.0.0.0 googleadservices.com
+0.0.0.0 googleadservices-cn.com
+0.0.0.0 googleadsserving.cn
+0.0.0.0 googleanalytics.com
+0.0.0.0 google-analytics.com
+0.0.0.0 google-analytics-cn.com
+0.0.0.0 google-analytics-suite.ozon.ru
+0.0.0.0 googleoptimize.com
+0.0.0.0 googleoptimize-cn.com
+0.0.0.0 googlesyndication.com
+0.0.0.0 googlesyndication-cn.com
+0.0.0.0 googletagmanager.com
+0.0.0.0 googletagmanager-cn.com
+0.0.0.0 googletagservices.com
+0.0.0.0 googletagservices-cn.com
+0.0.0.0 googletraveladservices.com
+0.0.0.0 googletraveladservices-cn.com
+0.0.0.0 googlevads-cn.com
+0.0.0.0 informer.yandex.ru
+0.0.0.0 logupdate.avlyun.sec.miui.com
+0.0.0.0 loyalnost-adv.ozon.ru
+0.0.0.0 mail-ads.google.com
+0.0.0.0 marketing-info.wildberries.ru
+0.0.0.0 marketingplatform.google.com
+0.0.0.0 marketplace-sentry.wb.ru
+0.0.0.0 mc.yandex.com
+0.0.0.0 mc.yandex.net
+0.0.0.0 mc.yandex.ru
+0.0.0.0 mc.yango.com
+0.0.0.0 metrics.viqeo.tv
+0.0.0.0 metrika.yandex.com
+0.0.0.0 metrika.yandex.net
+0.0.0.0 metrika.yandex.ru
+0.0.0.0 microsoftads.com
+0.0.0.0 misc.in.duokanbox.com
+0.0.0.0 mobileads.google.com
+0.0.0.0 ms.vk.com
+0.0.0.0 ms.vk.ru
+0.0.0.0 msads.net
+0.0.0.0 myadx.net
+0.0.0.0 mytrk.link
+0.0.0.0 nelreports.net
+0.0.0.0 new-adv.ozon.ru
+0.0.0.0 oneme.ru
+0.0.0.0 pagead.l.google.com
+0.0.0.0 partnerad.l.google.com
+0.0.0.0 pixel.facebook.com
+0.0.0.0 pixel.yandex.com
+0.0.0.0 prod.adobegenuine.com
+0.0.0.0 prodvizhenie-adv.ozon.ru
+0.0.0.0 questions-adv.ozon.ru
+0.0.0.0 r.mail.ru
+0.0.0.0 r0.mail.ru
+0.0.0.0 r0.mradx.net
+0.0.0.0 r1.mail.ru
+0.0.0.0 radar.imgsmail.ru
+0.0.0.0 reef.vk-cdn.net
+0.0.0.0 reklama.mail.ru
+0.0.0.0 relap.mail.ru
+0.0.0.0 report.ap.yandex-net.ru
+0.0.0.0 rs.mail.ru
+0.0.0.0 saa.last.fm
+0.0.0.0 sentry.d.mi.com
+0.0.0.0 sentry.d.xiaomi.net
+0.0.0.0 sentry.dev-my.com
+0.0.0.0 sentry.dev-my.games
+0.0.0.0 sentry.io
+0.0.0.0 sentry.ozon.ru
+0.0.0.0 sentry.viqeo.tv
+0.0.0.0 sentry.wb.ru
+0.0.0.0 sentry-cdn.com
+0.0.0.0 sentry-ng.g.smailru.net
+0.0.0.0 sferum.ru
+0.0.0.0 sferum-dev.ru
+0.0.0.0 slackb.com
+0.0.0.0 srch-telemeter10.g.smailru.net
+0.0.0.0 stacks.vk-portal.net
+0.0.0.0 stats.music.xiaomi.com
+0.0.0.0 stats.vk-portal.net
+0.0.0.0 t.mail.ru
+0.0.0.0 target.my.com
+0.0.0.0 target.vk.com
+0.0.0.0 target.vk.ru
+0.0.0.0 telega.info
+0.0.0.0 telega.me
+0.0.0.0 tjqonline.cn
+0.0.0.0 top-fwz1.mail.ru
+0.0.0.0 top-staging.mail.ru
+0.0.0.0 trace-flow.ru
+0.0.0.0 tracker.ai.xiaomi.com
+0.0.0.0 tracker.my.com
+0.0.0.0 tracker.xiaomixiaoai.com
+0.0.0.0 tracker-api.my.com
+0.0.0.0 tracking.miui.com
+0.0.0.0 try.elevenlabs.io
+0.0.0.0 tusco.ru
+0.0.0.0 urchin.com
+0.0.0.0 vk-analytics.ru
+0.0.0.0 vmix.com
+0.0.0.0 vmix.com.au
+0.0.0.0 web-analytics.wildberries.ru
+0.0.0.0 webvisor.com
+0.0.0.0 webvisor.org
+0.0.0.0 whiteline.mail.ru
+0.0.0.0 www.slackb.com
+0.0.0.0 xapi.ozon.by
+0.0.0.0 xapi.ozon.com
+0.0.0.0 xapi.ozon.com.by
+0.0.0.0 xapi.ozon.com.kz
+0.0.0.0 xapi.ozon.kz
+0.0.0.0 xapi.ozon.ru
+0.0.0.0 xapi.ozonru.me
+0.0.0.0 xray.mail.ru
+0.0.0.0 yabs.yandex.ru
+0.0.0.0 yads.tech
+0.0.0.0 yandexmetrica.com
+0.0.0.0 yandex-metrica.ru
+0.0.0.0 yango-ads.com
+
+# TYPE: 127.0.0.1 loopback blocks
+127.0.0.1 activate.adobe.com
+127.0.0.1 hlrcv.stage.adobe.com
+127.0.0.1 ipa.aescripts.com
+127.0.0.1 lm.licenses.adobe.com
+127.0.0.1 lmlicenses.wip4.adobe.com
+127.0.0.1 na1r.services.adobe.com
+127.0.0.1 practivate.adobe.com

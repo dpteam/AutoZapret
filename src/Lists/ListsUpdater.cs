@@ -234,6 +234,90 @@ namespace AutoZapret.Lists
 
         // -------------------------------------------------------------- helpers
 
+        /// <summary>Один список: есть ли обновление на сервере.</summary>
+        public sealed class ListUpdate
+        {
+            public string Name = "";
+            public string File = "";
+            public bool Reachable;
+            public bool Changed;
+            public int LocalLines;
+            public int RemoteLines;
+            public string Note = "";
+        }
+
+        /// <summary>
+        /// Проверить, появились ли новые версии списков — БЕЗ записи на диск.
+        ///
+        /// Зачем отдельно от «Обновить»: списки вшиты в поставку, и человеку
+        /// нужно знать, есть ли смысл качать заново, а не гадать. Сравниваем
+        /// по числу строк: у этих источников любое реальное изменение меняет
+        /// количество, а хэш потребовал бы качать всё дважды.
+        /// </summary>
+        public static List<ListUpdate> CheckUpdates(Action<string> progress = null)
+        {
+            List<ListUpdate> result = new List<ListUpdate>();
+
+            CheckOne(result, progress, "IP-подсети", "ipset-all.txt", IpsetUrl);
+            CheckOne(result, progress, "Локальные сети", "ipset-exclude.txt", IpsetExcludeUrl);
+            CheckOne(result, progress, "Домены-исключения", "list-exclude.txt", ExcludeDomainsUrl);
+
+            return result;
+        }
+
+        private static void CheckOne(List<ListUpdate> result, Action<string> progress,
+                                     string name, string file, string url)
+        {
+            ListUpdate update = new ListUpdate { Name = name, File = file };
+            result.Add(update);
+
+            if (progress != null) progress("проверяю: " + name);
+
+            string local = "";
+            try
+            {
+                string path = Path.Combine(Paths.EngineListsDir, file);
+                if (File.Exists(path)) local = File.ReadAllText(path);
+            }
+            catch { }
+
+            update.LocalLines = CountLines(local);
+
+            string remote = Download(url);
+
+            if (remote == null)
+            {
+                update.Note = "источник недоступен — работаем с вшитой копией";
+                return;
+            }
+
+            update.Reachable = true;
+            update.RemoteLines = CountLines(remote);
+            update.Changed = update.RemoteLines != update.LocalLines;
+
+            if (update.Changed)
+                update.Note = "на сервере " + update.RemoteLines + " строк, у вас " + update.LocalLines;
+            else
+                update.Note = "актуально (" + update.LocalLines + " строк)";
+        }
+
+        private static int CountLines(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return 0;
+
+            int count = 0;
+
+            foreach (string line in text.Split('\n'))
+            {
+                string t = line.Trim();
+                if (t.Length == 0) continue;
+                if (t.StartsWith("#", StringComparison.Ordinal)) continue;
+                count++;
+            }
+
+            return count;
+        }
+
         private static string Download(string url)
         {
             try

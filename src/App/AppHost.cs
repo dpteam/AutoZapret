@@ -632,6 +632,44 @@ namespace AutoZapret.App
 
             bridge.Register("lists.catalog", msg => SendListCatalog());
 
+            // Восстановить списки из вшитой копии: без сети, вручную.
+            // Нужно, когда GitHub недоступен или файл испорчен правкой.
+            bridge.Register("lists.restoreBundled", msg =>
+            {
+                RunInBackground("lists-bundled", () =>
+                {
+                    List<RestoreEntry> entries = BundledLists.Restore();
+
+                    int restored = 0;
+                    List<object> details = new List<object>();
+
+                    foreach (RestoreEntry entry in entries)
+                    {
+                        if (entry.Restored) restored++;
+
+                        details.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                        {
+                            { "file", entry.File },
+                            { "restored", entry.Restored },
+                            { "reason", entry.Reason ?? "" }
+                        });
+                    }
+
+                    string message = restored > 0
+                        ? "восстановлено из бандла: " + restored + " · всего в бандле " + BundledLists.Describe()
+                        : "восстанавливать нечего: все списки на месте (в бандле " + BundledLists.Describe() + ")";
+
+                    _form.Bridge.Send(WebBridge.Msg("lists.bundled",
+                        "ok", true,
+                        "restored", (long)restored,
+                        "message", message,
+                        "items", details));
+
+                    SendListCatalog();
+                    SendIpsetState();
+                });
+            });
+
             bridge.Register("lists.save", msg =>
             {
                 string kind = Json.GetString(msg, "kind", "general");
@@ -815,16 +853,37 @@ namespace AutoZapret.App
 
                 RunInBackground("hosts-source", () =>
                 {
-                    string error;
-                    string downloaded = HostsFixes.Download(source, out error);
+                    string error = "";
+                    string downloaded;
 
-                    if (downloaded == null)
+                    if (source.Bundled)
                     {
-                        Log.Warn("HOSTS", "источник " + source.Name + " не скачался: " + error);
+                        // вшитый файл: без сети, читаем с диска
+                        string path = HostsFixes.BundledPath(source);
 
-                        bridge.Send(WebBridge.Msg("hosts.edited", "text", text,
-                            "summary", "«" + source.Name + "» не скачался: " + error));
-                        return;
+                        if (!System.IO.File.Exists(path))
+                        {
+                            bridge.Send(WebBridge.Msg("hosts.edited", "text", text,
+                                "summary", "файл «" + source.Name + "» не найден в поставке"));
+                            return;
+                        }
+
+                        downloaded = System.IO.File.ReadAllText(path);
+                        Log.Info("HOSTS", "вшитый hosts «" + source.Name + "» прочитан: " + downloaded.Length + " символов");
+                    }
+                    else
+                    {
+                        downloaded = HostsFixes.Download(source, out error);
+
+                        if (downloaded == null)
+                        {
+                            Log.Warn("HOSTS", "источник " + source.Name + " не скачался: " + error);
+
+                            bridge.Send(WebBridge.Msg("hosts.edited", "text", text,
+                                "summary", "«" + source.Name + "» не скачался: " + error +
+                                           " · попробуйте вшитый вариант из списка"));
+                            return;
+                        }
                     }
 
                     // Разбираем скачанное тем же парсером, что и обычные записи:
@@ -1664,7 +1723,10 @@ namespace AutoZapret.App
                 });
             }
 
-            _form.Bridge.Send(WebBridge.Msg("lists.catalog", "items", items));
+            _form.Bridge.Send(WebBridge.Msg("lists.catalog",
+                "items", items,
+                "bundled", BundledLists.Describe(),
+                "bundledReady", BundledLists.Available));
         }
 
         private void SendUpdateStatus(UpdateResult result)
@@ -1900,6 +1962,22 @@ namespace AutoZapret.App
                 });
             }
 
+            // вшитые: работают без сети, помечены отдельно
+            foreach (HostsSource source in HostsFixes.Bundled())
+            {
+                items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    { "id", source.Id },
+                    { "name", source.Name },
+                    { "note", source.Note ?? "" },
+                    { "count", 0L },
+                    { "remote", false },
+                    { "bundled", true },
+                    { "careful", source.Careful },
+                    { "url", "" }
+                });
+            }
+
             _form.Bridge.Send(WebBridge.Msg("hosts.fixes", "items", items));
         }
 
@@ -2098,11 +2176,24 @@ namespace AutoZapret.App
             if (_listsTried) return;
             _listsTried = true;
 
+            // Сначала запас: вшитые списки раскладываем БЕЗ сети. Даже если
+            // GitHub недоступен, обход должен работать с первого запуска.
+            List<RestoreEntry> restored = BundledLists.Restore();
+
+            int restoredCount = 0;
+            foreach (RestoreEntry entry in restored) if (entry.Restored) restoredCount++;
+
+            if (restoredCount > 0)
+            {
+                Log.Info("LIST", "списки из бандла: восстановлено " + restoredCount);
+                SendIpsetState();
+            }
+
+            if (!_settings.UpdateLists) return;
+
             // `*-user.txt` — личные дополнения. Их отсутствие ломает winws
             // («не открылся список»), поэтому создаём пустые заранее.
             EnsureUserLists();
-
-            if (!_settings.UpdateLists) return;
 
             bool needIpset = TooSmall("ipset-all.txt", 1024);
             bool needExclude = TooSmall("list-exclude.txt", 256);

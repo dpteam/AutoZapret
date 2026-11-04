@@ -8,6 +8,17 @@ _refs/
 __refs/
 
 # zapret binaries: fetched by tools\fetch-engine.ps1, never committed
+#
+# NOTE: this does NOT mean they are missing from the release. Two different
+# things live here:
+#   * git  - source code and data (assets\: strategies, fakes, lists, hosts).
+#            Binaries are excluded because they are large, licensed separately
+#            (WinDivert LGPLv3, cygwin GPL) and reproducible from a script.
+#   * ZIP  - what a person downloads. It contains everything: AutoZapret.exe,
+#            WebView2Loader.dll, engine\bin\winws.exe, WinDivert64.sys, lua\,
+#            assets\ (with lists and hosts), tools\.
+# Verified by tools\check-artifact.js on every CI run - it opens the built zip
+# and fails if any of those files is missing.
 engine/
 engine-*/
 *.sys
@@ -56,6 +67,17 @@ artifacts/
 # generated lists: downloaded, regenerated, never committed
 data/lists/*.txt
 !assets/lists/*.txt
+
+# assets/lists/*.txt IS committed on purpose, and it is NOT a duplicate of
+# engine/lists. It is the offline fallback that ships inside the package:
+# if GitHub is unreachable (blocked, offline, first run on a fresh machine),
+# BundledLists.Restore() lays these out into engine\lists and the bypass works
+# from the first start instead of "engine alive, no effect".
+#
+# assets/hosts/* is committed for the same reason: ready-made hosts fixes and
+# one large curated hosts, usable without network.
+!assets/lists/**
+!assets/hosts/**
 
 # generated payloads (the .bin fakes) - shipped subset lives in assets/fakes
 data/fakes/

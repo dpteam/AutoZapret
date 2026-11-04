@@ -127,6 +127,11 @@ namespace AutoZapret.Diag
 
                         AddText(zip, "network.txt", NetworkText(), result);
                         AddText(zip, "engine-files.txt", EngineFilesText(), result);
+
+                        // Что вшито в поставку и совпадает ли с тем, что лежит
+                        // в engine\lists. По этому видно, работает человек на
+                        // бандле или на скачанном, и не испорчен ли список.
+                        AddText(zip, "lists.txt", ListsText(), result);
                     }
 
                     string logText = LogTail();
@@ -195,6 +200,7 @@ namespace AutoZapret.Diag
             sb.AppendLine("  diagnostics.txt  — 14 проверок окружения с советами");
             sb.AppendLine("  settings.json    — настройки (секрет прокси вырезан)");
             sb.AppendLine("  engine.txt       — файлы движка zapret и их размеры");
+            sb.AppendLine("  lists.txt        — списки: что в движке и что вшито в поставку");
             sb.AppendLine("  strategies.txt   — список стратегий");
             sb.AppendLine("  app.log          — последние " + LogTailLines + " строк лога");
             sb.AppendLine();
@@ -722,6 +728,69 @@ namespace AutoZapret.Diag
         }
 
         /// <summary>Полный список файлов движка с размерами: видно недокачанные и лишние.</summary>
+        private static string ListsText()
+        {
+            StringBuilder sb = new StringBuilder();
+
+            sb.AppendLine("Списки: движок и вшитая копия");
+            sb.AppendLine("=============================");
+            sb.AppendLine();
+            sb.AppendLine("каталог движка : " + Paths.EngineListsDir);
+            sb.AppendLine("вшитая копия   : " + Lists.BundledLists.SourceDir);
+            sb.AppendLine("в поставке     : " + Lists.BundledLists.Describe());
+            sb.AppendLine();
+
+            try
+            {
+                List<string> names = new List<string>();
+
+                foreach (Lists.ListKind kind in Lists.ListCatalog.All())
+                    if (!names.Contains(kind.File)) names.Add(kind.File);
+
+                sb.AppendLine("файл                      движок  вшито  строк  примечание");
+
+                foreach (string name in names)
+                {
+                    string live = Path.Combine(Paths.EngineListsDir, name);
+                    string bundled = Path.Combine(Lists.BundledLists.SourceDir, name);
+
+                    long liveSize = 0, bundledSize = 0;
+
+                    try { if (File.Exists(live)) liveSize = new FileInfo(live).Length; } catch { }
+                    try { if (File.Exists(bundled)) bundledSize = new FileInfo(bundled).Length; } catch { }
+
+                    int lines = 0;
+
+                    try
+                    {
+                        if (File.Exists(live))
+                            foreach (string line in File.ReadLines(live))
+                                if (line.Trim().Length > 0) lines++;
+                    }
+                    catch { }
+
+                    string note = "";
+
+                    if (liveSize == 0) note = "НЕТ (движок не найдёт)";
+                    else if (bundledSize == 0) note = "нет в поставке";
+                    else if (liveSize < bundledSize / 2) note = "меньше вшитой — вероятно испорчен";
+                    else if (liveSize == bundledSize) note = "совпадает с вшитой";
+
+                    sb.AppendLine(name.PadRight(26) +
+                                  liveSize.ToString(CultureInfo.InvariantCulture).PadLeft(7) +
+                                  bundledSize.ToString(CultureInfo.InvariantCulture).PadLeft(7) +
+                                  lines.ToString(CultureInfo.InvariantCulture).PadLeft(7) +
+                                  "  " + note);
+                }
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine("ошибка чтения списков: " + ex.Message);
+            }
+
+            return sb.ToString();
+        }
+
         private static string EngineFilesText()
         {
             StringBuilder sb = new StringBuilder();

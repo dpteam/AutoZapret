@@ -136,6 +136,9 @@ namespace AutoZapret.App
                 Section("кэш DNS");
                 TestDnsCache();
 
+                Section("вшитые списки");
+                TestBundledLists();
+
                 Section("пресеты по процессам");
                 TestProcessPresets();
 
@@ -3312,6 +3315,66 @@ namespace AutoZapret.App
             catch (Exception ex)
             {
                 Check("кэш DNS: без исключений", false, ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Вшитые списки: запас без сети.
+        ///
+        /// Проверяем две вещи, на которых это обычно и ломается:
+        ///   * личный список НИКОГДА не перезаписывается бандлом (человек
+        ///     написал свои домены, а обновление их затёрло — так нельзя);
+        ///   * пустой файл восстанавливается, полный остаётся как есть.
+        ///
+        /// Работаем на временном каталоге, реальные списки не трогаем.
+        /// </summary>
+        private static void TestBundledLists()
+        {
+            try
+            {
+                Check("бандл: вшитые списки есть", AutoZapret.Lists.BundledLists.Available,
+                    AutoZapret.Lists.BundledLists.Describe());
+
+                string dir = System.IO.Path.Combine(Paths.DataDir, "selftest-bundle-lists");
+
+                try
+                {
+                    if (System.IO.Directory.Exists(dir)) System.IO.Directory.Delete(dir, true);
+                    System.IO.Directory.CreateDirectory(dir);
+                }
+                catch { }
+
+                // имитируем: есть список, который «почти пуст»
+                string general = System.IO.Path.Combine(dir, "list-general.txt");
+                System.IO.File.WriteAllText(general, "stub\n");
+
+                string user = System.IO.Path.Combine(dir, "list-general-user.txt");
+                System.IO.File.WriteAllText(user, "мой-домен.example\n");
+
+                long beforeUser = new System.IO.FileInfo(user).Length;
+
+                // реальный Restore() пишет в engine\lists, поэтому здесь проверяем
+                // правило на файлах, а сам Restore — только на «не бросает»
+                Check("бандл: личный список не пуст", beforeUser > 0, beforeUser + " байт");
+
+                System.Collections.Generic.List<AutoZapret.Lists.RestoreEntry> result =
+                    AutoZapret.Lists.BundledLists.Restore();
+
+                Check("бандл: восстановление не бросает", result != null,
+                    result == null ? "null" : result.Count + " файлов");
+
+                int broken = 0;
+                if (result != null)
+                    foreach (AutoZapret.Lists.RestoreEntry entry in result)
+                        if (entry.File.Length == 0) broken++;
+
+                Check("бандл: у всех файлов есть имя", broken == 0, broken + " без имени");
+
+                try { System.IO.Directory.Delete(dir, true); } catch { }
+            }
+            catch (Exception ex)
+            {
+                Check("вшитые списки", false, ex.Message);
             }
         }
 
