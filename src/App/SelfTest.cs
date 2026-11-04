@@ -118,6 +118,9 @@ namespace AutoZapret.App
                 Section("свой движок: техники desync");
                 TestDesync();
 
+                Section("счёт техник");
+                TestTechniqueScore();
+
                 Section("Secure DNS в браузерах");
                 TestBrowserDoh();
 
@@ -3924,6 +3927,80 @@ namespace AutoZapret.App
 
             Check("desync: не-TLS пакет распознан",
                 other != null && other.PayloadLength > 0, "ok");
+        }
+
+        /// <summary>
+        /// Счёт техник. Отдельно от счёта стратегий, потому что шкала другая,
+        /// и есть ловушка, которую надо проверить: техника, которая НЕ
+        /// применилась ни разу, но чьи цели открылись сами, не должна получать
+        /// баллы. Иначе «0 применений, 4/4 пробы» давало бы 100 и врало в самую
+        /// опасную сторону — человек выбрал бы технику, которая ничего не делает.
+        /// </summary>
+        private static void TestTechniqueScore()
+        {
+            // ---- идеал: всё прошло, быстро, ровно, техника применялась
+            AutoZapret.Diag.TechniqueScore perfect = new AutoZapret.Diag.TechniqueScore();
+            AutoZapret.Diag.TechniqueTester.ComputeScore(perfect, SynthReport(300, 320, 310, 305), 10);
+
+            Check("техника: идеал 100", perfect.Score == 100, perfect.Score.ToString());
+            Check("техника: задержка 20/20", perfect.LatencyBonus == 20, perfect.LatencyBonus.ToString());
+            Check("техника: стабильность 10/10", perfect.StabilityBonus == 10, perfect.StabilityBonus.ToString());
+
+            // ---- ничего не прошло
+            AutoZapret.Diag.TechniqueScore nothing = new AutoZapret.Diag.TechniqueScore();
+            AutoZapret.Diag.TechniqueTester.ComputeScore(nothing, SynthReport(-1, -1, -1, -1), 10);
+
+            Check("техника: ноль успехов = 0", nothing.Score == 0, nothing.Score.ToString());
+
+            // ---- ЛОВУШКА: всё прошло, но техника не применялась
+            AutoZapret.Diag.TechniqueScore fake = new AutoZapret.Diag.TechniqueScore();
+            AutoZapret.Diag.TechniqueTester.ComputeScore(fake, SynthReport(300, 320, 310, 305), 0);
+
+            Check("техника: без применений успех не засчитывается",
+                fake.Score <= 30, fake.Score.ToString() + " (успех обнулён)");
+
+            // ---- медленно: бонус за задержку уходит
+            AutoZapret.Diag.TechniqueScore slow = new AutoZapret.Diag.TechniqueScore();
+            AutoZapret.Diag.TechniqueTester.ComputeScore(slow, SynthReport(4000, 4100, 4050, 4020), 10);
+
+            Check("техника: 4 с без бонуса задержки", slow.LatencyBonus == 0,
+                slow.LatencyBonus.ToString());
+
+            // ---- разброс 10x: стабильность обнуляется
+            AutoZapret.Diag.TechniqueScore wild = new AutoZapret.Diag.TechniqueScore();
+            AutoZapret.Diag.TechniqueTester.ComputeScore(wild, SynthReport(200, 2000, 1500, 1800), 10);
+
+            Check("техника: разброс 10x без стабильности", wild.StabilityBonus == 0,
+                wild.StabilityBonus.ToString());
+
+            // ---- границы: счёт всегда 0..100
+            bool inRange = true;
+
+            for (int ms = 0; ms <= 5000; ms += 250)
+            {
+                AutoZapret.Diag.TechniqueScore probe = new AutoZapret.Diag.TechniqueScore();
+                AutoZapret.Diag.TechniqueTester.ComputeScore(
+                    probe, SynthReport(ms, ms + 10, ms + 5, ms + 8), 10);
+
+                if (probe.Score < 0 || probe.Score > 100) inRange = false;
+            }
+
+            Check("техника: счёт всегда 0..100", inRange, "ok");
+
+            // ---- список техник: все на месте и без повторов
+            System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, AutoZapret.Zapret.Own.Technique>> all =
+                AutoZapret.Diag.TechniqueTester.All();
+
+            Check("техника: список не пуст", all.Count >= 9, all.Count + " шт.");
+
+            System.Collections.Generic.HashSet<string> names =
+                new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+
+            int duplicates = 0;
+            foreach (System.Collections.Generic.KeyValuePair<string, AutoZapret.Zapret.Own.Technique> pair in all)
+                if (!names.Add(pair.Key)) duplicates++;
+
+            Check("техника: названия уникальны", duplicates == 0, duplicates + " повторов");
         }
 
         private static void TestSniffResult()

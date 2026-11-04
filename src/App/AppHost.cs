@@ -409,6 +409,23 @@ namespace AutoZapret.App
 
             bridge.Register("own.stop", msg => StopOwnEngine());
 
+            // Сравнение техник: прогнать все по очереди и показать, какая
+            // реально пробивает DPI. Как подбор стратегий, но для своего движка.
+            bridge.Register("own.compare", msg =>
+            {
+                if (!EnsureElevation()) return;
+
+                if (_zapret.State == ProtectionState.Running || _zapret.State == ProtectionState.Starting)
+                {
+                    _form.Bridge.Send(WebBridge.Msg("own.compare",
+                        "ok", false,
+                        "error", "сначала выключите обход на zapret: два перехватчика не работают вместе"));
+                    return;
+                }
+
+                RunDiag("own-compare", "сравнение техник", ct => RunCompareUi(ct), true);
+            });
+
             // ---- Secure DNS (DoH) в браузерах
             //
             // Провайдер подменяет DNS, и браузер с системным резолвом приходит
@@ -2231,6 +2248,110 @@ namespace AutoZapret.App
         }
 
         /// <summary>Состояние своего движка для интерфейса.</summary>
+        /// <summary>
+        /// Прогон всех техник по очереди и таблица результатов.
+        ///
+        /// Требует замера «что заблокировано»: без него непонятно, что вообще
+        /// проверять, и техника получает баллы за сайты, которые и так открыты.
+        /// </summary>
+        private void RunCompareUi(CancellationToken token)
+        {
+            Baseline.Snapshot baseline = Baseline.Load();
+
+            if (baseline == null || baseline.Blocked.Count == 0)
+            {
+                DiagProgress("замеряю, что заблокировано (это ~20–40 с)…");
+
+                baseline = Baseline.Measure(new ConnectivityProbe(), 10, true, token);
+
+                if (token.IsCancellationRequested)
+                {
+                    _form.Bridge.Send(WebBridge.Msg("own.compare",
+                        "ok", true, "items", new List<object>(),
+                        "summary", "отменено", "cancelled", true));
+                    return;
+                }
+            }
+
+            if (baseline == null || baseline.Blocked.Count == 0)
+            {
+                _form.Bridge.Send(WebBridge.Msg("own.compare",
+                    "ok", false,
+                    "error", "ничего не заблокировано — сравнивать нечего"));
+                return;
+            }
+
+            List<Zapret.Own.Technique> techniques = new List<Zapret.Own.Technique>();
+
+            foreach (KeyValuePair<string, Zapret.Own.Technique> pair in TechniqueTester.All())
+                techniques.Add(pair.Value);
+
+            List<TechniqueScore> scores = TechniqueTester.Run(
+                techniques, baseline, 4, 8,
+                (index, total, name) => _form.Bridge.Send(WebBridge.Msg("diag.progress",
+                    "line", "техника " + name + " (" + index + "/" + total + ")",
+                    "index", (long)index,
+                    "total", (long)total,
+                    "done", false)),
+                line => DiagProgress(line),
+                token);
+
+            if (scores.Count > 0 && !token.IsCancellationRequested)
+                ScanResults.SaveTechniques(scores, baseline.Network);
+
+            List<object> items = new List<object>();
+
+            foreach (TechniqueScore s in scores)
+            {
+                List<object> failed = new List<object>();
+                foreach (string f in s.Failed) failed.Add(f);
+
+                items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    { "name", s.Name },
+                    { "okCount", (long)s.OkCount },
+                    { "total", (long)s.Total },
+                    { "avgMs", (long)s.AvgMs },
+                    { "score", (long)s.Score },
+                    { "breakdown", s.Breakdown() },
+                    { "reasons", s.Reasons ?? "" },
+                    { "failed", failed },
+                    { "error", s.Error ?? "" }
+                });
+            }
+
+            string summary;
+
+            if (token.IsCancellationRequested)
+            {
+                summary = "отменено — проверено " + scores.Count;
+            }
+            else if (scores.Count == 0)
+            {
+                summary = "ничего не проверено";
+            }
+            else
+            {
+                TechniqueScore best = scores[0];
+
+                summary = "лучшая: " + best.Name + " (" + best.OkCount + "/" + best.Total +
+                          ", счёт " + best.Score + ") против " + baseline.Blocked.Count + " целей";
+
+                bool allZero = true;
+                foreach (TechniqueScore s in scores) if (s.OkCount > 0) allZero = false;
+
+                if (allZero)
+                    summary += ". Ни одна техника не пробила ни одной цели — дело не в технике: " +
+                               "движок не перехватывает трафик или блокировка другого типа";
+            }
+
+            _form.Bridge.Send(WebBridge.Msg("own.compare",
+                "ok", true,
+                "items", items,
+                "summary", summary,
+                "cancelled", token.IsCancellationRequested));
+        }
+
         private void SendOwnState()
         {
             Zapret.Own.OwnEngineStats stats;

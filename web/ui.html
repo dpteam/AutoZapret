@@ -427,6 +427,25 @@
             <button class="btn" id="btn-own-stop">Остановить</button>
           </div>
         </div>
+
+        <div class="row" style="margin-top:6px">
+          <div>
+            <div class="row-label">Сравнить все техники</div>
+            <div class="row-hint">
+              Прогоняет каждую технику против заблокированных целей и показывает,
+              какая реально пробивает ваш DPI <span class="dim">· 2–4 min</span>
+            </div>
+          </div>
+          <button class="btn" id="btn-own-compare">Сравнить</button>
+        </div>
+
+        <div id="own-compare-result" style="display:none;margin-top:12px">
+          <table class="rank">
+            <thead><tr><th></th><th>Техника</th><th>Цели</th><th>Задержка</th><th>Счёт</th></tr></thead>
+            <tbody id="own-compare-body"></tbody>
+          </table>
+          <div class="row-hint" id="own-compare-summary" style="margin-top:10px"></div>
+        </div>
       </div>
     </section>
 

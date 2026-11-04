@@ -38,6 +38,89 @@ namespace AutoZapret.Diag
             public List<ScanEntry> Entries = new List<ScanEntry>();
         }
 
+        /// <summary>Сохранить результаты сравнения техник.</summary>
+        public static void SaveTechniques(IEnumerable<TechniqueScore> scores, string network)
+        {
+            if (scores == null) return;
+
+            try
+            {
+                Dictionary<string, object> root = new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    { "at", DateTime.Now.ToString("o") },
+                    { "network", network ?? "" }
+                };
+
+                List<object> items = new List<object>();
+
+                foreach (TechniqueScore score in scores)
+                {
+                    items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                    {
+                        { "name", score.Name },
+                        { "ok", (long)score.OkCount },
+                        { "total", (long)score.Total },
+                        { "score", (long)score.Score },
+                        { "ms", (long)score.AvgMs },
+                        { "reasons", score.Reasons ?? "" }
+                    });
+                }
+
+                root["techniques"] = items;
+
+                AtomicFile.WriteAllText(TechniquePath, Json.Stringify(root));
+
+                Log.Info("OWN", "результаты техник сохранены: " + items.Count);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("OWN", "не сохранил результаты техник: " + ex.Message);
+            }
+        }
+
+        /// <summary>Лучшая техника по последнему сравнению, если он был.</summary>
+        public static string BestTechnique()
+        {
+            try
+            {
+                string text = AtomicFile.ReadAllTextOrNull(TechniquePath);
+                if (string.IsNullOrEmpty(text)) return "";
+
+                Dictionary<string, object> root = Json.ParseObjectSafe(text);
+                List<object> items = root == null ? null : Json.GetArray(root, "techniques");
+
+                if (items == null || items.Count == 0) return "";
+
+                string best = "";
+                int bestScore = -1;
+
+                foreach (object item in items)
+                {
+                    Dictionary<string, object> map = item as Dictionary<string, object>;
+                    if (map == null) continue;
+
+                    int score = Json.GetInt(map, "score", 0);
+                    int ok = Json.GetInt(map, "ok", 0);
+
+                    if (ok <= 0 || score <= bestScore) continue;
+
+                    bestScore = score;
+                    best = Json.GetString(map, "name", "");
+                }
+
+                return best;
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private static string TechniquePath
+        {
+            get { return Path.Combine(Paths.StateDir, "last-techniques.json"); }
+        }
+
         private static string FilePath
         {
             get { return Path.Combine(Paths.StateDir, "last-scan.json"); }

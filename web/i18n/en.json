@@ -287,5 +287,10 @@
   "Останавливаю…": "Stopping…",
   "syndata — ClientHello внутри SYN": "syndata - ClientHello inside SYN",
   "oob — срочный байт": "oob - urgent byte",
-  "wsize — маленькое окно": "wsize - tiny window"
+  "wsize — маленькое окно": "wsize - tiny window",
+  "Сравнить все техники": "Compare all techniques",
+  "Прогоняет каждую технику против заблокированных целей и показывает, какая реально пробивает ваш DPI": "Runs every technique against the blocked targets and shows which one actually beats your DPI",
+  "Сравнить": "Compare",
+  "Сравниваю…": "Comparing…",
+  "Техника": "Technique"
 }

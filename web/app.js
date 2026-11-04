@@ -869,6 +869,17 @@
             ownDry.classList.toggle("on");
         });
 
+        var ownCompare = document.getElementById("btn-own-compare");
+        if (ownCompare) ownCompare.addEventListener("click", function () {
+            ownCompare.disabled = true;
+            ownCompare.textContent = "Сравниваю…";
+
+            document.getElementById("own-compare-result").style.display = "none";
+            document.getElementById("diag-test-progress").style.display = "";
+
+            send("own.compare");
+        });
+
         var sysOff = document.getElementById("btn-sysdns-off");
         if (sysOff) sysOff.addEventListener("click", function () {
             sysOff.disabled = true;
@@ -893,6 +904,65 @@
 
         status.textContent = msg.message || "";
         status.className = "row-hint " + (msg.ok ? "diag-ok" : "diag-bad");
+    }
+
+    /// Таблица сравнения техник: та же логика, что у подбора стратегий,
+    /// но другая шкала — здесь нет процесса, который может умереть.
+    function renderCompare(msg) {
+        var btn = document.getElementById("btn-own-compare");
+        if (btn) { btn.disabled = false; btn.textContent = "Сравнить"; }
+
+        document.getElementById("diag-test-progress").style.display = "none";
+
+        var box = document.getElementById("own-compare-result");
+        var body = document.getElementById("own-compare-body");
+        if (!box || !body) return;
+
+        body.innerHTML = "";
+
+        if (!msg.ok) {
+            var summaryEl = document.getElementById("own-compare-summary");
+            if (summaryEl) {
+                summaryEl.textContent = msg.error || "не получилось";
+                summaryEl.className = "row-hint diag-bad";
+            }
+            box.style.display = "";
+            return;
+        }
+
+        (msg.items || []).forEach(function (t, index) {
+            var tr = document.createElement("tr");
+            if (index === 0 && t.okCount > 0) tr.className = "best";
+
+            var mark = t.okCount === t.total ? "🟢" : (t.okCount > 0 ? "🟡" : "🔴");
+            var scoreCls = t.score >= 80 ? "diag-ok" : (t.score >= 50 ? "diag-warn" : "diag-bad");
+
+            var failed = (t.failed && t.failed.length > 0)
+                ? '<div class="detail">не прошло: ' + t.failed.join(", ") + "</div>" : "";
+            var reasons = (t.reasons && t.okCount === 0)
+                ? '<div class="detail">почему: ' + t.reasons + "</div>" : "";
+
+            tr.innerHTML =
+                "<td>" + mark + "</td>" +
+                "<td>" + t.name +
+                    '<div class="detail">' + (t.breakdown || "") + "</div>" +
+                    failed + reasons +
+                    (t.error ? '<div class="detail diag-bad">' + t.error + "</div>" : "") +
+                "</td>" +
+                "<td>" + t.okCount + "/" + t.total + "</td>" +
+                "<td>" + (t.okCount > 0 ? t.avgMs + " ms" : "—") + "</td>" +
+                "<td class=\"" + scoreCls + "\"><b>" + (t.score || 0) + "</b></td>";
+
+            body.appendChild(tr);
+        });
+
+        var summaryEl = document.getElementById("own-compare-summary");
+        if (summaryEl) {
+            summaryEl.textContent = msg.summary || "";
+            summaryEl.className = "row-hint " + (msg.cancelled ? "diag-warn" : "");
+        }
+
+        box.style.display = "";
     }
 
     /// Состояние своего движка: кнопки и строка со счётчиками.
@@ -2631,6 +2701,10 @@
 
             case "own.state":
                 renderOwnState(msg);
+                break;
+
+            case "own.compare":
+                renderCompare(msg);
                 break;
 
             case "dns.flushed":
