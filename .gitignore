@@ -38,6 +38,11 @@ stage/
 *.pdb
 *.ilk
 *.cache
+
+# Android: нативная tun2socks собирается android\build-hev.cmd из refs\hev-socks5-tunnel
+android/AutoZapret.Android/libs/
+android/**/bin/
+android/**/obj/
 *.rsp
 *.suo
 *.user

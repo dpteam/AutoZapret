@@ -1,6 +1,7 @@
 using System;
 using Android.App;
 using Android.Content;
+using Android.Net;
 using Android.OS;
 using Android.Webkit;
 using Android.Widget;
@@ -32,6 +33,8 @@ namespace AutoZapret.Android
         private int _delay;
 
         private volatile bool _busy;
+
+        private const int VpnRequestCode = 1001;
 
         protected override void OnCreate(Bundle savedInstanceState)
         {
@@ -124,6 +127,68 @@ namespace AutoZapret.Android
             PushState();
         }
 
+        // ------------------------------------------------------------- VPN
+
+        /// <summary>
+        /// Спросить у системы разрешение VPN и запустить сервис.
+        ///
+        /// Разрешение выдаётся один раз на приложение; повторно диалог появится
+        /// только после отзыва. Если система разрешение уже дала, Prepare
+        /// возвращает null и мы стартуем сразу.
+        /// </summary>
+        private void PrepareVpn()
+        {
+            // Локальный SOCKS5 в активности и VPN-сервис не должны делить порт
+            StopProxy();
+
+            Intent prepare = VpnService.Prepare(this);
+
+            if (prepare != null)
+            {
+                PushLog("система спрашивает разрешение VPN…");
+                StartActivityForResult(prepare, VpnRequestCode);
+                return;
+            }
+
+            StartVpnService();
+        }
+
+        private void StartVpnService()
+        {
+            PushLog("запускаю VPN…");
+
+            Intent intent = new Intent(this, typeof(ZapretVpnService));
+            intent.SetAction(ZapretVpnService.ActionStart);
+
+            if (Build.VERSION.SdkInt >= BuildVersionCodes.O)
+                StartForegroundService(intent);
+            else
+                StartService(intent);
+
+            PushState();
+        }
+
+        private void StopVpn()
+        {
+            Intent intent = new Intent(this, typeof(ZapretVpnService));
+            intent.SetAction(ZapretVpnService.ActionStop);
+
+            try { StartService(intent); } catch { }
+            PushState();
+        }
+
+        protected override void OnActivityResult(int requestCode, Result resultCode, Intent data)
+        {
+            base.OnActivityResult(requestCode, resultCode, data);
+
+            if (requestCode != VpnRequestCode) return;
+
+            if (resultCode == Result.Ok) StartVpnService();
+            else PushLog("разрешение VPN не выдано — режим остался выключенным");
+
+            PushState();
+        }
+
         // ------------------------------------------------------------- мост
 
         /// <summary>Один метод наружу: страница присылает JSON, как и на десктопе.</summary>
@@ -146,6 +211,11 @@ namespace AutoZapret.Android
                     case "proxy.toggle":
                         if (msg.OptBoolean("enabled", false)) StartProxy();
                         else StopProxy();
+                        break;
+
+                    case "vpn.toggle":
+                        if (msg.OptBoolean("enabled", false)) PrepareVpn();
+                        else StopVpn();
                         break;
 
                     case "proxy.state":
@@ -197,10 +267,12 @@ namespace AutoZapret.Android
         private void PushState()
         {
             bool running = _proxy != null && _proxy.IsRunning;
+            bool vpn = ZapretVpnService.IsRunning;
 
             Org.Json.JSONObject state = new Org.Json.JSONObject();
             state.Put("type", "state");
             state.Put("running", running);
+            state.Put("vpn", vpn);
             state.Put("busy", _busy);
             state.Put("port", _port);
             state.Put("split", _split);

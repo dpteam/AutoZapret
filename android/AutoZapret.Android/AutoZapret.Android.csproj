@@ -1,7 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net9.0-android</TargetFramework>
-    <SupportedOSPlatformVersion>21</SupportedOSPlatformVersion>
+    <!--
+      hev-socks5-tunnel собран под android-29 (APP_PLATFORM в его Application.mk).
+      Поэтому и приложение не может обещать меньше: на API 28 библиотека просто
+      не загрузится.
+    -->
+    <SupportedOSPlatformVersion>29</SupportedOSPlatformVersion>
     <OutputType>Exe</OutputType>
 
     <!-- Стиль как в десктопном проекте: без NRT, без неявных using -->
@@ -29,4 +34,11 @@
       <Link>Assets/mobile.html</Link>
     </AndroidAsset>
   </ItemGroup>
+
+  <!--
+    tun2socks (MIT) лежит в libs\<abi>\libhev-socks5-tunnel.so и попадает в APK
+    автоматическим правилом для нативных библиотек. Отдельный AndroidNativeLibrary
+    добавлять не нужно: получится дубликат (XA4301) и файл просто пропустят.
+    Собирается android\build-hev.cmd.
+  -->
 </Project>
