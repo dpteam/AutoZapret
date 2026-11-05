@@ -21,6 +21,17 @@
     <RootNamespace>AutoZapret.Android</RootNamespace>
 
     <!--
+      Fast Deployment ВЫКЛЮЧЕН осознанно.
+      В Debug .NET Android по умолчанию собирает APK-«оболочку», а сборки
+      доливает в /data/.../.__override__ при установке через IDE. Такой APK,
+      поставленный обычным `adb install`, падает на старте:
+        "No assemblies found in .../.__override__ ... Exiting"
+      Нам нужен файл, который ставится на любой телефон без IDE, поэтому
+      сборки лежат внутри APK.
+    -->
+    <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
+
+    <!--
       Trimming выключен: у нас мало кода, а обрезатель любит выкидывать то,
       что вызывается только из Java (JS-интерфейс) или через рефлексию.
     -->

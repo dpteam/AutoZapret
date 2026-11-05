@@ -42,6 +42,12 @@ namespace AutoZapret.Android
 
         public static bool IsRunning { get; private set; }
 
+        /// <summary>Прокси, который поднят внутри сервиса — чтобы UI видел счётчики.</summary>
+        public static Socks5Proxy Running { get; private set; }
+
+        /// <summary>Куда писать строки лога для интерфейса (ставит MainActivity).</summary>
+        public static Action<string> LogSink;
+
         public override StartCommandResult OnStartCommand(Intent intent, StartCommandFlags flags, int startId)
         {
             string action = intent == null ? ActionStart : intent.Action;
@@ -52,8 +58,27 @@ namespace AutoZapret.Android
                 return StartCommandResult.NotSticky;
             }
 
-            StartForeground(NotificationId, BuildNotification());
-            StartTunnel();
+            // StartForeground может бросить SecurityException (тип сервиса,
+            // разрешения, политика прошивки). Раньше это убивало процесс
+            // целиком и выглядело как «приложение вылетело». Теперь — в лог и
+            // всё равно пытаемся поднять туннель.
+            try
+            {
+                StartForeground(NotificationId, BuildNotification());
+            }
+            catch (Exception ex)
+            {
+                LogLine("StartForeground: " + ex.GetType().Name + ": " + ex.Message);
+            }
+
+            try
+            {
+                StartTunnel();
+            }
+            catch (Exception ex)
+            {
+                LogLine("запуск VPN: " + ex.GetType().Name + ": " + ex.Message);
+            }
 
             return StartCommandResult.NotSticky;
         }
@@ -115,10 +140,11 @@ namespace AutoZapret.Android
                 return;
             }
 
-            string config = HevTunnel.BuildConfig(10, port, false);
+            string config = HevTunnel.BuildConfig(TunnelAddress, port);
 
             _running = true;
             IsRunning = true;
+            Running = _proxy;
 
             _thread = new Thread(delegate () { TunnelLoop(_tun.Fd, config); })
             {
@@ -137,14 +163,11 @@ namespace AutoZapret.Android
             {
                 string error = HevTunnel.Run(fd, config);
                 if (error != null) LogLine(error);
+                else LogLine("туннель остановлен");
             }
             catch (Exception ex)
             {
                 LogLine("туннель упал: " + ex.GetType().Name + ": " + ex.Message);
-            }
-            finally
-            {
-                HevTunnel.Cleanup();
             }
         }
 
@@ -154,6 +177,7 @@ namespace AutoZapret.Android
 
             _running = false;
             IsRunning = false;
+            Running = null;
 
             HevTunnel.Stop();
 
@@ -199,6 +223,13 @@ namespace AutoZapret.Android
         private static void LogLine(string line)
         {
             global::Android.Util.Log.Info("AutoZapret", line);
+
+            Action<string> sink = LogSink;
+
+            if (sink != null)
+            {
+                try { sink(line); } catch { }
+            }
         }
     }
 }

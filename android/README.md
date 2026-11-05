@@ -78,6 +78,26 @@ android\build-hev.cmd
 
 Минимальная версия Android — **10 (API 29)**: под неё собрана hev.
 
+## Проверено на живом телефоне
+
+Тест на Android 16 (API 36), arm64:
+
+* **SOCKS5**: `curl --socks5-hostname` через `adb forward` → `https://example.com`
+  отвечает 200 за 0,34 с.
+* **VPN**: tun0 `10.10.10.10/32` поднимается, браузер открывает сайты, в приложении
+  счётчики растут (58 соединений, 34 КБ вверх / 41 КБ вниз), лог показывает
+  `VPN включён: tun → SOCKS5 127.0.0.1:1080`.
+* Остановка VPN убирает tun0 и возвращает сеть — проверено.
+
+Что ломалось на первом запуске и как вылечено (чтобы не наступить снова):
+
+| Симптом | Причина |
+|---|---|
+| `No assemblies found in .../.__override__` | Fast Deployment: Debug-APK был «оболочкой», сборки доливала IDE. `EmbedAssembliesIntoApk=true` |
+| `SecurityException` при старте FGS | targetSdk 35 требует `FOREGROUND_SERVICE_SYSTEM_EXEMPTED` **и** одно из exact-alarm разрешений. У ByeByeDPI targetSdk 34, поэтому им хватает одного |
+| SIGSEGV в `hev_task_new` | `hev_socks5_tunnel_init` нельзя звать без `hev_task_system_init` + `lwip_init`. Правильная точка входа одна — `hev_socks5_tunnel_main_from_str` |
+| SOCKS: `host unreachable` по имени, по IP работает | `TcpClient.BeginConnect(host, …)` шёл в IPv6 первым и висел до таймаута ОС. Теперь имя разбираем сами: IPv4 первым, 6 с на адрес |
+
 ## Чего здесь не будет
 
 * WinDivert и `winws.exe` — это Windows.

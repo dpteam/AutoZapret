@@ -64,6 +64,10 @@ namespace AutoZapret.Android
             // Раз в секунду — свежие счётчики. UI-поток не трогаем: Deliver
             // сам переходит в него через RunOnUiThread.
             _timer = new System.Threading.Timer(delegate { PushState(); }, null, 1000, 1000);
+
+            // Лог сервиса (VPN) показываем в том же окне, что и лог SOCKS5:
+            // иначе «VPN включён» есть только в logcat, а человек видит пусто.
+            ZapretVpnService.LogSink = PushLog;
         }
 
         // --------------------------------------------------------- состояние
@@ -266,7 +270,9 @@ namespace AutoZapret.Android
 
         private void PushState()
         {
-            bool running = _proxy != null && _proxy.IsRunning;
+            Socks5Proxy active = _proxy != null && _proxy.IsRunning ? _proxy : ZapretVpnService.Running;
+
+            bool running = active != null;
             bool vpn = ZapretVpnService.IsRunning;
 
             Org.Json.JSONObject state = new Org.Json.JSONObject();
@@ -280,10 +286,10 @@ namespace AutoZapret.Android
 
             if (running)
             {
-                state.Put("connections", _proxy.Connections);
-                state.Put("active", _proxy.Active);
-                state.Put("bytesUp", _proxy.BytesUp);
-                state.Put("bytesDown", _proxy.BytesDown);
+                state.Put("connections", active.Connections);
+                state.Put("active", active.Active);
+                state.Put("bytesUp", active.BytesUp);
+                state.Put("bytesDown", active.BytesDown);
             }
 
             Deliver(state.ToString());
@@ -317,6 +323,8 @@ namespace AutoZapret.Android
 
         protected override void OnDestroy()
         {
+            ZapretVpnService.LogSink = null;
+
             try { if (_timer != null) _timer.Dispose(); } catch { }
             try { if (_proxy != null) _proxy.Dispose(); } catch { }
 
