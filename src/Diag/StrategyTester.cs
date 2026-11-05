@@ -727,6 +727,7 @@ namespace AutoZapret.Diag
             AutoZapret.Zapret.Own.OwnEngineOptions options = new AutoZapret.Zapret.Own.OwnEngineOptions();
 
             bool useProfiles = false;
+            string strategyId = "";
 
             for (int i = 0; i < args.Length; i++)
             {
@@ -737,6 +738,14 @@ namespace AutoZapret.Diag
                 if (string.Equals(a, "--profiles", StringComparison.OrdinalIgnoreCase))
                 {
                     useProfiles = true;
+                    continue;
+                }
+
+                // --strategy flowseal.general — исполнить стратегию из
+                // strategies.json нашим движком (P10.5)
+                if (string.Equals(a, "--strategy", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    strategyId = args[i + 1];
                     continue;
                 }
 
@@ -859,6 +868,48 @@ namespace AutoZapret.Diag
                 // общий фильтр переехал внутрь профилей: два механизма отбора
                 // одновременно — это два разных ответа на один вопрос
                 options.Filter = null;
+            }
+
+            if (strategyId.Length > 0)
+            {
+                using (ZapretService svc = new ZapretService())
+                {
+                    svc.EnsureStrategies();
+
+                    Strategy strategy = svc.Strategies.Find(strategyId);
+
+                    if (strategy == null)
+                    {
+                        Console.WriteLine("стратегия не найдена: " + strategyId);
+                        return 1;
+                    }
+
+                    if (string.Equals(strategy.Engine, "v2", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Console.WriteLine("стратегии zapret 2 написаны на Lua — своим движком их не исполнить");
+                        return 1;
+                    }
+
+                    Settings settings = Settings.Load();
+
+                    AutoZapret.Zapret.Own.CompatResult compat = AutoZapret.Zapret.Own.WinwsCompat.Parse(
+                        strategy, svc.Engine.BuildPlaceholders(settings.GameFilter));
+
+                    Console.WriteLine("стратегия " + strategy.Id + ": " + compat.Summary());
+
+                    foreach (string line in compat.Detail().Split('\n'))
+                        if (line.Length > 0 && line.IndexOf("не поддержано", StringComparison.Ordinal) >= 0)
+                            Console.WriteLine("  " + line);
+
+                    if (!compat.Ok)
+                    {
+                        Console.WriteLine("из этой стратегии нечего исполнять");
+                        return 1;
+                    }
+
+                    options.Profiles = compat.Profiles;
+                    options.Filter = null;
+                }
             }
 
             if (!AutoZapret.App.Elevation.IsElevated)
@@ -1715,6 +1766,87 @@ namespace AutoZapret.Diag
                 Console.WriteLine();
                 Console.WriteLine("кэш: " + cache + (System.IO.File.Exists(cache) ? " (есть)" : " (нет)"));
                 return 0;
+            }
+        }
+
+        /// <summary>
+        /// --own-compat: какие стратегии winws наш движок сможет исполнить.
+        ///
+        /// Смысл команды — не «сколько у нас фич», а честный ответ на вопрос
+        /// «если человек переключит движок, что изменится». Стратегия, из
+        /// которой выброшена половина опций, должна быть видна как таковая,
+        /// а не всплывать потом в виде «встроенный движок не работает».
+        /// </summary>
+        public static int RunOwnCompat(string[] args)
+        {
+            using (ZapretService svc = new ZapretService())
+            {
+                svc.EnsureStrategies();
+
+                Settings settings = Settings.Load();
+                System.Collections.Generic.Dictionary<string, string> placeholders =
+                    svc.Engine.BuildPlaceholders(settings.GameFilter);
+
+                bool verbose = false;
+                foreach (string a in args)
+                    if (string.Equals(a, "--verbose", StringComparison.OrdinalIgnoreCase)) verbose = true;
+
+                System.Text.StringBuilder report = new System.Text.StringBuilder();
+
+                report.AppendLine("== совместимость стратегий со своим движком ==");
+
+                int usable = 0, total = 0;
+
+                foreach (Strategy strategy in svc.Strategies.All)
+                {
+                    if (string.Equals(strategy.Engine, "v2", StringComparison.OrdinalIgnoreCase))
+                    {
+                        report.AppendLine("  " + strategy.Id.PadRight(34) + "zapret 2 (Lua) — не исполняется");
+                        continue;
+                    }
+
+                    total++;
+
+                    AutoZapret.Zapret.Own.CompatResult compat =
+                        AutoZapret.Zapret.Own.WinwsCompat.Parse(strategy, placeholders);
+
+                    if (compat.Ok) usable++;
+
+                    report.AppendLine("  " + strategy.Id.PadRight(34) + compat.Summary());
+
+                    // неподдержанное — только для тех, кто спросил именно про них
+                    if (verbose)
+                    {
+                        foreach (string line in compat.Detail().Split('\n'))
+                            if (line.Length > 0 && !line.StartsWith("профилей", StringComparison.Ordinal))
+                                report.AppendLine("      " + line);
+                    }
+                }
+
+                report.AppendLine();
+                report.AppendLine("исполнимых стратегий: " + usable + " из " + total);
+                report.AppendLine("подробности: --own-compat --verbose");
+
+                // Отчёт в файл, а не только в консоль: на русской Windows
+                // консоль отдаёт OEM-байты, и кириллица превращается в мусор.
+                // Файл в UTF-8 читается одинаково везде.
+                string path = System.IO.Path.Combine(Paths.BaseDir, "own-compat.txt");
+
+                try
+                {
+                    System.IO.File.WriteAllText(path, report.ToString(),
+                        new System.Text.UTF8Encoding(false));
+
+                    Console.WriteLine("отчёт: " + path);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn("OWN", "отчёт о совместимости: " + ex.Message);
+                }
+
+                Console.Write(report.ToString());
+
+                return usable > 0 ? 0 : 1;
             }
         }
 

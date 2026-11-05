@@ -313,5 +313,8 @@
   "Профили, как у zapret": "Profiles, like zapret",
   "Отдельная техника для Google и Discord, выбранная выше — для остального. То, что пробивает Google, не обязано пробивать Discord. Работает только вместе с «Только свои цели»": "A separate technique for Google and Discord; the one chosen above is used for everything else. What gets through Google does not have to get through Discord. Works only together with \"Only my targets\"",
   "Сначала включите «Только свои цели»": "Enable \"Only my targets\" first",
-  "Как заставить DPI выбросить фейк, а получателя — не принять его. Работает только с техниками fake и fakedsplit": "How to make the DPI drop the fake while the receiver does not accept it. Works only with the fake and fakedsplit techniques"
+  "Как заставить DPI выбросить фейк, а получателя — не принять его. Работает только с техниками fake и fakedsplit": "How to make the DPI drop the fake while the receiver does not accept it. Works only with the fake and fakedsplit techniques",
+  "Или взять готовую стратегию": "Or use a ready strategy",
+  "Исполнить стратегию из списка (той же, что у zapret) своим движком. Выбранная стратегия отменяет настройки техники выше — это те же правила, другой исполнитель": "Run a strategy from the list (the same ones zapret uses) with our own engine. The selected strategy overrides the technique settings above - same rules, different executor",
+  "— своя техника —": "- own technique -"
 }

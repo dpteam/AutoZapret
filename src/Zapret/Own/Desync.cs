@@ -83,6 +83,25 @@ namespace AutoZapret.Zapret.Own
         public bool DataNoAck;
 
         /// <summary>
+        /// Префиксные техники: пакеты, которые уходят ДО основной. `fake` —
+        /// подставной ClientHello, `syndata` — ClientHello внутри SYN.
+        ///
+        /// Так в конфигах winws записывается цепочка `fake,multisplit`: сначала
+        /// фейк, потом основная техника. Отдельный список, а не флаг, потому
+        /// что цепочка бывает длиннее двух и порядок в ней значим.
+        /// </summary>
+        public List<Technique> Prefix = new List<Technique>();
+
+        /// <summary>
+        /// `--dpi-desync-any-protocol`: трогать не только TLS.
+        ///
+        /// По умолчанию движок ищет ClientHello и ничего больше не касается —
+        /// это защита от «сломал весь интернет». С этим флагом desync
+        /// применяется к любому первому пакету с данными, как у winws.
+        /// </summary>
+        public bool AnyProtocol;
+
+        /// <summary>
         /// Насколько перекрыть куски (seqovl). Второй кусок уходит с seq,
         /// сдвинутым назад: получатель считает это повтором, а DPI видит
         /// перемешанный поток. 0 — без перекрытия.
@@ -100,20 +119,27 @@ namespace AutoZapret.Zapret.Own
 
         public string Describe()
         {
+            string prefix = PrefixText();
+            string fooling = FoolingText();
+
             switch (Kind)
             {
-                case Technique.Split: return "split pos=" + Position;
-                case Technique.MultiSplit: return "multisplit pos=" + string.Join(",", Positions.ToArray());
-                case Technique.MultiDisorder: return "multidisorder pos=" + string.Join(",", Positions.ToArray());
-                case Technique.HostFakeSplit: return "hostfakesplit overlap=" + Overlap;
-                case Technique.SynData: return "syndata";
-                case Technique.Oob: return "oob";
-                case Technique.WindowSize: return "wsize";
+                case Technique.Split: return prefix + "split pos=" + Position;
+                case Technique.MultiSplit: return prefix + "multisplit pos=" + string.Join(",", Positions.ToArray());
+                case Technique.MultiDisorder: return prefix + "multidisorder pos=" + string.Join(",", Positions.ToArray());
+                case Technique.HostFakeSplit: return prefix + "hostfakesplit overlap=" + Overlap;
+                case Technique.SynData: return prefix + "syndata";
+                case Technique.Oob: return prefix + "oob";
+                case Technique.WindowSize: return prefix + "wsize";
                 case Technique.UdpLen: return "udplen";
                 case Technique.Fake:
-                    return "fake seq=" + FakeSeqOffset + " x" + Repeats + FoolingText();
+                    return prefix + "fake seq=" + FakeSeqOffset + " x" + Repeats + fooling;
                 case Technique.FakeSplit:
-                    return "fakedsplit pos=" + Position + " seq=" + FakeSeqOffset + FoolingText();
+                    return prefix + "fakedsplit pos=" + Position + " seq=" + FakeSeqOffset + fooling;
+                case Technique.Off:
+                    // только префикс: `fake` без основной техники — так выглядит
+                    // конфиг, где desync состоит из одного фейка
+                    return prefix.Length > 0 ? prefix.TrimEnd('+') + fooling : "выключено";
                 default: return "выключено";
             }
         }
@@ -129,6 +155,19 @@ namespace AutoZapret.Zapret.Own
             if (DataNoAck) parts.Add("datanoack");
 
             return parts.Count == 0 ? "" : " " + string.Join(",", parts.ToArray());
+        }
+
+        /// <summary>Префиксные техники строкой: «fake+» перед основной.</summary>
+        public string PrefixText()
+        {
+            if (Prefix == null || Prefix.Count == 0) return "";
+
+            List<string> parts = new List<string>();
+
+            foreach (Technique prefix in Prefix)
+                parts.Add(prefix == Technique.Fake ? "fake" : prefix == Technique.SynData ? "syndata" : prefix.ToString());
+
+            return string.Join("+", parts.ToArray()) + "+";
         }
     }
 
@@ -210,8 +249,34 @@ namespace AutoZapret.Zapret.Own
             error = "";
 
             if (tcp == null || options == null) { error = "нет пакета"; return result; }
-            if (options.Kind == Technique.Off) return result;
             if (!tcp.HasPayload) { error = "нет данных"; return result; }
+
+            // Префиксные техники — ДО основной. `fake,multisplit` из конфигов
+            // winws разворачивается именно так.
+            if (options.Prefix != null)
+            {
+                foreach (Technique prefix in options.Prefix)
+                {
+                    if (prefix == Technique.Fake)
+                    {
+                        if (!AddFake(tcp, options, result, error)) return new List<Outgoing>();
+                    }
+                    else if (prefix == Technique.SynData)
+                    {
+                        if (!AddSynData(tcp, result, error)) return new List<Outgoing>();
+                    }
+                }
+            }
+
+            if (options.Kind == Technique.Off)
+            {
+                // Только префикс (например, один `fake`): после фейка настоящий
+                // пакет уходит целиком, как у winws.
+                if (result.Count == 0) return result;
+
+                result.Add(Segment(tcp, 0, tcp.PayloadLength, 0, "настоящий"));
+                return result;
+            }
 
             switch (options.Kind)
             {
@@ -267,7 +332,8 @@ namespace AutoZapret.Zapret.Own
                 }
 
                 case Technique.Fake:
-                    if (!AddFake(tcp, options, result, error)) return new List<Outgoing>();
+                    if (!HasPrefix(options, Technique.Fake) &&
+                        !AddFake(tcp, options, result, error)) return new List<Outgoing>();
 
                     // после фейка настоящий уходит целиком
                     result.Add(Segment(tcp, 0, tcp.PayloadLength, 0, "настоящий"));
@@ -275,7 +341,10 @@ namespace AutoZapret.Zapret.Own
 
                 case Technique.FakeSplit:
                 {
-                    if (!AddFake(tcp, options, result, error)) return new List<Outgoing>();
+                    // fake уже мог уйти префиксом (конфиг `fake,fakedsplit`):
+                    // второй раз тот же фейк не нужен
+                    if (!HasPrefix(options, Technique.Fake) &&
+                        !AddFake(tcp, options, result, error)) return new List<Outgoing>();
 
                     int pos = Clamp(options.Position, tcp.PayloadLength);
 
@@ -286,17 +355,8 @@ namespace AutoZapret.Zapret.Own
 
                 case Technique.SynData:
                 {
-                    // ClientHello внутри SYN. Настоящий сервер такой пакет
-                    // отбросит (данные в SYN не по стандарту), а DPI часто
-                    // не разбирает payload у SYN вовсе — и «теряет» начало
-                    // соединения. Затем настоящий пакет уходит как обычно.
-                    byte[] payload = tcp.PayloadCopy();
-                    if (payload.Length == 0) { error = "нет данных"; break; }
+                    if (!AddSynData(tcp, result, error)) return new List<Outgoing>();
 
-                    int synLen;
-                    byte[] syn = tcp.BuildSynWithPayload(payload, unchecked(tcp.Seq - 1), out synLen);
-
-                    result.Add(new Outgoing { Data = syn, Length = synLen, Note = "SYN с данными" });
                     result.Add(Segment(tcp, 0, tcp.PayloadLength, 0, "настоящий"));
                     break;
                 }
@@ -380,6 +440,28 @@ namespace AutoZapret.Zapret.Own
             if (result.Count == 0) error = "техника ничего не дала";
 
             return result;
+        }
+
+        private static bool HasPrefix(TechniqueOptions options, Technique kind)
+        {
+            if (options == null || options.Prefix == null) return false;
+
+            return options.Prefix.Contains(kind);
+        }
+
+        private static bool AddSynData(TcpPacket tcp, List<Outgoing> result, string errorOut)
+        {
+            // ClientHello внутри SYN. Настоящий сервер такой пакет отбросит
+            // (данные в SYN не по стандарту), а DPI часто не разбирает payload
+            // у SYN вовсе — и «теряет» начало соединения.
+            byte[] payload = tcp.PayloadCopy();
+            if (payload.Length == 0) return false;
+
+            int synLen;
+            byte[] syn = tcp.BuildSynWithPayload(payload, unchecked(tcp.Seq - 1), out synLen);
+
+            result.Add(new Outgoing { Data = syn, Length = synLen, Note = "SYN с данными" });
+            return true;
         }
 
         private static bool AddFake(TcpPacket tcp, TechniqueOptions options,

@@ -156,6 +156,37 @@ namespace AutoZapret.Zapret.Own
             }
         }
 
+        /// <summary>Добавить домен в исключения (для профилей и `--hostlist-exclude-domains`).</summary>
+        public void AddExcludeHost(string domain)
+        {
+            string d = NormalizeDomain(domain);
+            if (d.Length == 0) return;
+
+            if (!_hostsExclude.Contains(d)) _hostsExclude.Add(d);
+        }
+
+        /// <summary>
+        /// Загрузить ipset-файл. Отдельный вход от LoadHosts: там адреса
+        /// намеренно отбрасываются, а здесь они и есть содержимое.
+        /// </summary>
+        public void LoadIpSet(string path, bool exclude)
+        {
+            IpRangeSet set = IpRangeSet.Load(path, out _);
+
+            if (set == null || set.Count == 0) return;
+
+            if (exclude)
+            {
+                if (_ipsetExclude == null) _ipsetExclude = new IpRangeSet();
+                _ipsetExclude.CopyFrom(set);
+            }
+            else
+            {
+                if (_ipset == null) _ipset = new IpRangeSet();
+                _ipset.CopyFrom(set);
+            }
+        }
+
         private static string NormalizeDomain(string value)
         {
             string d = value.Trim().TrimEnd('.').ToLowerInvariant();

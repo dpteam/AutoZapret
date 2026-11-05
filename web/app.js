@@ -172,6 +172,7 @@
             send("browser.doh.get");
             send("sysdns.get");
             send("own.state");
+            send("own.compat");
         }
         if (name === "settings") {
             send("service.get");
@@ -735,6 +736,28 @@
         }
     }
 
+    function renderOwnCompat(msg) {
+        var select = document.getElementById("own-strategy");
+        if (!select) return;
+
+        var strategies = msg.strategies || [];
+
+        // Оставляем первым пунктом «своя техника» и перестраиваем остальное.
+        // Неподдерживаемые показываем тоже, но с пометкой: человек должен
+        // видеть, почему стратегии из списка нет, а не гадать.
+        select.innerHTML = '<option value="">' + t("— своя техника —") + "</option>";
+
+        strategies.forEach(function (s) {
+            var option = document.createElement("option");
+            option.value = s.id;
+            option.textContent = s.ok
+                ? s.id + " — " + s.summary
+                : s.id + " — не исполнить (" + s.summary + ")";
+            option.disabled = !s.ok;
+            select.appendChild(option);
+        });
+    }
+
     function initSettings() {
         bindService();
 
@@ -969,6 +992,7 @@
 
             send("own.start", {
                 tech: document.getElementById("own-tech").value,
+                strategy: (document.getElementById("own-strategy") || { value: "" }).value,
                 position: parseInt(document.getElementById("own-position").value, 10) || 1,
                 repeats: parseInt(document.getElementById("own-repeats").value, 10) || 6,
                 overlap: parseInt(document.getElementById("own-overlap").value, 10) || 0,
@@ -2883,6 +2907,10 @@
 
             case "own.compare":
                 renderCompare(msg);
+                break;
+
+            case "own.compat":
+                renderOwnCompat(msg);
                 break;
 
             case "service":

@@ -130,6 +130,9 @@ namespace AutoZapret.App
                 Section("профили своего движка");
                 TestOwnProfiles();
 
+                Section("совместимость со стратегиями winws");
+                TestWinwsCompat();
+
                 Section("служба");
                 TestServiceManager();
 
@@ -4562,6 +4565,113 @@ namespace AutoZapret.App
                 expr);
 
             try { System.IO.Directory.Delete(dir, true); } catch { }
+        }
+
+        /// <summary>
+        /// Разбор конфигов winws в нашу модель (P10.5).
+        ///
+        /// Проверяем на НАСТОЯЩЕЙ стратегии из assets, а не на выдуманной:
+        /// выдуманная совпадёт с тем, что я сам придумал, и ничего не докажет.
+        /// Главное здесь — не «сколько профилей разобралось», а что
+        /// неподдержанное названо, а не выброшено молча.
+        /// </summary>
+        private static void TestWinwsCompat()
+        {
+            AutoZapret.Zapret.StrategyStore store;
+
+            using (AutoZapret.Zapret.ZapretService svc = new AutoZapret.Zapret.ZapretService())
+            {
+                svc.EnsureStrategies();
+                store = svc.Strategies;
+            }
+
+            AutoZapret.Zapret.Strategy strategy = store.Find("flowseal.general");
+
+            if (strategy == null)
+            {
+                Skip("совместимость: стратегия general", "strategies.json не загрузился");
+                return;
+            }
+
+            // плейсхолдеры как в бою: ${BIN}, ${LISTS} и прочее
+            Dictionary<string, string> placeholders = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                { "BIN", Paths.EngineBinDir },
+                { "LISTS", Paths.EngineListsDir },
+                { "FAKES", Paths.FakesDir },
+                { "LUA", System.IO.Path.Combine(Paths.EngineDir, "lua") },
+                { "GAME_TCP", "12" },
+                { "GAME_UDP", "12" }
+            };
+
+            AutoZapret.Zapret.Own.CompatResult compat =
+                AutoZapret.Zapret.Own.WinwsCompat.Parse(strategy, placeholders);
+
+            Check("совместимость: профили разобраны",
+                compat.ProfilesUsable >= strategy.Profiles.Count - 1,
+                compat.Summary());
+
+            Check("совместимость: wf-tcp прочитан",
+                compat.WfTcp.IndexOf("443", StringComparison.Ordinal) >= 0,
+                compat.WfTcp.Length > 0 ? compat.WfTcp : "пусто");
+
+            // порты discord обязаны быть: без них профиль ловит только 443
+            AutoZapret.Zapret.Own.OwnProfile discord = null;
+
+            foreach (AutoZapret.Zapret.Own.OwnProfile p in compat.Profiles.All)
+                if (p.TcpPorts.Contains(2053) && p.TcpPorts.Contains(8443)) { discord = p; break; }
+
+            Check("совместимость: профиль с портами discord найден", discord != null,
+                discord == null ? "нет" : discord.Name);
+
+            if (discord != null)
+            {
+                Check("совместимость: порты discord разобраны",
+                    discord.TcpPorts.Contains(2053) && discord.TcpPorts.Contains(8443),
+                    string.Join(",", discord.TcpPorts.ConvertAll(p => p.ToString()).ToArray()));
+
+                Check("совместимость: у discord есть цели",
+                    discord.Filter != null && discord.Filter.HasLimits,
+                    discord.Filter == null ? "фильтра нет" : discord.Filter.Describe());
+            }
+
+            // цепочка `fake,multisplit` обязана стать префиксом, а не потеряться
+            bool chain = false;
+            bool anyProtocol = false;
+
+            foreach (AutoZapret.Zapret.Own.OwnProfile p in compat.Profiles.All)
+            {
+                if (p.Technique == null) continue;
+                if (p.Technique.Prefix != null && p.Technique.Prefix.Count > 0) chain = true;
+                if (p.Technique.AnyProtocol) anyProtocol = true;
+            }
+
+            Check("совместимость: цепочка fake+X разобрана", chain, "префикс есть");
+
+            // `--dpi-desync-any-protocol` есть в конфигах — обязан доехать до модели
+            Check("совместимость: any-protocol разобран", anyProtocol, "ok");
+
+            // L7-фильтр: единственное, что мы честно не умеем. Профиль без
+            // списков целей выбрасывается — и это должно быть ВИДНО в отчёте.
+            Check("совместимость: L7 назван неподдержанным",
+                compat.Unsupported.Exists(u => u.StartsWith("--filter-l7", StringComparison.Ordinal)),
+                compat.Unsupported.Count + " опций");
+
+            Check("совместимость: выброшенный профиль назван",
+                compat.Dropped.Count == strategy.Profiles.Count - compat.ProfilesUsable,
+                compat.Dropped.Count + " шт.");
+
+            // zapret2 — Lua, и это должно быть отказом, а не пустым результатом
+            AutoZapret.Zapret.Strategy v2 = store.Find("zapret2.general");
+
+            if (v2 != null)
+            {
+                AutoZapret.Zapret.Own.CompatResult lua =
+                    AutoZapret.Zapret.Own.WinwsCompat.Parse(v2, placeholders);
+
+                Check("совместимость: v2 (Lua) не исполним", !lua.Ok,
+                    lua.Summary());
+            }
         }
 
         private static void TestSniffResult()

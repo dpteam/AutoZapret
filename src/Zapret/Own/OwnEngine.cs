@@ -243,18 +243,20 @@ namespace AutoZapret.Zapret.Own
 
             if (tcp == null || !tcp.HasPayload) return false;
 
-            // Нас интересует только начало TLS-рукопожатия: 0x16 0x03
-            if (packet[tcp.PayloadOffset] != 0x16) return false;
-            if (tcp.PayloadLength < 5) return false;
-            if (packet[tcp.PayloadOffset + 1] != 0x03) return false;
-
-            _stats.ClientHellos++;
-
-            string sni = Payloads.PayloadValidator.ExtractSni(
-                Payload(tcp), Payloads.PayloadKind.TlsClientHello);
-
             // Какую технику применять: решает профиль, а не глобальная настройка.
             // Первый подходящий выигрывает — порядок профилей и есть приоритет.
+            //
+            // Профиль выбирается ДО проверки «это TLS?»: у профиля может стоять
+            // `--dpi-desync-any-protocol`, и тогда решение зависит от профиля,
+            // а не от наших догадок о содержимом.
+            bool isTls = packet[tcp.PayloadOffset] == 0x16 &&
+                         tcp.PayloadLength >= 5 &&
+                         packet[tcp.PayloadOffset + 1] == 0x03;
+
+            string sni = isTls
+                ? Payloads.PayloadValidator.ExtractSni(Payload(tcp), Payloads.PayloadKind.TlsClientHello)
+                : "";
+
             TechniqueOptions technique = _options.Technique;
 
             if (_options.Profiles != null && _options.Profiles.Count > 0)
@@ -268,19 +270,32 @@ namespace AutoZapret.Zapret.Own
                     return false;   // не наш трафик — уходит как есть
                 }
 
+                // Не TLS и профиль этого не разрешал: трогать нечего. Без этой
+                // проверки мы бы «резали» случайные данные и ломали соединения,
+                // которые работали.
+                if (!isTls && (profile.Technique == null || !profile.Technique.AnyProtocol))
+                {
+                    _stats.Skipped++;
+                    return false;
+                }
+
                 profile.Applied++;
                 technique = profile.Technique;
             }
-            else if (_options.Filter != null)
+            else
             {
-                // Старый режим: одна техника + общий фильтр. Оставлен, потому
-                // что им пользуется сравнение техник и CLI без профилей.
-                if (!_options.Filter.ShouldDesync(sni, tcp.DestinationAddress()))
+                // Без профилей — только TLS: это режим проверки техники.
+                if (!isTls) return false;
+
+                if (_options.Filter != null &&
+                    !_options.Filter.ShouldDesync(sni, tcp.DestinationAddress()))
                 {
                     _stats.Skipped++;
                     return false;
                 }
             }
+
+            _stats.ClientHellos++;
 
             if (technique == null) return false;
 

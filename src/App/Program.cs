@@ -73,6 +73,7 @@ namespace AutoZapret.App
             if (HasFlag(args, "--preflight")) return Diag.DiagCommand.RunPreflight(args);
             if (HasFlag(args, "--netcap")) return Diag.DiagCommand.RunNetCap(args);
         if (HasFlag(args, "--stages")) return Diag.DiagCommand.RunStages(args);
+        if (HasFlag(args, "--own-compat")) return Diag.DiagCommand.RunOwnCompat(args);
         if (HasFlag(args, "--own")) return Diag.DiagCommand.RunOwn(args);
         if (HasFlag(args, "--browser-doh")) return Diag.DiagCommand.RunBrowserDoh(args);
         if (HasFlag(args, "--sysdns")) return Diag.DiagCommand.RunSystemDns(args);

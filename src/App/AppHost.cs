@@ -464,6 +464,10 @@ namespace AutoZapret.App
 
             bridge.Register("own.stop", msg => StopOwnEngine());
 
+            // Совместимость стратегий со своим движком (P10.5): список того,
+            // что мы реально сможем исполнить, и честная причина для прочего.
+            bridge.Register("own.compat", msg => SendOwnCompat());
+
             // Сравнение техник: прогнать все по очереди и показать, какая
             // реально пробивает DPI. Как подбор стратегий, но для своего движка.
             bridge.Register("own.compare", msg =>
@@ -2455,6 +2459,56 @@ namespace AutoZapret.App
             }
         }
 
+        /// <summary>
+        /// Список стратегий v1 с вердиктом «исполнима / нет».
+        ///
+        /// Считается один раз и кэшируется: разбор 22 стратегий читает
+        /// несколько списков с диска, а открытие экрана должно быть мгновенным.
+        /// </summary>
+        private void SendOwnCompat()
+        {
+            List<Dictionary<string, object>> list = new List<Dictionary<string, object>>();
+
+            try
+            {
+                lock (_ownCompatGate)
+                {
+                    if (_ownCompatCache == null)
+                    {
+                        _ownCompatCache = new List<Dictionary<string, object>>();
+
+                        System.Collections.Generic.Dictionary<string, string> placeholders =
+                            _zapret.Engine.BuildPlaceholders(_settings.GameFilter);
+
+                        foreach (Zapret.Strategy strategy in _zapret.Strategies.ByEngine("v1"))
+                        {
+                            Zapret.Own.CompatResult compat =
+                                Zapret.Own.WinwsCompat.Parse(strategy, placeholders);
+
+                            _ownCompatCache.Add(new Dictionary<string, object>
+                            {
+                                { "id", strategy.Id },
+                                { "name", strategy.Name },
+                                { "ok", compat.Ok },
+                                { "summary", compat.Summary() }
+                            });
+                        }
+                    }
+
+                    list = _ownCompatCache;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("OWN", "совместимость стратегий: " + ex.Message);
+            }
+
+            _form.Bridge.Send(WebBridge.Msg("own.compat", "strategies", list));
+        }
+
+        private readonly object _ownCompatGate = new object();
+        private List<Dictionary<string, object>> _ownCompatCache;
+
         private void SendOwnState()
         {
             Zapret.Own.OwnEngineStats stats;
@@ -2524,6 +2578,50 @@ namespace AutoZapret.App
 
             Zapret.Own.OwnFilter filter = useFilter ? Zapret.Own.OwnFilter.FromEngineLists() : null;
 
+            // Стратегия из strategies.json: исполнять её нашим движком.
+            // Это P10.5 — те же стратегии, другой движок, чтобы «встроенный /
+            // zapret» были сравнимы, а не просто разными наборами.
+            string strategyId = Json.GetString(msg, "strategy", "");
+            Zapret.Own.CompatResult compat = null;
+
+            if (strategyId.Length > 0)
+            {
+                Zapret.Strategy strategy = _zapret.Strategies.Find(strategyId);
+
+                if (strategy == null)
+                {
+                    _form.Bridge.Send(WebBridge.Msg("own.state",
+                        "running", false,
+                        "error", "стратегия не найдена: " + strategyId));
+                    return;
+                }
+
+                if (string.Equals(strategy.Engine, "v2", StringComparison.OrdinalIgnoreCase))
+                {
+                    _form.Bridge.Send(WebBridge.Msg("own.state",
+                        "running", false,
+                        "error", "стратегии zapret 2 написаны на Lua — своим движком их не исполнить"));
+                    return;
+                }
+
+                compat = Zapret.Own.WinwsCompat.Parse(
+                    strategy, _zapret.Engine.BuildPlaceholders(_settings.GameFilter));
+
+                Log.Info("OWN", "стратегия " + strategyId + ": " + compat.Summary());
+
+                foreach (string line in compat.Detail().Split('\n'))
+                    if (line.Length > 0 && line.IndexOf("не поддержано", StringComparison.Ordinal) >= 0)
+                        Log.Warn("OWN", line);
+
+                if (!compat.Ok)
+                {
+                    _form.Bridge.Send(WebBridge.Msg("own.state",
+                        "running", false,
+                        "error", "из стратегии нечего исполнять: " + compat.Summary()));
+                    return;
+                }
+            }
+
             // Профили: разные техники для разных целей, как `--new` у winws.
             // Включаются по умолчанию — это не отдельный режим, а уточнение
             // уже выбранной техники: для «остального» остаётся ровно она.
@@ -2538,9 +2636,11 @@ namespace AutoZapret.App
                 // строятся заметное время, а в режиме проверки техники они
                 // наоборот мешают — надо видеть весь трафик.
                 Filter = useProfiles ? null : filter,
-                Profiles = useProfiles
-                    ? Zapret.Own.OwnProfileSet.ZapretLike(technique, filter)
-                    : null
+                Profiles = compat != null
+                    ? compat.Profiles
+                    : useProfiles
+                        ? Zapret.Own.OwnProfileSet.ZapretLike(technique, filter)
+                        : null
             };
 
             if (options.Filter != null && options.Filter.HasLimits)
