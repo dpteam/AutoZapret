@@ -43,33 +43,50 @@ namespace AutoZapret.Proxy
         private static Step StepDirectTls(int dc, bool verbose)
         {
             Step step = new Step { Name = "TCP+TLS до Telegram" };
-            List<string> domains = DcTable.WsDomains(dc, false);
-            string domain = domains[0];
 
-            try
+            // Тот же порядок, что у реального подключения: иначе проверка
+            // говорит «ок» по первому домену, а прокси в работе ходит через
+            // другой — и «проверка прошла, а не работает» снова.
+            List<string> domains = UpstreamRoutes.Order(dc, false, DcTable.WsDomains(dc, false));
+
+            string error = "";
+
+            foreach (string domain in domains)
             {
-                using (TcpClient client = new TcpClient())
+                try
                 {
-                    IAsyncResult ar = client.BeginConnect(domain, 443, null, null);
-                    if (!ar.AsyncWaitHandle.WaitOne(8000))
+                    using (TcpClient client = new TcpClient())
                     {
-                        step.Detail = "таймаут TCP";
-                        return step;
-                    }
-                    client.EndConnect(ar);
+                        IAsyncResult ar = client.BeginConnect(domain, 443, null, null);
+                        if (!ar.AsyncWaitHandle.WaitOne(8000))
+                        {
+                            error = domain + ": таймаут TCP";
+                            UpstreamRoutes.Fail(domain, true);
+                            continue;
+                        }
+                        client.EndConnect(ar);
 
-                    using (SslStream ssl = new SslStream(client.GetStream(), false, delegate { return true; }))
-                    {
-                        ssl.AuthenticateAsClient(domain);
-                        step.Ok = true;
-                        step.Detail = domain + " — " + ssl.SslProtocol;
+                        using (SslStream ssl = new SslStream(client.GetStream(), false, delegate { return true; }))
+                        {
+                            ssl.AuthenticateAsClient(domain);
+
+                            step.Ok = true;
+                            step.Detail = domain + " — " + ssl.SslProtocol;
+
+                            UpstreamRoutes.Remember(dc, false, domain);
+                        }
                     }
+
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    error = domain + ": " + Short(ex);
+                    UpstreamRoutes.Fail(domain, false);
                 }
             }
-            catch (Exception ex)
-            {
-                step.Detail = domain + ": " + Short(ex);
-            }
+
+            if (!step.Ok) step.Detail = error;
 
             if (verbose) Log.Info("PROXY", "шаг 1: " + (step.Ok ? "ok" : "FAIL") + " " + step.Detail);
             return step;

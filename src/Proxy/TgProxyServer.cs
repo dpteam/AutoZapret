@@ -163,6 +163,10 @@ namespace AutoZapret.Proxy
 
             Log.Info("PROXY", "остановка");
 
+            // Память о маршрутах сбрасываем вместе с остановкой: сеть могла
+            // смениться, а «запомненный рабочий домен» — свойство прошлой сети.
+            UpstreamRoutes.Reset();
+
             lock (_gate)
             {
                 foreach (TcpListener listener in _listeners)
@@ -355,13 +359,25 @@ namespace AutoZapret.Proxy
             tls = null;
             error = null;
 
-            List<string> domains = DcTable.WsDomains(dc, isMedia);
+            List<string> domains = UpstreamRoutes.Order(dc, isMedia, DcTable.WsDomains(dc, isMedia));
             string path = DcTable.PathFor(isTest);
+
+            DateTime started = DateTime.UtcNow;
 
             foreach (string domain in domains)
             {
+                // Общий бюджет на перебор: без него «соединение…» в Telegram
+                // висит столько, сколько доменов × таймаут. 25 секунд — как в
+                // эталоне, после этого честно говорим, что не вышло.
+                if ((DateTime.UtcNow - started).TotalSeconds > RoutesBudgetSec)
+                {
+                    error = "перебор маршрутов занял больше " + RoutesBudgetSec + " с";
+                    break;
+                }
+
                 TcpClient candidate = null;
                 SslStream ssl = null;
+                bool connectStage = true;
 
                 try
                 {
@@ -372,10 +388,13 @@ namespace AutoZapret.Proxy
                     if (!ar.AsyncWaitHandle.WaitOne(ConnectTimeoutMs))
                     {
                         error = domain + ": таймаут TCP";
+                        UpstreamRoutes.Fail(domain, true);
                         candidate.Close();
                         continue;
                     }
                     candidate.EndConnect(ar);
+
+                    connectStage = false;
 
                     ssl = new SslStream(candidate.GetStream(), false, delegate { return true; });
                     ssl.AuthenticateAsClient(domain);
@@ -386,6 +405,7 @@ namespace AutoZapret.Proxy
                     if (ws == null)
                     {
                         error = domain + ": " + wsError;
+                        UpstreamRoutes.Fail(domain, false);
                         try { ssl.Dispose(); } catch { }
                         candidate.Close();
                         continue;
@@ -393,12 +413,17 @@ namespace AutoZapret.Proxy
 
                     tcp = candidate;
                     tls = ssl;
+
+                    UpstreamRoutes.Remember(dc, isMedia, domain);
+
                     Log.Debug("PROXY", "подключён к " + domain + path);
                     return ws;
                 }
                 catch (Exception ex)
                 {
                     error = domain + ": " + ex.GetType().Name;
+                    UpstreamRoutes.Fail(domain, connectStage);
+
                     if (ssl != null) { try { ssl.Dispose(); } catch { } }
                     if (candidate != null) { try { candidate.Close(); } catch { } }
                 }
@@ -406,6 +431,9 @@ namespace AutoZapret.Proxy
 
             return null;
         }
+
+        /// <summary>Сколько секунд тратим на перебор всех шлюзов одного соединения.</summary>
+        private const int RoutesBudgetSec = 25;
 
         // ----------------------------------------------------------------- bridge
 

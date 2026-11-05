@@ -91,6 +91,9 @@ namespace AutoZapret.App
                 Section("прокси: крипто");
                 TestProxyCrypto();
 
+                Section("прокси: маршруты до Telegram");
+                TestProxyRoutes();
+
                 Section("обновления");
                 TestUpdates();
 
@@ -5481,6 +5484,103 @@ namespace AutoZapret.App
             {
                 Check("проверка драйвера найдена", false, "не найдена");
             }
+        }
+
+        /// <summary>
+        /// Маршруты до Telegram: память о рабочем, карантин упавшего, удары по хосту.
+        ///
+        /// Идея из refs/_Add15/telegram_access.py (слой «Доступ»): без памяти
+        /// каждое новое соединение начинает с первого домена, и если он мёртв,
+        /// платит таймаут заново — Telegram показывает «соединение…» вместо
+        /// сообщений. Проверяем правила, а не сеть: сеть в selftest бывает
+        /// любой, а правила должны работать всегда.
+        /// </summary>
+        private static void TestProxyRoutes()
+        {
+            AutoZapret.Proxy.UpstreamRoutes.Reset();
+
+            List<string> domains = new List<string> { "kws2.web.telegram.org", "kws2-1.web.telegram.org" };
+
+            // 1) без памяти — исходный порядок
+            List<string> plain = AutoZapret.Proxy.UpstreamRoutes.Order(2, false, domains);
+
+            Check("маршруты: без памяти исходный порядок",
+                plain.Count == 2 && plain[0] == domains[0],
+                string.Join(", ", plain.ToArray()));
+
+            // 2) запомненный рабочий идёт первым
+            AutoZapret.Proxy.UpstreamRoutes.Remember(2, false, "kws2-1.web.telegram.org");
+
+            List<string> ordered = AutoZapret.Proxy.UpstreamRoutes.Order(2, false, domains);
+
+            Check("маршруты: рабочий идёт первым",
+                ordered.Count == 2 && ordered[0] == "kws2-1.web.telegram.org",
+                string.Join(", ", ordered.ToArray()));
+
+            Check("маршруты: запомненный описан",
+                AutoZapret.Proxy.UpstreamRoutes.Describe().IndexOf("kws2-1", StringComparison.Ordinal) >= 0,
+                AutoZapret.Proxy.UpstreamRoutes.Describe());
+
+            // 3) упавший уходит в конец, но не пропадает
+            AutoZapret.Proxy.UpstreamRoutes.Fail("kws2.web.telegram.org", false);
+
+            List<string> afterFail = AutoZapret.Proxy.UpstreamRoutes.Order(2, false, domains);
+
+            Check("маршруты: упавший уходит в конец",
+                afterFail.Count == 2 && afterFail[0] == "kws2-1.web.telegram.org",
+                string.Join(", ", afterFail.ToArray()));
+
+            // 4) отказ TCP убивает только СВОЙ домен, а не соседний вариант
+            AutoZapret.Proxy.UpstreamRoutes.Reset();
+            AutoZapret.Proxy.UpstreamRoutes.Fail("kws2.web.telegram.org", true);
+
+            List<string> connectFail = AutoZapret.Proxy.UpstreamRoutes.Order(2, false, domains);
+
+            Check("маршруты: отказ TCP не убивает соседний вариант",
+                connectFail.Count == 1 && connectFail[0] == "kws2-1.web.telegram.org",
+                string.Join(", ", connectFail.ToArray()));
+
+            // 5) мягкий сбой: один раз пробуем ещё, два — пропускаем
+            AutoZapret.Proxy.UpstreamRoutes.Reset();
+            AutoZapret.Proxy.UpstreamRoutes.Fail("kws2.web.telegram.org", false);
+
+            List<string> soft1 = AutoZapret.Proxy.UpstreamRoutes.Order(2, false, domains);
+            Check("маршруты: один мягкий сбой — ещё пробуем",
+                soft1.Count == 2, soft1.Count + " шт.");
+
+            AutoZapret.Proxy.UpstreamRoutes.Fail("kws2.web.telegram.org", false);
+
+            List<string> soft2 = AutoZapret.Proxy.UpstreamRoutes.Order(2, false, domains);
+            Check("маршруты: два мягких сбоя — домен пропущен",
+                soft2.Count == 1 && soft2[0] == "kws2-1.web.telegram.org",
+                string.Join(", ", soft2.ToArray()));
+
+            // 6) успех снимает и карантин, и удары
+            AutoZapret.Proxy.UpstreamRoutes.Reset();
+            AutoZapret.Proxy.UpstreamRoutes.Fail("kws2.web.telegram.org", true);
+            AutoZapret.Proxy.UpstreamRoutes.Remember(2, false, "kws2.web.telegram.org");
+
+            List<string> recovered = AutoZapret.Proxy.UpstreamRoutes.Order(2, false, domains);
+
+            Check("маршруты: успех снимает карантин",
+                recovered.Count == 2 && recovered[0] == "kws2.web.telegram.org",
+                string.Join(", ", recovered.ToArray()));
+
+            // 7) медиа и обычный — разная память (у них разные домены)
+            AutoZapret.Proxy.UpstreamRoutes.Reset();
+            AutoZapret.Proxy.UpstreamRoutes.Remember(2, true, "kws2-1.web.telegram.org");
+
+            List<string> normal = AutoZapret.Proxy.UpstreamRoutes.Order(2, false, domains);
+
+            Check("маршруты: медиа и обычный не путаются",
+                normal.Count == 2 && normal[0] == "kws2.web.telegram.org",
+                string.Join(", ", normal.ToArray()));
+
+            // 8) пустой список не ломает
+            Check("маршруты: пустой список",
+                AutoZapret.Proxy.UpstreamRoutes.Order(2, false, new List<string>()).Count == 0, "ok");
+
+            AutoZapret.Proxy.UpstreamRoutes.Reset();
         }
 
         private static void TestUpdates()
