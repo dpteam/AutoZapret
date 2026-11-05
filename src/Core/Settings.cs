@@ -142,6 +142,12 @@ namespace AutoZapret.Core
             {
                 s.EngineKind = Json.GetString(engine, "kind", s.EngineKind);
                 s.EngineVersion = Json.GetString(engine, "version", s.EngineVersion);
+
+                // Незнакомое значение (старая версия, правка руками) сводим к v1:
+                // иначе список движков окажется без выбранного пункта, а
+                // переключение начнёт работать «через раз».
+                if (s.EngineKind != "v1" && s.EngineKind != "v2" && s.EngineKind != "own")
+                    s.EngineKind = "v1";
             }
 
             Dictionary<string, object> zapret = Json.GetObject(map, "zapret");

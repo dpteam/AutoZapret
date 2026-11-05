@@ -205,16 +205,162 @@ namespace AutoZapret.Lists
             return System.IO.Path.Combine(Paths.BaseDir, "assets", "hosts", source.CacheFile);
         }
 
+        /// <summary>Каталог кэша скачанных наборов (рядом с данными, не в поставке).</summary>
+        public static string CacheDir
+        {
+            get { return System.IO.Path.Combine(Paths.DataDir, "hosts-cache"); }
+        }
+
+        /// <summary>Полный путь к кэшу набора. Пусто — у набора нет файла.</summary>
+        public static string CachePath(HostsSource source)
+        {
+            if (source == null || source.CacheFile.Length == 0) return "";
+
+            return System.IO.Path.Combine(CacheDir, source.CacheFile);
+        }
+
         /// <summary>
-        /// Скачать источник. null — не получилось.
+        /// Взять набор без сети: кэш → поставка.
         ///
-        /// Проверки как у любых скачанных файлов (AGENTS.md): не HTML, размер в
-        /// разумных пределах, не пустой. hosts-файл — это сотни строк вида
-        /// «IP имя», и HTML-страница ошибки провайдера легко притворится им.
+        /// Почему без сети: применение фиксов должно быть мгновенным и
+        /// работать при заблокированном GitHub — ровно в той ситуации, когда
+        /// hosts и нужен. Свежесть обновляется отдельной кнопкой, осознанно.
+        ///
+        /// Порядок именно такой: кэш — это то, что человек скачал сам, и он
+        /// новее поставки. Поставка — запас на первый запуск и на случай,
+        /// когда скачать нечего.
+        /// </summary>
+        public static string Read(HostsSource source, out string origin)
+        {
+            origin = "";
+
+            if (source == null) return null;
+
+            // Вшитый набор (оптимизированный hosts) — только из поставки:
+            // у него нет сети, из которой он мог бы обновиться.
+            if (source.Bundled)
+            {
+                string bundledText = ReadFile(BundledPath(source));
+
+                if (bundledText == null)
+                {
+                    origin = "нет в поставке";
+                    return null;
+                }
+
+                origin = "поставка " + Stamp(BundledPath(source));
+                return bundledText;
+            }
+
+            string cached = ReadFile(CachePath(source));
+
+            if (cached != null)
+            {
+                origin = "кэш " + Stamp(CachePath(source));
+                return cached;
+            }
+
+            string shipped = ReadFile(BundledPath(source));
+
+            if (shipped != null)
+            {
+                origin = "поставка " + Stamp(BundledPath(source));
+                return shipped;
+            }
+
+            origin = "не скачан";
+            return null;
+        }
+
+        /// <summary>Читает файл набора. null — нет файла или он пустой/битый.</summary>
+        private static string ReadFile(string path)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(path) || !File.Exists(path)) return null;
+
+                string text = File.ReadAllText(path, Encoding.UTF8);
+
+                if (text.Length < 32) return null;
+                if (LooksLikeHtml(text)) return null;
+
+                return text;
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("HOSTS", "чтение " + System.IO.Path.GetFileName(path) + ": " + ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>Дата файла как «05.11.2026» — человеку, не машине.</summary>
+        private static string Stamp(string path)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(path) || !File.Exists(path)) return "?";
+
+                return File.GetLastWriteTime(path).ToString("dd.MM.yyyy");
+            }
+            catch
+            {
+                return "?";
+            }
+        }
+
+        /// <summary>
+        /// Откуда набор возьмётся и насколько он свежий — строка для интерфейса.
+        ///
+        /// Без этого список наборов выглядит одинаково всегда: «Flowseal» и
+        /// «dns.malw.link» без единого признака, скачаны они когда-нибудь или
+        /// нет. Человек нажимает «применить» и не знает, что применит.
+        /// </summary>
+        public static string Describe(HostsSource source, out bool ready)
+        {
+            ready = false;
+
+            if (source == null) return "";
+
+            if (source.Bundled)
+            {
+                string path = BundledPath(source);
+                ready = File.Exists(path);
+
+                return ready ? "в поставке, " + Stamp(path) : "нет в поставке";
+            }
+
+            string cache = CachePath(source);
+
+            if (File.Exists(cache))
+            {
+                ready = true;
+                return "скачан " + Stamp(cache);
+            }
+
+            string shipped = BundledPath(source);
+
+            if (File.Exists(shipped))
+            {
+                ready = true;
+                return "из поставки " + Stamp(shipped) + " — можно обновить";
+            }
+
+            return "не скачан";
+        }
+
+        /// <summary>
+        /// Скачать набор и положить в кэш. Возвращает текст или null.
+        ///
+        /// Кэш пишется только после проверок: иначе HTML-страница провайдера
+        /// сохранится как «hosts», и в следующий раз человек применит её вместо
+        /// набора — при этом без сети и без единого намёка на причину.
         /// </summary>
         public static string Download(HostsSource source, out string error)
         {
             error = "";
+
+            if (source == null) { error = "нет источника"; return null; }
+            if (source.Bundled) { error = "вшитый набор не скачивается"; return null; }
 
             try
             {
@@ -244,6 +390,10 @@ namespace AutoZapret.Lists
                     return null;
                 }
 
+                // запись в кэш — атомарно: битый кэш хуже отсутствующего,
+                // потому что «есть файл» выглядит как «всё в порядке»
+                SaveCache(source, text);
+
                 Log.Info("HOSTS", "источник " + source.Name + " скачан: " + text.Length + " символов");
                 return text;
             }
@@ -252,6 +402,45 @@ namespace AutoZapret.Lists
                 error = ex.GetType().Name + ": " + ex.Message;
                 Log.Warn("HOSTS", "источник " + source.Name + ": " + error);
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// Положить набор в кэш атомарно: temp → File.Replace.
+        ///
+        /// Не File.WriteAllText: если процесс убьют посередине (выход из
+        /// приложения, обновление), останется половина файла, которая пройдёт
+        /// проверку «больше 32 символов» и будет применена как набор.
+        /// </summary>
+        private static void SaveCache(HostsSource source, string text)
+        {
+            string path = CachePath(source);
+            if (path.Length == 0) return;
+
+            try
+            {
+                Directory.CreateDirectory(CacheDir);
+
+                string temp = path + ".tmp";
+
+                File.WriteAllText(temp, text, new UTF8Encoding(false));
+
+                if (File.Exists(path))
+                {
+                    // File.Replace требует, чтобы оба файла были на одном томе —
+                    // поэтому temp лежит рядом с целевым, а не в %TEMP%
+                    File.Replace(temp, path, null, true);
+                }
+                else
+                {
+                    File.Move(temp, path);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("HOSTS", "кэш " + System.IO.Path.GetFileName(path) + ": " + ex.Message);
+
+                try { File.Delete(path + ".tmp"); } catch { }
             }
         }
 
@@ -299,6 +488,98 @@ namespace AutoZapret.Lists
             if (head.StartsWith("<html", StringComparison.OrdinalIgnoreCase)) return true;
 
             return head.IndexOf("<body", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        // --------------------------------------------------------------- update all
+
+        /// <summary>Итог обновления одного набора — для отчёта в интерфейсе.</summary>
+        public sealed class UpdateResult
+        {
+            public string Id = "";
+            public string Name = "";
+            public bool Ok;
+            public int Lines;
+            public string Origin = "";
+            public string Error = "";
+
+            public string Text()
+            {
+                if (!Ok) return Name + ": " + Error;
+
+                return Name + ": " + Lines + " записей (" + Origin + ")";
+            }
+        }
+
+        /// <summary>
+        /// Обновить все известные наборы из сети.
+        ///
+        /// Возвращает по строке на набор: удачные и неудачные. Не бросаем
+        /// исключение на первом провале — если один источник лежит, второй
+        /// всё равно надо скачать, и человеку нужен полный отчёт, а не «не
+        /// вышло» без деталей.
+        ///
+        /// Уже имеющийся кэш не трогаем при неудаче: старый набор лучше
+        /// пустоты, и об этом прямо сказано в ошибке.
+        /// </summary>
+        public static List<UpdateResult> UpdateAll()
+        {
+            List<UpdateResult> results = new List<UpdateResult>();
+
+            foreach (HostsSource source in Sources())
+            {
+                UpdateResult result = new UpdateResult
+                {
+                    Id = source.Id,
+                    Name = source.Name
+                };
+
+                string error;
+                string text = Download(source, out error);
+
+                if (text == null)
+                {
+                    result.Ok = false;
+                    result.Error = error;
+
+                    // честно: остался предыдущий набор, если он был
+                    string origin;
+                    string previous = Read(source, out origin);
+
+                    if (previous != null) result.Error += " (остался " + origin + ")";
+
+                    results.Add(result);
+                    continue;
+                }
+
+                HostsReport report = new HostsReport();
+                List<HostsRow> rows = HostsEditor.Parse(text, report);
+
+                result.Ok = true;
+                result.Lines = rows.Count;
+                result.Origin = "сеть, " + text.Length + " символов";
+
+                if (rows.Count == 0)
+                {
+                    // скачали, но распарсить нечего — это не успех
+                    result.Ok = false;
+                    result.Error = "скачано, но записей не найдено";
+                }
+
+                results.Add(result);
+            }
+
+            Log.Info("HOSTS", "обновление наборов: " + string.Join(" | ", DescribeAll(results)));
+
+            return results;
+        }
+
+        private static string[] DescribeAll(List<UpdateResult> results)
+        {
+            List<string> lines = new List<string>();
+
+            foreach (UpdateResult r in results) lines.Add(r.Text());
+
+            return lines.ToArray();
         }
     }
 }

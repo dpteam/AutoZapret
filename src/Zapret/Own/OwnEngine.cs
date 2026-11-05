@@ -85,8 +85,15 @@ namespace AutoZapret.Zapret.Own
 
         /// <summary>
         /// Запустить. Возвращает null при успехе, иначе текст ошибки.
+        ///
+        /// onStarted вызывается, когда драйвер уже открыт и перехват пошёл.
+        /// Нужен тому, кто запускает движок в отдельном потоке и обязан
+        /// отличить «уже работает» от «сейчас упадёт на занятом драйвере»:
+        /// Run() блокируется до остановки, и без сигнала вызывающий не узнает,
+        /// что старт удался, иначе как по таймауту.
         /// </summary>
-        public string Run(CancellationToken cancel = default(CancellationToken))
+        public string Run(CancellationToken cancel = default(CancellationToken),
+                          Action onStarted = null)
         {
             if (!WinDivertInterop.IsAvailable())
                 return "WinDivert.dll не найден в " + Paths.EngineBinDir;
@@ -127,6 +134,14 @@ namespace AutoZapret.Zapret.Own
                                 ? "профили: " + _options.Profiles.Describe()
                                 : _options.Technique.Describe()) +
                             (_options.DryRun ? " (только показ)" : "") + ", фильтр: " + filter);
+
+            // Драйвер открыт и перехват пошёл — только теперь старт можно
+            // считать состоявшимся.
+            if (onStarted != null)
+            {
+                try { onStarted(); }
+                catch (Exception ex) { Log.Warn("OWN", "сигнал о старте: " + ex.Message); }
+            }
 
             ManualResetEvent stop = new ManualResetEvent(false);
 

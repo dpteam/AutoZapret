@@ -9,7 +9,18 @@ namespace AutoZapret.Zapret
     public enum EngineKind
     {
         V1,   // winws.exe  — zapret 1 (Flowseal)
-        V2    // winws2.exe — zapret 2 (snanvl), требует lua/
+        V2,   // winws2.exe — zapret 2 (snanvl), требует lua/
+
+        /// <summary>
+        /// Наш собственный движок: свой перехват и свои техники.
+        ///
+        /// Отдельное значение в перечислении, а не «флаг рядом», потому что
+        /// это третий исполнитель тех же стратегий: у него свои требования
+        /// (WinDivert нужен, winws — нет), своя версия и своя причина
+        /// недоступности. Отдельный тип делает эти различия явными, а не
+        /// спрятанными в if-ах по строке.
+        /// </summary>
+        Own
     }
 
     /// <summary>
@@ -128,12 +139,25 @@ namespace AutoZapret.Zapret
         /// <summary>Доступен ли движок.</summary>
         public bool IsAvailable(EngineKind kind)
         {
+            // Свой движок не требует winws вообще: он работает через WinDivert
+            // напрямую. Требование ровно одно — библиотека драйвера.
+            if (kind == EngineKind.Own) return WinDivertInterop.IsAvailable();
+
             return kind == EngineKind.V2 ? HasV2 : HasV1;
         }
 
         /// <summary>Понятная причина, почему движок недоступен.</summary>
         public string UnavailableReason(EngineKind kind)
         {
+            if (kind == EngineKind.Own)
+            {
+                if (!WinDivertInterop.IsAvailable())
+                    return "нет engine\\bin\\WinDivert.dll — без драйвера свой движок работать не может. " +
+                           "Запустите tools\\fetch-engine.ps1.";
+
+                return Problem ?? "свой движок недоступен";
+            }
+
             if (kind == EngineKind.V2)
             {
                 if (!File.Exists(Path.Combine(BinDir, WinwsV2)))
@@ -152,6 +176,10 @@ namespace AutoZapret.Zapret
         /// <summary>Версия конкретного движка.</summary>
         public string VersionOf(EngineKind kind)
         {
+            // У своего движка версия — версия программы: он собирается вместе
+            // с ней, и отдельного version.txt у него нет и быть не может.
+            if (kind == EngineKind.Own) return AppInfo.Version;
+
             string v = kind == EngineKind.V2 ? VersionV2 : Version;
             return v.Length > 0 ? v : "?";
         }

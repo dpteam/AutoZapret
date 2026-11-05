@@ -301,6 +301,23 @@ namespace AutoZapret.Zapret
             return result;
         }
 
+        /// <summary>
+        /// Какой движок исполняет стратегии этого режима.
+        ///
+        /// Свой движок исполняет ТЕ ЖЕ стратегии, что zapret 1: v2 написан на
+        /// Lua и не исполним. Поэтому список стратегий у «zapret 1» и «свой»
+        /// общий, и слот запоминания тоже общий — иначе переключение движка
+        /// меняло бы выбранную стратегию, и сравнивать было бы нечего.
+        ///
+        /// Отдельный статический метод, а не проверка на месте: одно и то же
+        /// правило нужно и интерфейсу, и selftest, и разошедшиеся копии здесь
+        /// означали бы «список пуст» у половины людей.
+        /// </summary>
+        public static string StrategyEngineFor(string kind)
+        {
+            return string.Equals(kind, "v2", StringComparison.OrdinalIgnoreCase) ? "v2" : "v1";
+        }
+
         /// <summary>Доступность движков для UI.</summary>
         public Dictionary<string, object> DescribeEngines()
         {
@@ -308,13 +325,19 @@ namespace AutoZapret.Zapret
             {
                 { "v1", _engine.HasV1 },
                 { "v2", _engine.HasV2 },
+                { "own", _engine.IsAvailable(EngineKind.Own) },
                 { "v1Version", _engine.VersionOf(EngineKind.V1) },
                 { "v2Version", _engine.VersionOf(EngineKind.V2) },
+                { "ownVersion", _engine.VersionOf(EngineKind.Own) },
                 { "v2Reason", _engine.HasV2 ? "" : _engine.UnavailableReason(EngineKind.V2) },
+                { "ownReason", _engine.IsAvailable(EngineKind.Own) ? "" : _engine.UnavailableReason(EngineKind.Own) },
                 { "counts", new Dictionary<string, object>(StringComparer.Ordinal)
                     {
                         { "v1", (long)_store.ByEngine("v1").Count },
-                        { "v2", (long)_store.ByEngine("v2").Count }
+                        { "v2", (long)_store.ByEngine("v2").Count },
+                        // свой движок исполняет те же стратегии v1, поэтому счётчик
+                        // общий: человек видит, что список не «другой», а тот же
+                        { "own", (long)_store.ByEngine("v1").Count }
                     }
                 }
             };

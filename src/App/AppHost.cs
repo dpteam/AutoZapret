@@ -34,6 +34,12 @@ namespace AutoZapret.App
         private Zapret.Own.OwnEngine _ownEngine;
         private System.Threading.CancellationTokenSource _ownCancel;
         private Zapret.Own.OwnEngineStats _ownLastStats;
+
+        // Свой движок как основной: когда он запущен кнопкой питания, интерфейс
+        // должен показывать его состояние, а не состояние winws (который стоит).
+        private Thread _ownThread;
+        private DateTime _ownStartedAt = DateTime.MinValue;
+        private string _ownStrategyName = "";
         private readonly AutoPilot _autoPilot;
         private readonly ScoreStore _scores;
         private readonly ProcessPresetWatcher _presets;
@@ -144,7 +150,8 @@ namespace AutoZapret.App
                 // автопилот живёт только вместе с запущенным обходом
                 if (state == ProtectionState.Running)
                 {
-                    if (_settings.AutoPilot && !_autoPilot.IsRunning)
+                    if (_settings.AutoPilot && !_autoPilot.IsRunning &&
+                        KindOf(_settings.EngineKind) != EngineKind.Own)
                         _autoPilot.Start(_settings.StrategyId);
                 }
                 else if (state == ProtectionState.Stopped || state == ProtectionState.Error)
@@ -256,7 +263,8 @@ namespace AutoZapret.App
                 // стратегия начнёт работать только после ручного выключения.
                 // Поведение настраиваемое — старт стоит ~1.5 с и рвёт соединения.
                 bool running = _zapret.State == ProtectionState.Running ||
-                               _zapret.State == ProtectionState.Starting;
+                               _zapret.State == ProtectionState.Starting ||
+                               OwnEngineRunning();
 
                 if (running && _settings.ReconnectOnStrategy)
                 {
@@ -270,7 +278,7 @@ namespace AutoZapret.App
             bridge.Register("engine.select", msg =>
             {
                 string kind = Json.GetString(msg, "kind", _settings.EngineKind);
-                if (kind != "v1" && kind != "v2") return;
+                if (kind != "v1" && kind != "v2" && kind != "own") return;
 
                 if (string.Equals(kind, _settings.EngineKind, StringComparison.OrdinalIgnoreCase))
                 {
@@ -987,8 +995,48 @@ namespace AutoZapret.App
 
             bridge.Register("hosts.fixes", msg => SendHostsFixes());
 
-            // Скачиваемый источник: забираем в момент применения, чтобы список
-            // был свежим. Дубли не плодим — только то, чего ещё нет.
+            // Обновить все известные наборы фиксов из сети.
+            //
+            // Отдельная кнопка, а не «качаем при каждом применении»: применение
+            // должно быть мгновенным и работать без сети — ровно в той
+            // ситуации, когда hosts и нужен. Свежесть обновляют осознанно.
+            bridge.Register("hosts.fixes.update", msg =>
+            {
+                RunInBackground("hosts-update", () =>
+                {
+                    List<HostsFixes.UpdateResult> results = HostsFixes.UpdateAll();
+
+                    List<object> items = new List<object>();
+
+                    foreach (HostsFixes.UpdateResult r in results)
+                    {
+                        items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                        {
+                            { "id", r.Id },
+                            { "name", r.Name },
+                            { "ok", r.Ok },
+                            { "lines", (long)r.Lines },
+                            { "origin", r.Origin ?? "" },
+                            { "error", r.Error ?? "" }
+                        });
+                    }
+
+                    int ok = 0;
+                    foreach (HostsFixes.UpdateResult r in results) if (r.Ok) ok++;
+
+                    bridge.Send(WebBridge.Msg("hosts.fixes.updated",
+                        "items", items,
+                        "ok", (long)ok,
+                        "total", (long)results.Count));
+
+                    // список перечитываем: у наборов поменялось «скачан такой-то
+                    // датой», и без этого человек видит старые подписи
+                    SendHostsFixes();
+                });
+            });
+
+            // Применяем сохранённый набор: кэш → поставка. Сеть здесь не нужна
+            // и нежелательна — человек нажал «применить», а не «обновить».
             bridge.Register("hosts.source.apply", msg =>
             {
                 string id = Json.GetString(msg, "id", "");
@@ -1005,38 +1053,21 @@ namespace AutoZapret.App
 
                 RunInBackground("hosts-source", () =>
                 {
-                    string error = "";
-                    string downloaded;
+                    string origin;
+                    string downloaded = HostsFixes.Read(source, out origin);
 
-                    if (source.Bundled)
+                    if (downloaded == null)
                     {
-                        // вшитый файл: без сети, читаем с диска
-                        string path = HostsFixes.BundledPath(source);
+                        Log.Warn("HOSTS", "набор " + source.Name + " недоступен: " + origin);
 
-                        if (!System.IO.File.Exists(path))
-                        {
-                            bridge.Send(WebBridge.Msg("hosts.edited", "text", text,
-                                "summary", "файл «" + source.Name + "» не найден в поставке"));
-                            return;
-                        }
-
-                        downloaded = System.IO.File.ReadAllText(path);
-                        Log.Info("HOSTS", "вшитый hosts «" + source.Name + "» прочитан: " + downloaded.Length + " символов");
+                        bridge.Send(WebBridge.Msg("hosts.edited", "text", text,
+                            "summary", "«" + source.Name + "»: " + origin +
+                                       " · нажмите «Обновить наборы» или выберите вшитый вариант"));
+                        return;
                     }
-                    else
-                    {
-                        downloaded = HostsFixes.Download(source, out error);
 
-                        if (downloaded == null)
-                        {
-                            Log.Warn("HOSTS", "источник " + source.Name + " не скачался: " + error);
-
-                            bridge.Send(WebBridge.Msg("hosts.edited", "text", text,
-                                "summary", "«" + source.Name + "» не скачался: " + error +
-                                           " · попробуйте вшитый вариант из списка"));
-                            return;
-                        }
-                    }
+                    Log.Info("HOSTS", "набор «" + source.Name + "»: " + origin +
+                                      ", " + downloaded.Length + " символов");
 
                     // Разбираем скачанное тем же парсером, что и обычные записи:
                     // один набор правил на всё, иначе источники и ручной ввод
@@ -1146,31 +1177,16 @@ namespace AutoZapret.App
                             continue;
                         }
 
-                        string error = "";
-                        string downloaded;
+                        string origin;
+                        string downloaded = HostsFixes.Read(source, out origin);
 
-                        if (source.Bundled)
+                        if (downloaded == null)
                         {
-                            string path = HostsFixes.BundledPath(source);
-
-                            if (!System.IO.File.Exists(path))
-                            {
-                                failed.Add(source.Name + ": нет в поставке");
-                                continue;
-                            }
-
-                            downloaded = System.IO.File.ReadAllText(path);
+                            failed.Add(source.Name + ": " + origin);
+                            continue;
                         }
-                        else
-                        {
-                            downloaded = HostsFixes.Download(source, out error);
 
-                            if (downloaded == null)
-                            {
-                                failed.Add(source.Name + ": " + error);
-                                continue;
-                            }
-                        }
+                        done.Add(source.Name + " [" + origin + "]");
 
                         HostsReport report = new HostsReport();
                         List<HostsRow> rows = HostsEditor.Parse(downloaded, report);
@@ -1257,6 +1273,18 @@ namespace AutoZapret.App
 
                 if (enabled)
                 {
+                    // Автопилот перезапускает winws и оценивает стратегии по
+                    // probe. Своим движком он не управляет, и делать вид, что
+                    // управляет, значит однажды подменить исполнителя молча.
+                    if (KindOf(_settings.EngineKind) == EngineKind.Own)
+                    {
+                        _tray.Notify(AppInfo.Name,
+                            "Автопилот работает только с zapret. Переключите движок в настройках",
+                            ToolTipIcon.Warning);
+                        SendAutoState();
+                        return;
+                    }
+
                     if (_zapret.State != ProtectionState.Running)
                     {
                         _tray.Notify(AppInfo.Name,
@@ -2232,6 +2260,9 @@ namespace AutoZapret.App
 
             foreach (HostsSource source in HostsFixes.Sources())
             {
+                bool ready;
+                string state = HostsFixes.Describe(source, out ready);
+
                 items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
                 {
                     { "id", source.Id },
@@ -2239,6 +2270,8 @@ namespace AutoZapret.App
                     { "note", source.Note ?? "" },
                     { "count", 0L },
                     { "remote", true },
+                    { "state", state },
+                    { "ready", ready },
                     { "url", source.Url }
                 });
             }
@@ -2246,6 +2279,9 @@ namespace AutoZapret.App
             // вшитые: работают без сети, помечены отдельно
             foreach (HostsSource source in HostsFixes.Bundled())
             {
+                bool ready;
+                string state = HostsFixes.Describe(source, out ready);
+
                 items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
                 {
                     { "id", source.Id },
@@ -2255,6 +2291,8 @@ namespace AutoZapret.App
                     { "remote", false },
                     { "bundled", true },
                     { "careful", source.Careful },
+                    { "state", state },
+                    { "ready", ready },
                     { "url", "" }
                 });
             }
@@ -2508,6 +2546,199 @@ namespace AutoZapret.App
 
         private readonly object _ownCompatGate = new object();
         private List<Dictionary<string, object>> _ownCompatCache;
+
+        // ------------------------------------------------- свой движок как основной
+
+        /// <summary>Работает ли свой движок прямо сейчас.</summary>
+        private bool OwnEngineRunning()
+        {
+            lock (_ownGate) return _ownEngine != null;
+        }
+
+        /// <summary>
+        /// Запустить свой движок на стратегии из списка (кнопка питания).
+        ///
+        /// Возвращает null при успехе. Ошибки старта ловятся синхронно: движок
+        /// открывает драйвер до того, как уйти в цикл, и «занято другим
+        /// перехватчиком» человек должен увидеть сразу, а не через минуту
+        /// в логе.
+        /// </summary>
+        private string StartOwnWithStrategy(string strategyId)
+        {
+            Strategy strategy = _zapret.Strategies.Find(strategyId);
+
+            if (strategy == null) return "стратегия не найдена: " + strategyId;
+
+            if (string.Equals(strategy.Engine, "v2", StringComparison.OrdinalIgnoreCase))
+                return "стратегии zapret 2 написаны на Lua — своим движком их не исполнить";
+
+            Zapret.Own.CompatResult compat = Zapret.Own.WinwsCompat.Parse(
+                strategy, _zapret.Engine.BuildPlaceholders(_settings.GameFilter));
+
+            Log.Info("OWN", "стратегия " + strategyId + ": " + compat.Summary());
+
+            foreach (string line in compat.Detail().Split('\n'))
+                if (line.Length > 0 && line.IndexOf("не поддержано", StringComparison.Ordinal) >= 0)
+                    Log.Warn("OWN", line);
+
+            if (!compat.Ok) return "из стратегии нечего исполнять: " + compat.Summary();
+
+            Zapret.Own.OwnEngineOptions options = new Zapret.Own.OwnEngineOptions
+            {
+                Profiles = compat.Profiles,
+                Seconds = 0,            // до остановки кнопкой
+                DryRun = false
+            };
+
+            return StartOwnCore(options, strategy.Id, strategy.Name);
+        }
+
+        /// <summary>
+        /// Запуск в отдельном потоке с ожиданием факта старта.
+        ///
+        /// Почему не просто Run() в этом же потоке: Run блокируется до
+        /// остановки, а вызывающему нужно вернуть результат — «поднялось» или
+        /// «нет» — чтобы кнопка питания не висела в неопределённом состоянии.
+        /// </summary>
+        private string StartOwnCore(Zapret.Own.OwnEngineOptions options, string strategyId, string strategyName)
+        {
+            System.Threading.CancellationTokenSource cancel;
+
+            lock (_ownGate)
+            {
+                if (_ownEngine != null) return "свой движок уже запущен — сначала остановите";
+
+                _ownCancel = new System.Threading.CancellationTokenSource();
+                cancel = _ownCancel;
+
+                _ownStartedAt = DateTime.UtcNow;
+                _ownStrategyName = strategyName ?? "";
+            }
+
+            Zapret.Own.OwnEngine engine = new Zapret.Own.OwnEngine(options);
+
+            // сигнал «драйвер открыт»; ошибка до сигнала — это ошибка старта
+            System.Threading.ManualResetEventSlim started = new System.Threading.ManualResetEventSlim(false);
+            string startupError = null;
+            bool startupFailed = false;
+            bool startedOk = false;
+
+            lock (_ownGate) _ownEngine = engine;
+
+            Thread worker = new Thread(delegate ()
+            {
+                string error;
+
+                try
+                {
+                    error = engine.Run(cancel.Token, delegate
+                    {
+                        startedOk = true;
+                        started.Set();
+                    });
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                    Log.Exception("OWN", "движок", ex);
+                }
+
+                if (!started.IsSet)
+                {
+                    // не дошли до открытия драйвера: это ошибка старта, и её
+                    // надо вернуть вызывающему, а не только записать в лог
+                    lock (_ownGate)
+                    {
+                        if (!startupFailed) startupError = error;
+                        startupFailed = true;
+                    }
+
+                    started.Set();
+                }
+                else
+                {
+                    Log.Info("OWN", "движок остановлен: " + engine.Stats.Summary());
+                }
+
+                lock (_ownGate)
+                {
+                    _ownLastStats = engine.Stats;
+                    _ownEngine = null;
+                    _ownCancel = null;
+                    _ownThread = null;
+                    _ownStartedAt = DateTime.MinValue;
+                    _ownStrategyName = "";
+                }
+
+                SendOwnState();
+                PushState();
+            })
+            {
+                IsBackground = true,
+                Name = "own-main"
+            };
+
+            lock (_ownGate) _ownThread = worker;
+
+            worker.Start();
+
+            // Ждём факт старта. 10 секунд — с запасом: WinDivert ставит драйвер
+            // при первом открытии, и на холодной системе это не мгновенно.
+            started.Wait(10000);
+
+            lock (_ownGate)
+            {
+                if (startupFailed)
+                {
+                    _ownEngine = null;
+                    _ownCancel = null;
+                    _ownThread = null;
+                    _ownStartedAt = DateTime.MinValue;
+                    _ownStrategyName = "";
+
+                    return startupError ?? "движок не запустился";
+                }
+            }
+
+            if (!startedOk)
+            {
+                // Поток ещё жив, но драйвер не открылся за 10 секунд. Гасим его
+                // сами: оставить «запущенным» то, что не работает, — это кнопка,
+                // которая показывает ВКЛ и ничего не обходит.
+                StopOwnEngineNow();
+
+                return "движок не открыл драйвер за 10 секунд";
+            }
+
+            Log.Info("OWN", "обход запущен своим движком: " + strategyId);
+
+            return null;
+        }
+
+        /// <summary>
+        /// Погасить свой движок и ДОЖДАТЬСЯ выгрузки драйвера.
+        ///
+        /// Join обязателен: без него следующий запуск (winws или снова свой)
+        /// упрётся в занятый WinDivert и выдаст «драйвер занят другим
+        /// перехватчиком» — то есть смена движка будет ломаться через раз.
+        /// </summary>
+        private void StopOwnEngineNow()
+        {
+            System.Threading.CancellationTokenSource cancel;
+            Thread thread;
+
+            lock (_ownGate)
+            {
+                cancel = _ownCancel;
+                thread = _ownThread;
+            }
+
+            if (cancel == null) return;
+
+            try { cancel.Cancel(); } catch { }
+
+            try { if (thread != null) thread.Join(4000); } catch { }
+        }
 
         private void SendOwnState()
         {
@@ -2793,7 +3024,7 @@ namespace AutoZapret.App
 
             try
             {
-                string error = _zapret.Start(id);
+                string error = StartEngine(id);
 
                 if (error != null)
                 {
@@ -2996,7 +3227,7 @@ namespace AutoZapret.App
 
             RunInBackground("autostart-protection", () =>
             {
-                string error = _zapret.Start(_settings.StrategyId);
+                string error = StartEngine(_settings.StrategyId);
                 if (error != null)
                 {
                     Log.Error("WINWS", "автозапуск обхода не удался: " + error);
@@ -3710,6 +3941,7 @@ namespace AutoZapret.App
         private void ToggleProtection()
         {
             ProtectionState state = _zapret.State;
+            bool ownRunning = OwnEngineRunning();
 
             if (state == ProtectionState.Starting || state == ProtectionState.Stopping)
             {
@@ -3718,7 +3950,9 @@ namespace AutoZapret.App
             }
 
             // Включение требует прав администратора: winws.exe и WinDivert без них не стартуют.
-            if (state != ProtectionState.Running && !EnsureElevation()) return;
+            if (state != ProtectionState.Running && !ownRunning && !EnsureElevation()) return;
+
+            bool own = KindOf(_settings.EngineKind) == EngineKind.Own;
 
             ThreadPool.QueueUserWorkItem(delegate
             {
@@ -3728,8 +3962,32 @@ namespace AutoZapret.App
                     return;
                 }
 
-                // Проверка готовности ДО запуска: 200 мс вместо тихого «не сработало»
-                if (!RunPreflight(_settings.StrategyId))
+                // Свой движок гасим отдельно: у него свой цикл и своё владение
+                // драйвером, и Stop() от winws его не тронет.
+                if (ownRunning)
+                {
+                    StopOwnEngineNow();
+                    PushState();
+                    return;
+                }
+
+                // Проверка готовности ДО запуска: 200 мс вместо тихого «не сработало».
+                // Для своего движка набор проверок другой: winws ему не нужен,
+                // а фейки он генерирует сам — проверять нечего, кроме драйвера.
+                if (own)
+                {
+                    if (!_zapret.Engine.IsAvailable(EngineKind.Own))
+                    {
+                        string reason = _zapret.Engine.UnavailableReason(EngineKind.Own);
+
+                        Log.Warn("OWN", "включение отменено: " + reason);
+                        _tray.Notify(AppInfo.Name, "Обход не включён: " + reason, ToolTipIcon.Warning);
+
+                        PushState();
+                        return;
+                    }
+                }
+                else if (!RunPreflight(_settings.StrategyId))
                 {
                     Log.Warn("WINWS", "включение отменено: проверка готовности нашла проблемы");
                     _tray.Notify(AppInfo.Name, "Обход не запущен: см. список проблем на главной",
@@ -3737,12 +3995,14 @@ namespace AutoZapret.App
                     return;
                 }
 
-                string error = _zapret.Start(_settings.StrategyId);
+                string error = StartEngine(_settings.StrategyId);
                 if (error != null)
                 {
                     Log.Error("WINWS", "не удалось включить: " + error);
                     _tray.Notify(AppInfo.Name, error, ToolTipIcon.Error);
                 }
+
+                PushState();
             });
         }
 
@@ -3766,12 +4026,13 @@ namespace AutoZapret.App
 
             try
             {
+                StopOwnEngineNow();
                 _zapret.Stop();
                 Thread.Sleep(1200);      // WinDivert должен выгрузиться
 
-                if (!RunPreflight(strategyId)) return;
+                if (KindOf(_settings.EngineKind) != EngineKind.Own && !RunPreflight(strategyId)) return;
 
-                string error = _zapret.Start(strategyId);
+                string error = StartEngine(strategyId);
                 if (error != null)
                 {
                     Log.Error("WINWS", "переподключение не удалось: " + error);
@@ -3792,6 +4053,32 @@ namespace AutoZapret.App
             return string.Equals(engineKind, "v2", StringComparison.OrdinalIgnoreCase)
                 ? _settings.StrategyIdV2
                 : _settings.StrategyIdV1;
+        }
+
+        /// <summary>
+        /// Движок по строке из настроек. Строка, а не enum, потому что значение
+        /// лежит в settings.json и переживает обновления: незнакомое значение
+        /// должно вести себя как v1, а не падать.
+        /// </summary>
+        private static EngineKind KindOf(string kind)
+        {
+            if (string.Equals(kind, "v2", StringComparison.OrdinalIgnoreCase)) return EngineKind.V2;
+            if (string.Equals(kind, "own", StringComparison.OrdinalIgnoreCase)) return EngineKind.Own;
+
+            return EngineKind.V1;
+        }
+
+        /// <summary>
+        /// Какой движок исполняет стратегии этого режима.
+        ///
+        /// Свой движок исполняет ТЕ ЖЕ стратегии, что zapret 1 (v2 написан на
+        /// Lua и не исполним). Поэтому список стратегий у них общий, и слот
+        /// запоминания тоже общий: переключение «zapret 1 ↔ свой» не должно
+        /// менять выбранную стратегию — иначе сравнивать движки бессмысленно.
+        /// </summary>
+        private static string StrategyEngine(string kind)
+        {
+            return ZapretService.StrategyEngineFor(kind);
         }
 
         /// <summary>Запомнить выбор стратегии за движком.</summary>
@@ -3831,17 +4118,17 @@ namespace AutoZapret.App
 
         private void SwitchEngine(string kind)
         {
+            // Обход мог держать любой из двух исполнителей: winws или наш.
             bool wasRunning = _zapret.State == ProtectionState.Running ||
-                              _zapret.State == ProtectionState.Starting;
+                              _zapret.State == ProtectionState.Starting ||
+                              OwnEngineRunning();
 
             Log.Info("WINWS", "смена движка на " + kind + (wasRunning ? " (обход был включён)" : ""));
 
             // Проверяем, что движок вообще установлен. Раньше переключение
             // проходило молча, настройка сохранялась, и только потом выяснялось,
             // что нет lua или exe — уже в виде непонятной ошибки стратегии.
-            EngineKind wanted = string.Equals(kind, "v2", StringComparison.OrdinalIgnoreCase)
-                ? EngineKind.V2
-                : EngineKind.V1;
+            EngineKind wanted = KindOf(kind);
 
             try { _zapret.Engine.Refresh(); } catch { }
 
@@ -3859,6 +4146,9 @@ namespace AutoZapret.App
 
             if (wasRunning)
             {
+                // Гасим оба: свой движок и winws делят WinDivert, и оставить
+                // второй запущенным значит получить «драйвер занят» на старте.
+                StopOwnEngineNow();
                 _zapret.Stop();
                 Thread.Sleep(1500);     // WinDivert должен выгрузиться
             }
@@ -3869,16 +4159,20 @@ namespace AutoZapret.App
             // этого движка -> та же стратегия по имени -> первая из списка.
             // Раньше при смене движка выбор сбрасывался на первую стратегию,
             // и человек каждый раз искал свою заново.
+            //
+            // Слот общий для «zapret 1» и «свой»: это одни и те же стратегии,
+            // и переключение исполнителя не должно менять выбор.
+            string strategyEngine = StrategyEngine(kind);
             string remembered = SavedStrategy(kind);
             Strategy candidate = string.IsNullOrEmpty(remembered) ? null : _zapret.Strategies.Find(remembered);
 
-            if (candidate == null || !string.Equals(candidate.Engine, kind, StringComparison.OrdinalIgnoreCase))
+            if (candidate == null || !string.Equals(candidate.Engine, strategyEngine, StringComparison.OrdinalIgnoreCase))
             {
-                candidate = FindSameStrategyOtherEngine(_settings.StrategyId, kind);
+                candidate = FindSameStrategyOtherEngine(_settings.StrategyId, strategyEngine);
 
                 if (candidate == null)
                 {
-                    List<Strategy> pool = _zapret.Strategies.ByEngine(kind);
+                    List<Strategy> pool = _zapret.Strategies.ByEngine(strategyEngine);
                     candidate = pool.Count > 0 ? pool[0] : null;
                 }
             }
@@ -3893,7 +4187,8 @@ namespace AutoZapret.App
 
             if (wasRunning)
             {
-                string error = _zapret.Start(_settings.StrategyId);
+                string error = StartEngine(_settings.StrategyId);
+
                 if (error != null)
                 {
                     Log.Error("WINWS", "движок " + kind + " не запустился: " + error);
@@ -3901,12 +4196,36 @@ namespace AutoZapret.App
                 }
                 else
                 {
-                    _tray.Notify(AppInfo.Name, "Движок переключён: " + kind, ToolTipIcon.Info);
+                    _tray.Notify(AppInfo.Name, "Движок переключён: " + EngineTitle(kind), ToolTipIcon.Info);
                 }
             }
 
             PushState();
             PushStrategies();
+        }
+
+        /// <summary>Название движка для человека, а не код из настроек.</summary>
+        private static string EngineTitle(string kind)
+        {
+            if (string.Equals(kind, "v2", StringComparison.OrdinalIgnoreCase)) return "zapret 2";
+            if (string.Equals(kind, "own", StringComparison.OrdinalIgnoreCase)) return "свой движок";
+
+            return "zapret 1";
+        }
+
+        /// <summary>
+        /// Запустить обход выбранным движком. Возвращает null при успехе.
+        ///
+        /// Одна точка входа на два исполнителя: иначе кнопка питания, смена
+        /// движка и автозапуск начнут расходиться в том, что именно они
+        /// запускают — и «включилось, но не то» будет ловиться только руками.
+        /// </summary>
+        private string StartEngine(string strategyId)
+        {
+            if (KindOf(_settings.EngineKind) != EngineKind.Own)
+                return _zapret.Start(strategyId);
+
+            return StartOwnWithStrategy(strategyId);
         }
 
         /// <summary>
@@ -3944,19 +4263,47 @@ namespace AutoZapret.App
         {
             ProtectionState protection = _zapret.State;
 
+            // Свой движок — отдельный исполнитель: у него нет ни ProtectionState,
+            // ни uptime от winws. Если он работает, обход включён именно им, и
+            // показывать состояние winws (остановлен) было бы прямой ложью.
+            string ownStrategy;
+            DateTime ownStarted;
+            bool ownRunning;
+
+            lock (_ownGate)
+            {
+                ownRunning = _ownEngine != null;
+                ownStrategy = _ownStrategyName;
+                ownStarted = _ownStartedAt;
+            }
+
+            string activeStrategy = ownRunning ? ownStrategy : (_zapret.ActiveStrategyName ?? "");
+            string protectionError = ownRunning ? "" : (_zapret.LastError ?? "");
+            long uptime = ownRunning
+                ? (ownStarted == DateTime.MinValue ? 0 : (long)(DateTime.UtcNow - ownStarted).TotalSeconds)
+                : (long)_zapret.Uptime.TotalSeconds;
+
             // Служба работает? Тогда обход уже включён — и не нами. Кнопка
             // питания должна быть заблокирована, иначе человек нажмёт её,
             // получит «уже запущено» и решит, что программа сломалась.
             bool serviceRunning = ServiceRunningCached();
 
             string protectionText;
-            switch (protection)
+
+            if (ownRunning)
             {
-                case ProtectionState.Running: protectionText = "on"; break;
-                case ProtectionState.Starting: protectionText = "starting"; break;
-                case ProtectionState.Stopping: protectionText = "stopping"; break;
-                case ProtectionState.Error: protectionText = "error"; break;
-                default: protectionText = "off"; break;
+                protectionText = "on";
+            }
+            else
+            {
+                switch (protection)
+                {
+                    case ProtectionState.Running: protectionText = "on"; break;
+                    case ProtectionState.Starting: protectionText = "starting"; break;
+                    case ProtectionState.Stopping: protectionText = "stopping"; break;
+                    case ProtectionState.Error: protectionText = "error"; break;
+                    default: protectionText = "off"; break;
+                }
             }
 
             EngineLocator engine = _zapret.Engine;
@@ -3971,17 +4318,27 @@ namespace AutoZapret.App
                 "portable", Paths.IsPortable,
                 "dataDir", Paths.DataDir,
                 "webview2", AppInfo.WebView2RuntimeVersion() ?? "",
-                "engineReady", engine.Ready,
-                "engineProblem", engine.Problem ?? "",
-                "engineVersion", engine.VersionOf(_settings.EngineKind == "v2" ? EngineKind.V2 : EngineKind.V1),
+                // Готовность движка — это готовность ВЫБРАННОГО движка, а не
+                // «папки engine». Свой движок не требует winws, и блокировать
+                // им кнопку питания было бы неправдой.
+                "engineReady", KindOf(_settings.EngineKind) == EngineKind.Own
+                    ? engine.IsAvailable(EngineKind.Own)
+                    : engine.Ready,
+                "engineProblem", KindOf(_settings.EngineKind) == EngineKind.Own
+                    ? (engine.IsAvailable(EngineKind.Own) ? "" : engine.UnavailableReason(EngineKind.Own))
+                    : (engine.Problem ?? ""),
+                "engineVersion", engine.VersionOf(KindOf(_settings.EngineKind)),
                 "engineKind", _settings.EngineKind,
                 "engineV1", engine.HasV1,
                 "engineV2", engine.HasV2,
                 "engineV2Reason", engine.HasV2 ? "" : engine.UnavailableReason(EngineKind.V2),
+                "engineOwn", engine.IsAvailable(EngineKind.Own),
+                "engineOwnReason", engine.IsAvailable(EngineKind.Own)
+                    ? "" : engine.UnavailableReason(EngineKind.Own),
                 "protection", protectionText,
-                "protectionError", _zapret.LastError ?? "",
-                "activeStrategy", _zapret.ActiveStrategyName ?? "",
-                "uptimeSec", (long)_zapret.Uptime.TotalSeconds,
+                "protectionError", protectionError,
+                "activeStrategy", activeStrategy,
+                "uptimeSec", uptime,
                 "strategyId", _settings.StrategyId,
                 // результат последнего скана именно для выбранной стратегии
                 "scan", scanLine,
@@ -4017,10 +4374,14 @@ namespace AutoZapret.App
 
         private void PushStrategies()
         {
+            // Свой движок исполняет стратегии v1, поэтому и список берём v1 —
+            // иначе переключение движка показывало бы пустой список.
+            string strategyEngine = StrategyEngine(_settings.EngineKind);
+
             List<Dictionary<string, object>> list;
             try
             {
-                list = _zapret.DescribeStrategies(_settings.EngineKind);
+                list = _zapret.DescribeStrategies(strategyEngine);
             }
             catch (Exception ex)
             {
@@ -4029,7 +4390,7 @@ namespace AutoZapret.App
             }
 
             // UI показывает только стратегии выбранного движка
-            string engine = _settings.EngineKind;
+            string engine = strategyEngine;
             List<object> items = new List<object>();
             foreach (Dictionary<string, object> s in list)
             {
@@ -4041,6 +4402,9 @@ namespace AutoZapret.App
             _form.Bridge.Send(WebBridge.Msg("strategies",
                 "items", items,
                 "engine", engine,
+                // режим движка отдельно: «own» — это не engine стратегий, и
+                // путать их значит однажды отфильтровать список не по тому полю
+                "engineKind", _settings.EngineKind,
                 "engines", _zapret.DescribeEngines()));
         }
 
@@ -4117,6 +4481,12 @@ namespace AutoZapret.App
 
             try { _autoPilot.Dispose(); } catch { }
             try { _presets.Dispose(); } catch { }
+
+            // Свой движок держит драйвер: если не погасить его явно, процесс
+            // завершится, а WinDivert останется захваченным до перезагрузки —
+            // и следующий запуск скажет «драйвер занят».
+            try { StopOwnEngineNow(); } catch { }
+
             try { _zapret.Dispose(); } catch { }
             try { _proxy.Dispose(); } catch { }
             try { _tray.Dispose(); } catch { }

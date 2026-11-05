@@ -66,6 +66,63 @@
         return text;
     }
 
+    // ------------------------------------------------------- занятые кнопки
+    //
+    // Кнопка, которая на время операции меняет подпись и блокируется, обязана
+    // вернуться в исходное состояние. Раньше каждая делала это сама, и половина
+    // забывала: «Пересоздаю…» оставалось висеть уже после того, как hosts был
+    // пересоздан, и человек жал кнопку снова, не понимая, сработало ли.
+    //
+    // Поэтому состояние кнопки хранится здесь, а не в замыкании обработчика.
+    // Только из общего места можно сбросить всё разом: после отказа в правах,
+    // при исключении в ядре, по таймауту.
+    var busyButtons = {};
+
+    /// Заблокировать кнопку с новой подписью.
+    ///
+    /// timeoutMs — страховка. Если ответ потерялся (ранний return, исключение,
+    /// отмена UAC), кнопка сама вернётся и напишет в консоль, вместо того чтобы
+    /// остаться «занятой» до перезапуска программы.
+    function busyBtn(id, label, timeoutMs) {
+        var el = document.getElementById(id);
+        if (!el) return;
+
+        if (!busyButtons[id]) {
+            busyButtons[id] = { label: el.textContent, timer: 0 };
+        } else if (busyButtons[id].timer) {
+            clearTimeout(busyButtons[id].timer);
+            busyButtons[id].timer = 0;
+        }
+
+        el.disabled = true;
+        el.textContent = label;
+
+        var wait = timeoutMs || 30000;
+
+        busyButtons[id].timer = setTimeout(function () {
+            console.warn("кнопка " + id + " не получила ответа за " + wait + " мс");
+            idleBtn(id);
+        }, wait);
+    }
+
+    /// Вернуть кнопку в исходное состояние.
+    function idleBtn(id) {
+        var el = document.getElementById(id);
+        var saved = busyButtons[id];
+        if (!el || !saved) return;
+
+        if (saved.timer) clearTimeout(saved.timer);
+        delete busyButtons[id];
+
+        el.disabled = false;
+        el.textContent = saved.label;
+    }
+
+    /// Сбросить все занятые кнопки.
+    function idleAllButtons() {
+        Object.keys(busyButtons).forEach(idleBtn);
+    }
+
     function applyLanguage(lang, json) {
         i18nLang = lang === "en" ? "en" : "ru";
 
@@ -447,9 +504,9 @@
         text("proxy-state", t(s.proxyEnabled ? "включён" : "выключен"));
 
         // какой движок работает — видно сразу на главной, без захода в настройки
-        var engineLabel = s.engineKind === "v2"
-            ? "zapret 2 (winws2)"
-            : "zapret 1 (winws)";
+        var engineLabel = s.engineKind === "own"
+            ? t("свой движок")
+            : (s.engineKind === "v2" ? "zapret 2 (winws2)" : "zapret 1 (winws)");
 
         if (s.engineVersion) engineLabel += " · " + s.engineVersion;
         if (!s.engineReady) engineLabel += " · " + t("не установлен");
@@ -462,7 +519,13 @@
         if (setScan) setScan.textContent = s.scan ? " · " + s.scan : "";
         var engHint = document.getElementById("engine-hint");
         if (engHint) {
-            if (s.engineKind === "v2") {
+            if (s.engineKind === "own") {
+                // Честно: winws не нужен, но драйвер общий — без него никак.
+                engHint.textContent = s.engineOwn
+                    ? t("свой движок - те же стратегии, но перехват наш. Драйвер WinDivert общий")
+                    : (s.engineOwnReason || t("свой движок недоступен"));
+                engHint.className = "row-hint " + (s.engineOwn ? "" : "diag-bad");
+            } else if (s.engineKind === "v2") {
                 engHint.textContent = s.engineV2
                     ? t("zapret 2 — новее, но lua-скрипты чувствительны к версии")
                     : (s.engineV2Reason || t("zapret 2 не установлен"));
@@ -2219,15 +2282,8 @@
             // новый секрет прокси. Спрашиваем о ПОСЛЕДСТВИИ, а не «вы уверены?».
             if (confirmText && !window.confirm(confirmText)) return;
 
-            var original = el.textContent;
-            el.disabled = true;
-            el.textContent = busyText;
+            busyBtn(id, busyText);
             send(action);
-            // вернём кнопку, даже если ответ потерялся
-            setTimeout(function () {
-                el.disabled = false;
-                el.textContent = original;
-            }, 30000);
         });
     }
 
@@ -2329,15 +2385,13 @@
                 "Ваши записи сохранятся, блок AutoZapret добавится отдельной секцией.")) return;
 
             var verify = document.getElementById("hosts-verify");
-            apply.disabled = true;
-            apply.textContent = "Собираю…";
+            busyBtn("btn-hosts-apply", "Собираю…");
             send("hosts.apply", { verify: verify ? verify.checked : false });
         });
 
         var check = document.getElementById("btn-hosts-check");
         if (check) check.addEventListener("click", function () {
-            check.disabled = true;
-            check.textContent = "Проверяю…";
+            busyBtn("btn-hosts-check", "Проверяю…");
             send("hosts.check");
         });
 
@@ -2347,16 +2401,14 @@
                 "hosts вернётся из резервной копии, сделанной при первом изменении.\n\n" +
                 "Записи, добавленные после этого момента, исчезнут.")) return;
 
-            restore.disabled = true;
-            restore.textContent = "Восстанавливаю…";
+            busyBtn("btn-hosts-restore", "Восстанавливаю…");
             send("hosts.restore");
         });
 
         // мягкая чистка: убрать только наш блок, не трогая чужие записи
         var clean = document.getElementById("btn-hosts-clean");
         if (clean) clean.addEventListener("click", function () {
-            clean.disabled = true;
-            clean.textContent = "Чищу…";
+            busyBtn("btn-hosts-clean", "Чищу…");
             send("hosts.clean");
         });
 
@@ -2368,8 +2420,7 @@
                 "Все остальные записи пропадут. Резервная копия сохранится,\n" +
                 "вернуть прежнее можно кнопкой «Восстановить». Продолжить?")) return;
 
-            reset.disabled = true;
-            reset.textContent = "Пересоздаю…";
+            busyBtn("btn-hosts-reset", "Пересоздаю…");
             send("hosts.reset");
         });
 
@@ -2395,8 +2446,7 @@
                 "Записать этот текст в системный файл hosts?\n\n" +
                 "Резервная копия уже создана (или создастся сейчас).")) return;
 
-            rawSave.disabled = true;
-            rawSave.textContent = "Сохраняю…";
+            busyBtn("btn-hosts-raw-save", "Сохраняю…");
             send("hosts.raw.save", { text: text });
         });
 
@@ -2432,8 +2482,7 @@
                 "логики входа. Применяем в редактор — вы сможете посмотреть\n" +
                 "и убрать лишнее до сохранения. Продолжить?")) return;
 
-            fixApply.disabled = true;
-            fixApply.textContent = "Применяю…";
+            busyBtn("btn-hosts-fixes-apply", "Применяю…");
 
             send("hosts.fixes.applyMany", {
                 ids: chosen,
@@ -2441,8 +2490,22 @@
             });
         });
 
-        var selectAll = document.getElementById("btn-hosts-fixes-all");
-        if (selectAll) selectAll.addEventListener("click", function () {
+        // Обновить известные наборы из сети. Скачанное ложится в кэш и дальше
+        // применяется без сети — hosts нужен именно тогда, когда сети нет.
+        var fixUpdate = document.getElementById("btn-hosts-fixes-update");
+        if (fixUpdate) fixUpdate.addEventListener("click", function () {
+            busyBtn("btn-hosts-fixes-update", "Обновляю…", 60000);
+
+            var status = document.getElementById("hosts-fixes-status");
+            if (status) {
+                status.textContent = "Скачиваю наборы…";
+                status.className = "row-hint";
+            }
+
+            send("hosts.fixes.update");
+        });
+
+        var selectAll = document.getElementById("btn-hosts-fixes-all");        if (selectAll) selectAll.addEventListener("click", function () {
             document.querySelectorAll("#hosts-fixes-list input[data-fix-id]").forEach(function (b) { b.checked = true; });
             updateFixesSelected();
         });
@@ -2529,11 +2592,8 @@
 
     // ---- редактор hosts: полный текст и разбор от ядра
     function renderHostsRaw(msg) {
-        var save = document.getElementById("btn-hosts-raw-save");
-        if (save) { save.disabled = false; save.textContent = "Сохранить"; }
-
-        var reload = document.getElementById("btn-hosts-raw-reload");
-        if (reload) { reload.disabled = false; reload.textContent = "Обновить"; }
+        idleBtn("btn-hosts-raw-save");
+        idleBtn("btn-hosts-raw-reload");
 
         var status = document.getElementById("hosts-raw-status");
 
@@ -2560,8 +2620,45 @@
         send("hosts.fixes");
     }
 
-    function renderHostsFixes(msg) {
-        var list = document.getElementById("hosts-fixes-list");
+    /// Отчёт об обновлении наборов: по строке на набор, удачные и неудачные.
+    ///
+    /// Отдельно от renderHostsFixes: там список галочек, а здесь результат
+    /// операции. Смешивать нельзя — список перерисовывается из C# отдельным
+    /// сообщением, и если писать отчёт в тот же контейнер, он исчезнет.
+    function renderHostsUpdated(msg) {
+        idleBtn("btn-hosts-fixes-update");
+
+        var status = document.getElementById("hosts-fixes-status");
+        if (!status) return;
+
+        var items = msg.items || [];
+        var ok = msg.ok || 0;
+        var total = msg.total || items.length;
+
+        if (total === 0) {
+            status.textContent = "Известных наборов нет";
+            status.className = "row-hint diag-warn";
+            return;
+        }
+
+        var bad = [];
+        items.forEach(function (r) {
+            if (!r.ok) bad.push(r.name + ": " + (r.error || "ошибка"));
+        });
+
+        if (bad.length === 0) {
+            status.textContent = "Обновлено наборов: " + ok + " из " + total;
+            status.className = "row-hint diag-ok";
+            return;
+        }
+
+        // Частичный успех — самый частый случай: GitHub доступен, зеркало нет.
+        // Пишем и то, и другое, иначе «не обновилось» без причины.
+        status.textContent = "Обновлено " + ok + " из " + total + " · не вышло: " + bad.join("; ");
+        status.className = "row-hint " + (ok > 0 ? "diag-warn" : "diag-bad");
+    }
+
+    function renderHostsFixes(msg) {        var list = document.getElementById("hosts-fixes-list");
         if (!list) return;
 
         list.innerHTML = "";
@@ -2581,7 +2678,12 @@
             // три вида: статичный фикс, вшитый файл, скачиваемый список
             var kind = f.remote ? "remote" : (f.bundled ? "bundled" : "fix");
 
-            var badge = kind === "remote" ? "сеть" : (kind === "bundled" ? "поставка" : "фикс");
+            // У скачиваемых в бейдже не «сеть», а состояние: скачан ли и когда.
+            // Иначе список всегда выглядит одинаково, и человек нажимает
+            // «применить», не зная, что именно применит.
+            var badge = kind === "remote"
+                ? (f.state || "сеть")
+                : (kind === "bundled" ? (f.state || "поставка") : "фикс");
 
             var row = document.createElement("label");
             row.className = "fix-row";
@@ -2610,12 +2712,17 @@
     }
 
     function renderHosts(msg) {
-        // то же имя, что в разметке: иначе после первой операции кнопка
-        // «Обновить» превращается обратно в «Применить»
-        if (apply) { apply.disabled = false; apply.textContent = t("Обновить"); }
-
-        var check = document.getElementById("btn-hosts-check");
-        if (check) { check.disabled = false; check.textContent = "Проверить"; }
+        // Кнопки возвращаем по id, а не через переменную из другого замыкания:
+        // раньше здесь стояла ссылка на `apply` из initHosts, которой в этой
+        // области видимости нет — под "use strict" это ReferenceError, и вся
+        // функция умирала на первой строке. Симптом ровно тот, на который
+        // жалуются: «Пересоздаю…» висит, статус не обновляется, кнопка
+        // «Обновить» больше не нажимается.
+        idleBtn("btn-hosts-apply");
+        idleBtn("btn-hosts-check");
+        idleBtn("btn-hosts-restore");
+        idleBtn("btn-hosts-clean");
+        idleBtn("btn-hosts-reset");
 
         var status = document.getElementById("hosts-status");
         if (status) {
@@ -2967,13 +3074,16 @@
                     fs.className = "row-hint " + (msg.partial ? "diag-warn" : "diag-ok");
                 }
 
-                var apply = document.getElementById("btn-hosts-fixes-apply");
-                if (apply) { apply.disabled = false; apply.textContent = "Применить выбранные"; }
+                idleBtn("btn-hosts-fixes-apply");
                 break;
             }
 
             case "hosts.fixes":
                 renderHostsFixes(msg);
+                break;
+
+            case "hosts.fixes.updated":
+                renderHostsUpdated(msg);
                 break;
 
             case "lists.stats":

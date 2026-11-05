@@ -208,15 +208,23 @@ namespace AutoZapret.Zapret
                 if (isListFile)
                 {
                     string listPath = NormalizePath(value);
+                    string listName = Path.GetFileName(listPath);
 
                     if (!File.Exists(listPath))
                     {
+                        // `*-user.txt` — личные дополнения пользователя, и их
+                        // отсутствие это НОРМА: поставка их не создаёт, а zapret
+                        // спокойно работает без них. Блокировать из-за них значит
+                        // не дать включить обход на чистой установке — ровно то,
+                        // что показал CI: 258 «нет файла» на ровном месте.
+                        if (!IsSupposedToGrow(listName)) continue;
+
                         // пустой ipset-файл — не блокер, hostlist — блокер
                         bool hostlistMissing = option.StartsWith("--hostlist", StringComparison.Ordinal);
 
                         problems.Add(hostlistMissing
-                            ? Blocker("hostlist-missing", "нет файла списка доменов", Path.GetFileName(listPath))
-                            : Warning("ipset-missing", "нет файла списка IP", Path.GetFileName(listPath)));
+                            ? Blocker("hostlist-missing", "нет файла списка доменов", listName)
+                            : Warning("ipset-missing", "нет файла списка IP", listName));
 
                         continue;
                     }

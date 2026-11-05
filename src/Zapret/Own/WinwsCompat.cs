@@ -38,15 +38,34 @@ namespace AutoZapret.Zapret.Own
         /// </summary>
         public bool Lua;
 
+        /// <summary>
+        /// Файлы списков не найдены (движок не установлен, каталога lists нет).
+        ///
+        /// Отдельный флаг, потому что иначе это выглядит как «стратегия плохая»:
+        /// профили выбрасываются один за другим с причиной «нет списков целей»,
+        /// и человек решает, что наш движок не умеет исполнять стратегии.
+        /// На самом деле не хватает данных, а не возможностей.
+        /// </summary>
+        public bool ListsMissing;
+
+        /// <summary>Сколько файлов списков не нашлось.</summary>
+        public int MissingFiles;
+
+
         /// <summary>Порты для WinDivert из `--wf-tcp` / `--wf-udp`.</summary>
         public string WfTcp = "";
         public string WfUdp = "";
 
-        public bool Ok { get { return ProfilesUsable > 0 && !Lua; } }
+        public bool Ok { get { return ProfilesUsable > 0 && !Lua && !ListsMissing; } }
 
         public string Summary()
         {
             if (Lua) return "zapret 2 (Lua) — своим движком не исполнить";
+
+            if (ListsMissing)
+                return "нет файлов списков (" + MissingFiles + " шт.) — движок не установлен, " +
+                       "исполнять нечего: без списков обход трогал бы весь трафик";
+
             if (ProfilesTotal == 0) return "в стратегии нет профилей";
 
             string text = "профилей " + ProfilesUsable + " из " + ProfilesTotal;
@@ -159,6 +178,15 @@ namespace AutoZapret.Zapret.Own
                 result.Profiles = new OwnProfileSet();
                 result.ProfilesUsable = 0;
             }
+
+            // Списки не найдены — это не «стратегия плохая», а «движок не
+            // установлен». Различать обязательно: на чистой машине и в CI
+            // иначе получается «профилей 1 из 9» и виноват наш движок.
+            //
+            // Условие «хоть один файл не найден», а не «ни одного профиля»:
+            // часть профилей живёт на inline-доменах (--hostlist-domains) и
+            // выживает без файлов, из-за чего «1 из 9» выглядело как успех.
+            if (result.MissingFiles > 0) result.ListsMissing = true;
 
             return result;
         }
@@ -532,6 +560,13 @@ namespace AutoZapret.Zapret.Own
         {
             if (!File.Exists(path))
             {
+                // `*-user.txt` — личные дополнения, их отсутствие это норма:
+                // поставка может их не содержать, а zapret работает и без них.
+                // Считать их пропажей значит объявить «движок не установлен»
+                // там, где всё в порядке.
+                if (IsOptionalList(Path.GetFileName(path))) return;
+
+                result.MissingFiles++;
                 Note(result, "список не найден: " + Path.GetFileName(path));
                 return;
             }
@@ -543,11 +578,22 @@ namespace AutoZapret.Zapret.Own
         {
             if (!File.Exists(path))
             {
+                if (IsOptionalList(Path.GetFileName(path))) return;
+
+                result.MissingFiles++;
                 Note(result, "ipset не найден: " + Path.GetFileName(path));
                 return;
             }
 
             filter.LoadIpSet(path, exclude);
+        }
+
+        /// <summary>Файл, которого может не быть, и это не поломка.</summary>
+        private static bool IsOptionalList(string fileName)
+        {
+            string name = (fileName ?? "").ToLowerInvariant();
+
+            return name.EndsWith("-user.txt", StringComparison.Ordinal);
         }
 
         private static void SplitOption(string arg, out string name, out string value)

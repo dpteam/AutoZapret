@@ -33,7 +33,7 @@
     {
       "id": "malw",
       "name": "dns.malw.link (обновляемый)",
-      "url": "https://info.dns.malw.link/hosts",
+      "url": "https://raw.githubusercontent.com/ImMALWARE/dns.malw.link/refs/heads/master/hosts",
       "note": "Большой список заблокированных ресурсов от dns.malw.link. Много записей: применяется только то, чего у вас ещё нет.",
       "cache": "malw-hosts.txt"
     }

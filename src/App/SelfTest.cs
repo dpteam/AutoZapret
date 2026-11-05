@@ -133,6 +133,9 @@ namespace AutoZapret.App
                 Section("совместимость со стратегиями winws");
                 TestWinwsCompat();
 
+                Section("свой движок как основной");
+                TestOwnAsEngine();
+
                 Section("служба");
                 TestServiceManager();
 
@@ -4607,6 +4610,35 @@ namespace AutoZapret.App
             AutoZapret.Zapret.Own.CompatResult compat =
                 AutoZapret.Zapret.Own.WinwsCompat.Parse(strategy, placeholders);
 
+            // zapret2 — Lua, и это должно быть отказом, а не пустым результатом.
+            // Проверяем ДО выхода по спискам: отказ по Lua от списков не зависит.
+            AutoZapret.Zapret.Strategy v2 = store.Find("zapret2.general");
+
+            if (v2 != null)
+            {
+                AutoZapret.Zapret.Own.CompatResult lua =
+                    AutoZapret.Zapret.Own.WinwsCompat.Parse(v2, placeholders);
+
+                Check("совместимость: v2 (Lua) не исполним", !lua.Ok, lua.Summary());
+
+                Check("совместимость: причина — Lua, а не списки",
+                    lua.Lua && lua.Summary().IndexOf("Lua", StringComparison.Ordinal) >= 0,
+                    lua.Summary());
+            }
+
+            if (compat.ListsMissing)
+            {
+                Check("совместимость: без списков отказ внятный",
+                    !compat.Ok &&
+                    compat.Summary().IndexOf("списк", StringComparison.Ordinal) >= 0,
+                    compat.Summary());
+
+                Skip("совместимость: разбор профилей", "engine\\lists не установлен");
+                Skip("совместимость: цепочка fake+X", "engine\\lists не установлен");
+                Skip("совместимость: any-protocol", "engine\\lists не установлен");
+                return;
+            }
+
             Check("совместимость: профили разобраны",
                 compat.ProfilesUsable >= strategy.Profiles.Count - 1,
                 compat.Summary());
@@ -4660,17 +4692,58 @@ namespace AutoZapret.App
             Check("совместимость: выброшенный профиль назван",
                 compat.Dropped.Count == strategy.Profiles.Count - compat.ProfilesUsable,
                 compat.Dropped.Count + " шт.");
+        }
 
-            // zapret2 — Lua, и это должно быть отказом, а не пустым результатом
-            AutoZapret.Zapret.Strategy v2 = store.Find("zapret2.general");
-
-            if (v2 != null)
+        /// <summary>
+        /// Свой движок как полноценный третий движок (не только карточка).
+        ///
+        /// Проверяем то, что нельзя увидеть глазами: он не требует winws,
+        /// но требует драйвер, и его список стратегий — это список v1.
+        /// Ошибка здесь выглядит как «в списке движков есть пункт, а стратегии
+        /// пустые» — то есть человек выбирает движок и получает пустоту.
+        /// </summary>
+        private static void TestOwnAsEngine()
+        {
+            using (AutoZapret.Zapret.ZapretService svc = new AutoZapret.Zapret.ZapretService())
             {
-                AutoZapret.Zapret.Own.CompatResult lua =
-                    AutoZapret.Zapret.Own.WinwsCompat.Parse(v2, placeholders);
+                svc.EnsureStrategies();
 
-                Check("совместимость: v2 (Lua) не исполним", !lua.Ok,
-                    lua.Summary());
+                AutoZapret.Zapret.EngineLocator engine = svc.Engine;
+
+                // свой движок = WinDivert, и ничего больше
+                Check("движок «свой»: доступность = наличие WinDivert",
+                    engine.IsAvailable(AutoZapret.Zapret.EngineKind.Own) ==
+                    AutoZapret.Zapret.WinDivertInterop.IsAvailable(),
+                    engine.IsAvailable(AutoZapret.Zapret.EngineKind.Own) ? "есть" : "нет");
+
+                Check("движок «свой»: версия — версия программы",
+                    engine.VersionOf(AutoZapret.Zapret.EngineKind.Own) == AppInfo.Version,
+                    engine.VersionOf(AutoZapret.Zapret.EngineKind.Own));
+
+                // стратегии своего движка — это стратегии v1, а не пустой список
+                string strategyEngine = AutoZapret.Zapret.ZapretService.StrategyEngineFor("own");
+
+                Check("движок «свой»: стратегии из v1",
+                    strategyEngine == "v1" &&
+                    svc.DescribeStrategies(strategyEngine).Count >= 20,
+                    strategyEngine + ", " + svc.DescribeStrategies(strategyEngine).Count + " шт.");
+
+                Check("движок «свой»: v2 остаётся на v2",
+                    AutoZapret.Zapret.ZapretService.StrategyEngineFor("v2") == "v2", "v2");
+
+                Dictionary<string, object> engines = svc.DescribeEngines();
+
+                Check("движок «свой»: есть в списке движков",
+                    engines.ContainsKey("own") && engines.ContainsKey("ownVersion"),
+                    engines.ContainsKey("own") ? "ok" : "нет ключа");
+
+                // описание недоступности обязано быть, когда движок недоступен
+                if (!engine.IsAvailable(AutoZapret.Zapret.EngineKind.Own))
+                {
+                    Check("движок «свой»: причина названа",
+                        engine.UnavailableReason(AutoZapret.Zapret.EngineKind.Own).Length > 10,
+                        engine.UnavailableReason(AutoZapret.Zapret.EngineKind.Own));
+                }
             }
         }
 

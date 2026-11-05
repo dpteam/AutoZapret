@@ -108,6 +108,35 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
     Record 'проверки UI' $true 'skip: нет node'
 }
 
+# ------------------------------------------------------------------ поставка
+
+Section 'поставка hosts и списков'
+
+# Вшитые наборы hosts обязаны быть hosts, а не HTML-страницей.
+#
+# Это уже случалось: скачали «hosts» с сайта, а пришла HTML-заглушка,
+# и она уехала в поставку. Валидатор в HostsFixes.Download() её бы
+# отбросил, но файл в assets кладут руками — значит проверять надо здесь.
+$hostsProblems = @()
+
+foreach ($file in Get-ChildItem (Join-Path $root 'assets\hosts') -Filter '*.txt' -ErrorAction SilentlyContinue) {
+    $text = [System.IO.File]::ReadAllText($file.FullName)
+
+    if ($text.TrimStart().StartsWith('<')) {
+        $hostsProblems += "$($file.Name): HTML вместо hosts"
+        continue
+    }
+
+    $entries = @($text -split "`n" | Where-Object { $_ -match '^\s*\d{1,3}(\.\d{1,3}){3}\s+\S' })
+    if ($entries.Count -lt 3) {
+        $hostsProblems += "$($file.Name): записей $($entries.Count), похоже на обрезанный файл"
+    }
+}
+
+foreach ($p in $hostsProblems) { Write-Host "  $p" -ForegroundColor Red }
+
+Record 'поставка hosts' ($hostsProblems.Count -eq 0) ("$($hostsProblems.Count) проблем")
+
 # --------------------------------------------------------------------- сборка
 
 Section 'сборка'

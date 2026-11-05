@@ -459,6 +459,20 @@ namespace AutoZapret.Orchestrator
             Log.Info("PRSET", "переключаю на " + label + ": стратегия " + strategy +
                               (filter.Length > 0 ? ", порты " + filter : ""));
 
+            // Пресеты меняют аргументы winws (в том числе игровой фильтр),
+            // а у своего движка аргументов нет — есть профили. Молча запустить
+            // winws вместо выбранного движка значит подменить исполнителя,
+            // поэтому отказываем явно.
+            Settings current = Settings.Current;
+
+            if (current != null && string.Equals(current.EngineKind, "own", StringComparison.OrdinalIgnoreCase))
+            {
+                const string message = "пресеты процессов работают только с zapret";
+
+                Log.Warn("PRSET", message + ": движок «свой» не принимает аргументы winws");
+                return message;
+            }
+
             try
             {
                 _zapret.Stop();

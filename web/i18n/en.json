@@ -266,7 +266,6 @@
   "поставка": "bundle",
   "сеть": "network",
   "фикс": "fix",
-  "Свой движок (эксперимент)": "Own engine (experiment)",
   "Техника desync": "Desync technique",
   "Перехват TCP/443 своим кодом, без winws. Выключите обход выше — два перехватчика одновременно не работают": "TCP/443 interception by our own code, no winws. Turn the bypass above off - two interceptors cannot run together",
   "split — разрезать": "split - cut in two",
@@ -316,5 +315,12 @@
   "Как заставить DPI выбросить фейк, а получателя — не принять его. Работает только с техниками fake и fakedsplit": "How to make the DPI drop the fake while the receiver does not accept it. Works only with the fake and fakedsplit techniques",
   "Или взять готовую стратегию": "Or use a ready strategy",
   "Исполнить стратегию из списка (той же, что у zapret) своим движком. Выбранная стратегия отменяет настройки техники выше — это те же правила, другой исполнитель": "Run a strategy from the list (the same ones zapret uses) with our own engine. The selected strategy overrides the technique settings above - same rules, different executor",
-  "— своя техника —": "- own technique -"
+  "— своя техника —": "- own technique -",
+  "свой движок (без winws)": "own engine (no winws)",
+  "Свой движок: подбор техники": "Own engine: technique picker",
+  "Перехват TCP/443 своим кодом, без winws. Выключите обход выше — два перехватчика одновременно не работают. Для постоянной работы выберите «свой движок» в списке движков, а здесь — подбор техники": "TCP/443 interception by our own code, no winws. Turn the bypass off above - two interceptors do not share the driver. For permanent use pick \"own engine\" in the engine list; this card is for finding the technique",
+  "свой движок": "own engine",
+  "свой движок - те же стратегии, но перехват наш. Драйвер WinDivert общий": "own engine - the same strategies, but our interception. The WinDivert driver is shared",
+  "свой движок недоступен": "own engine is unavailable",
+  "Обновить наборы": "Update sets"
 }

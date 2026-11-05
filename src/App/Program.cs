@@ -25,6 +25,25 @@ namespace AutoZapret.App
             Log.MinLevel = LogLevel.Info;
             Log.Info("APP", AppInfo.Summary());
 
+            // Консоль — UTF-8, а не OEM.
+            //
+            // Без этого на русской Windows (и на Windows-раннере GitHub) весь
+            // вывод CLI превращается в «?????»: .NET пишет строки в кодировке
+            // консоли, а консоль по умолчанию — cp866. В логах CI это выглядит
+            // как «сборка упала, а что именно — не прочитать», и именно так
+            // это и выглядело.
+            //
+            // В try: перенаправленный вывод (selftest > файл, пайп) иногда
+            // не даёт сменить кодировку, и падать из-за этого нельзя.
+            try
+            {
+                Console.OutputEncoding = new System.Text.UTF8Encoding(false);
+            }
+            catch (Exception ex)
+            {
+                Log.Debug("APP", "кодировка консоли: " + ex.Message);
+            }
+
             bool minimized = HasFlag(args, "--minimized");
 
             // ---- режим службы: ОБЯЗАТЕЛЬНО до всего остального

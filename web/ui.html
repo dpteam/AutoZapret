@@ -94,6 +94,7 @@
             <select id="set-engine">
               <option value="v1">zapret 1 (winws)</option>
               <option value="v2">zapret 2 (winws2)</option>
+              <option value="own">свой движок (без winws)</option>
             </select>
           </div>
         </div>
@@ -373,14 +374,15 @@
       </div>
 
       <div class="card" data-advanced>
-        <div class="card-title">Свой движок (эксперимент)</div>
+        <div class="card-title">Свой движок: подбор техники</div>
 
         <div class="row">
           <div>
             <div class="row-label">Техника desync</div>
             <div class="row-hint">
               Перехват TCP/443 своим кодом, без winws. Выключите обход выше —
-              два перехватчика одновременно не работают
+              два перехватчика одновременно не работают. Для постоянной работы
+              выберите «свой движок» в списке движков, а здесь — подбор техники
             </div>
           </div>
           <select id="own-tech">
@@ -804,6 +806,7 @@
 
         <div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap">
           <button class="btn primary" id="btn-hosts-fixes-apply">Применить выбранные</button>
+          <button class="btn" id="btn-hosts-fixes-update">Обновить наборы</button>
           <span class="row-hint mono" id="hosts-fixes-selected"></span>
         </div>
 
