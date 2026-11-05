@@ -2519,6 +2519,13 @@ namespace AutoZapret.App
             // Для постоянной работы фильтр обязателен: иначе движок лезет в банк.
             bool useFilter = Json.GetBool(msg, "filter", true);
 
+            Zapret.Own.OwnFilter filter = useFilter ? Zapret.Own.OwnFilter.FromEngineLists() : null;
+
+            // Профили: разные техники для разных целей, как `--new` у winws.
+            // Включаются по умолчанию — это не отдельный режим, а уточнение
+            // уже выбранной техники: для «остального» остаётся ровно она.
+            bool useProfiles = Json.GetBool(msg, "profiles", true);
+
             Zapret.Own.OwnEngineOptions options = new Zapret.Own.OwnEngineOptions
             {
                 Technique = technique,
@@ -2527,11 +2534,17 @@ namespace AutoZapret.App
                 // Списки читаем только когда они реально нужны: 33 000 подсетей
                 // строятся заметное время, а в режиме проверки техники они
                 // наоборот мешают — надо видеть весь трафик.
-                Filter = useFilter ? Zapret.Own.OwnFilter.FromEngineLists() : null
+                Filter = useProfiles ? null : filter,
+                Profiles = useProfiles
+                    ? Zapret.Own.OwnProfileSet.ZapretLike(technique, filter)
+                    : null
             };
 
             if (options.Filter != null && options.Filter.HasLimits)
                 Log.Info("OWN", "фильтр: " + options.Filter.Describe());
+
+            if (options.Profiles != null)
+                Log.Info("OWN", "профили: " + options.Profiles.Describe());
 
             System.Threading.CancellationTokenSource cancel;
 

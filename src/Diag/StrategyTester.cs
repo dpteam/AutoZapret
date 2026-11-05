@@ -726,9 +726,25 @@ namespace AutoZapret.Diag
         {
             AutoZapret.Zapret.Own.OwnEngineOptions options = new AutoZapret.Zapret.Own.OwnEngineOptions();
 
+            bool useProfiles = false;
+
             for (int i = 0; i < args.Length; i++)
             {
                 string a = args[i];
+
+                // --profiles — набор профилей как у zapret: отдельно google,
+                // отдельно discord, остальное — выбранной техникой
+                if (string.Equals(a, "--profiles", StringComparison.OrdinalIgnoreCase))
+                {
+                    useProfiles = true;
+                    continue;
+                }
+
+                if (string.Equals(a, "--no-profiles", StringComparison.OrdinalIgnoreCase))
+                {
+                    useProfiles = false;
+                    continue;
+                }
 
                 if (string.Equals(a, "--dry", StringComparison.OrdinalIgnoreCase))
                 {
@@ -819,6 +835,16 @@ namespace AutoZapret.Diag
 
             if (options.Seconds <= 0) options.Seconds = 20;
 
+            if (useProfiles)
+            {
+                options.Profiles = AutoZapret.Zapret.Own.OwnProfileSet.ZapretLike(
+                    options.Technique, options.Filter);
+
+                // общий фильтр переехал внутрь профилей: два механизма отбора
+                // одновременно — это два разных ответа на один вопрос
+                options.Filter = null;
+            }
+
             if (!AutoZapret.App.Elevation.IsElevated)
             {
                 Console.WriteLine("нужны права администратора: WinDivert без них не открывается");
@@ -830,6 +856,9 @@ namespace AutoZapret.Diag
 
             if (options.Filter != null)
                 Console.WriteLine("фильтр: " + options.Filter.Describe());
+
+            if (options.Profiles != null)
+                Console.WriteLine("профили: " + options.Profiles.Describe());
 
             Console.WriteLine("откройте https://www.youtube.com в браузере во время работы");
             Console.WriteLine();

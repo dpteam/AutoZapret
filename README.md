@@ -149,4 +149,11 @@ AutoZapret — обёртка. Вся тяжёлая работа сделана
 ```bat
 build.cmd
 AutoZapret.exe --selftest
+
+:: режим службы (нужны права администратора)
+AutoZapret.exe --service install
+AutoZapret.exe --service start
+
+:: свой движок без winws: профили как у zapret, только свои цели, 30 секунд
+AutoZapret.exe --own --filter --profiles 30
 ```

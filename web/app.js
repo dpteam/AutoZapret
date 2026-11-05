@@ -974,7 +974,10 @@
                 overlap: parseInt(document.getElementById("own-overlap").value, 10) || 0,
                 seconds: parseInt(document.getElementById("own-seconds").value, 10) || 30,
                 dry: document.getElementById("own-dry").classList.contains("on"),
-                filter: document.getElementById("own-filter").classList.contains("on")
+                filter: document.getElementById("own-filter").classList.contains("on"),
+                profiles: document.getElementById("own-filter").classList.contains("on") &&
+                    !!document.getElementById("own-profiles") &&
+                    document.getElementById("own-profiles").classList.contains("on")
             });
         });
 
@@ -993,7 +996,25 @@
         var ownFilter = document.getElementById("own-filter");
         if (ownFilter) ownFilter.addEventListener("click", function () {
             ownFilter.classList.toggle("on");
+            syncOwnProfiles();
         });
+
+        syncOwnProfiles();
+
+        function syncOwnProfiles() {
+            // Профили без фильтра бессмысленны: все три претендуют на один
+            // TCP/443, и «google» забрал бы весь трафик. Гасим переключатель
+            // и говорим почему — иначе выглядит как «нажал, ничего не изменилось».
+            var filter = document.getElementById("own-filter");
+            var profiles = document.getElementById("own-profiles");
+            if (!filter || !profiles) return;
+
+            var allowed = filter.classList.contains("on");
+
+            profiles.classList.toggle("disabled", !allowed);
+            profiles.setAttribute("aria-disabled", allowed ? "false" : "true");
+            profiles.title = allowed ? "" : "Сначала включите «Только свои цели»";
+        }
         var ownCompare = document.getElementById("btn-own-compare");
         if (ownCompare) ownCompare.addEventListener("click", function () {
             ownCompare.disabled = true;

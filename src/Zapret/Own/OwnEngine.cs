@@ -27,6 +27,12 @@ namespace AutoZapret.Zapret.Own
         /// </summary>
         public OwnFilter Filter;
 
+        /// <summary>
+        /// Набор профилей: разные техники для разных целей, как `--new` у winws.
+        /// null — один профиль из Technique (режим проверки).
+        /// </summary>
+        public OwnProfileSet Profiles;
+
         /// <summary>Порт назначения для UDP (QUIC). Обычно тот же 443.</summary>
         public int UdpPort = 443;
     }
@@ -213,8 +219,21 @@ namespace AutoZapret.Zapret.Own
             // UDP и TCP — разные ветки целиком: у них разная проверка «наше ли
             // это», разные техники и разные поля. Одна общая функция с ветвлением
             // внутри стала бы нечитаемой и опасной в горячем пути.
-            if (_options.Technique != null && _options.Technique.Kind == Technique.UdpLen)
-                return HandleUdp(handle, addressPtr, packet, length);
+            //
+            // Протокол смотрим ДО разбора TCP: TcpPacket.Parse на UDP вернёт
+            // null, и без этой проверки UDP-профиль молча не сработал бы —
+            // «профиль есть, техника выбрана, обхода нет».
+            if (length < 20) return false;
+            if ((packet[0] >> 4) != 4) return false;
+
+            byte protocol = packet[9];
+
+            bool udpWanted = _options.Profiles != null
+                ? _options.Profiles.HasUdp
+                : (_options.Technique != null && _options.Technique.Kind == Technique.UdpLen);
+
+            if (protocol == 17) return udpWanted && HandleUdp(handle, addressPtr, packet, length);
+            if (protocol != 6) return false;
 
             TcpPacket tcp = TcpPacket.Parse(packet, length);
 
@@ -227,22 +246,42 @@ namespace AutoZapret.Zapret.Own
 
             _stats.ClientHellos++;
 
-            // Фильтр: трогаем только свои цели. Без него движок лез бы в банк
-            // и госуслуги — winws так не делает, и мы не должны.
-            if (_options.Filter != null)
-            {
-                string sni = Payloads.PayloadValidator.ExtractSni(
-                    Payload(tcp), Payloads.PayloadKind.TlsClientHello);
+            string sni = Payloads.PayloadValidator.ExtractSni(
+                Payload(tcp), Payloads.PayloadKind.TlsClientHello);
 
+            // Какую технику применять: решает профиль, а не глобальная настройка.
+            // Первый подходящий выигрывает — порядок профилей и есть приоритет.
+            TechniqueOptions technique = _options.Technique;
+
+            if (_options.Profiles != null && _options.Profiles.Count > 0)
+            {
+                OwnProfile profile = _options.Profiles.MatchTcp(
+                    tcp.DstPort, sni, tcp.DestinationAddress());
+
+                if (profile == null)
+                {
+                    _stats.Skipped++;
+                    return false;   // не наш трафик — уходит как есть
+                }
+
+                profile.Applied++;
+                technique = profile.Technique;
+            }
+            else if (_options.Filter != null)
+            {
+                // Старый режим: одна техника + общий фильтр. Оставлен, потому
+                // что им пользуется сравнение техник и CLI без профилей.
                 if (!_options.Filter.ShouldDesync(sni, tcp.DestinationAddress()))
                 {
                     _stats.Skipped++;
-                    return false;   // пакет уходит как есть
+                    return false;
                 }
             }
 
+            if (technique == null) return false;
+
             string error;
-            List<Desync.Outgoing> outgoing = Desync.Build(tcp, _options.Technique, out error);
+            List<Desync.Outgoing> outgoing = Desync.Build(tcp, technique, out error);
 
             if (outgoing.Count == 0)
             {
@@ -257,7 +296,7 @@ namespace AutoZapret.Zapret.Own
             if (_options.DryRun)
             {
                 Log.Info("OWN", "сделал бы " + tcp.SrcPort + "->" + tcp.DstPort + ": " +
-                                _options.Technique.Describe() + " → " +
+                                technique.Describe() + " → " +
                                 outgoing.Count + " пакет(ов), payload " + tcp.PayloadLength);
 
                 foreach (Desync.Outgoing o in outgoing)
@@ -291,7 +330,7 @@ namespace AutoZapret.Zapret.Own
 
             if (_stats.Applied <= 20 || _stats.Applied % 100 == 0)
             {
-                Log.Info("OWN", _options.Technique.Describe() + " " +
+                Log.Info("OWN", technique.Describe() + " " +
                                 tcp.SrcPort + "->" + tcp.DstPort + ": " +
                                 tcp.PayloadLength + " байт → " + sent + " пакет(ов), seq " + tcp.Seq);
             }
@@ -323,11 +362,29 @@ namespace AutoZapret.Zapret.Own
 
             _stats.ClientHellos++;    // для UDP это QUIC Initial, счётчик общий
 
-            // Фильтр по адресу: у QUIC нет SNI в открытом виде (он зашифрован),
-            // поэтому решение принимается только по подсетям. Если в фильтре
-            // есть ТОЛЬКО домены, UDP не трогаем вовсе — иначе обойдём всё подряд.
-            if (_options.Filter != null)
+            // Какую технику применять — решает профиль (если он есть).
+            // У QUIC SNI зашифрован, поэтому профиль выбирается по порту и
+            // подсетям: домены здесь не помогут.
+            TechniqueOptions technique = _options.Technique;
+
+            if (_options.Profiles != null && _options.Profiles.Count > 0)
             {
+                OwnProfile profile = _options.Profiles.MatchUdp(udp.DstPort, UdpDestination(udp));
+
+                if (profile == null)
+                {
+                    _stats.Skipped++;
+                    return false;
+                }
+
+                profile.Applied++;
+                technique = profile.Technique;
+            }
+            else if (_options.Filter != null)
+            {
+                // Старый режим: общий фильтр. У QUIC нет SNI в открытом виде,
+                // поэтому решение только по подсетям. Если в фильтре есть
+                // ТОЛЬКО домены, UDP не трогаем вовсе — иначе обойдём всё подряд.
                 System.Net.IPAddress destination = UdpDestination(udp);
 
                 bool domainOnly = _options.Filter.HostCount > 0 && _options.Filter.IpCount == 0;
@@ -339,8 +396,11 @@ namespace AutoZapret.Zapret.Own
                 }
             }
 
+            // Профиль может быть TCP-only: тогда QUIC трогать нечем.
+            if (technique == null || technique.Kind != Technique.UdpLen) return false;
+
             string error;
-            List<Desync.Outgoing> outgoing = Desync.BuildUdp(udp, _options.Technique, out error);
+            List<Desync.Outgoing> outgoing = Desync.BuildUdp(udp, technique, out error);
 
             if (outgoing.Count == 0)
             {

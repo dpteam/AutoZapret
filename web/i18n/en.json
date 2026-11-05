@@ -309,5 +309,8 @@
   "останавливается…": "stopping…",
   "работает": "running",
   "остановлена": "stopped",
-  "не установлена": "not installed"
+  "не установлена": "not installed",
+  "Профили, как у zapret": "Profiles, like zapret",
+  "Отдельная техника для Google и Discord, выбранная выше — для остального. То, что пробивает Google, не обязано пробивать Discord. Работает только вместе с «Только свои цели»": "A separate technique for Google and Discord; the one chosen above is used for everything else. What gets through Google does not have to get through Discord. Works only together with \"Only my targets\"",
+  "Сначала включите «Только свои цели»": "Enable \"Only my targets\" first"
 }

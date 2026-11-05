@@ -234,6 +234,27 @@ namespace AutoZapret.Zapret.Own
             return a.Length.CompareTo(b.Length);
         }
 
+        /// <summary>
+        /// Скопировать диапазоны из другого набора.
+        ///
+        /// Нужно профилям: у них свои цели, но подсети-исключения общие.
+        /// Копируем уже сведённые интервалы, а не исходные CIDR — их у нас
+        /// в этой структуре и нет, и это правильно: после Build() важны
+        /// именно интервалы.
+        /// </summary>
+        public void CopyFrom(IpRangeSet other)
+        {
+            if (other == null) return;
+
+            other.Build();
+
+            _v4.AddRange(other._v4Sorted);
+            _v6.AddRange(other._v6Sorted);
+
+            _built = false;
+            Build();
+        }
+
         /// <summary>Загрузить набор из файла ipset (по строке на запись).</summary>
         public static IpRangeSet Load(string path, out int invalid)
         {

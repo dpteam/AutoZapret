@@ -127,6 +127,9 @@ namespace AutoZapret.App
                 Section("фильтр своего движка");
                 TestOwnFilter();
 
+                Section("профили своего движка");
+                TestOwnProfiles();
+
                 Section("служба");
                 TestServiceManager();
 
@@ -4343,6 +4346,121 @@ namespace AutoZapret.App
             {
                 Check("служба", false, ex.Message);
             }
+        }
+
+        /// <summary>
+        /// Профили: выбор техники по цели, как `--new` у winws.
+        ///
+        /// Проверяем ровно то, на чём «движок работает, а обхода нет»:
+        ///   * узкий профиль выигрывает у широкого (порядок = приоритет);
+        ///   * исключения наследуются в профиль (банк не обходим даже в google);
+        ///   * чужой порт и чужой домен не трогаем;
+        ///   * без фильтра профилей нет — прежнее поведение не меняется.
+        /// </summary>
+        private static void TestOwnProfiles()
+        {
+            string dir = System.IO.Path.Combine(Paths.DataDir, "selftest-profiles");
+            System.IO.Directory.CreateDirectory(dir);
+
+            string hosts = System.IO.Path.Combine(dir, "hosts.txt");
+            System.IO.File.WriteAllText(hosts,
+                "youtube.com\ndiscord.com\nexample.com\nbank.example\n");
+
+            string exclude = System.IO.Path.Combine(dir, "exclude.txt");
+            System.IO.File.WriteAllText(exclude, "bank.example\n");
+
+            AutoZapret.Zapret.Own.OwnFilter general = new AutoZapret.Zapret.Own.OwnFilter();
+
+            general.LoadHosts(hosts, false);
+            general.LoadHosts(exclude, true);
+
+            Check("профили: общий фильтр загружен",
+                general.HasLimits && general.HostCount == 4 && general.HostExcludeCount == 1,
+                general.Describe());
+
+            AutoZapret.Zapret.Own.TechniqueOptions fallback =
+                new AutoZapret.Zapret.Own.TechniqueOptions
+                {
+                    Kind = AutoZapret.Zapret.Own.Technique.Split,
+                    Position = 1
+                };
+
+            AutoZapret.Zapret.Own.OwnProfileSet set =
+                AutoZapret.Zapret.Own.OwnProfileSet.ZapretLike(fallback, general);
+
+            Check("профили: три штуки", set.Count == 3, set.Count.ToString());
+
+            System.Net.IPAddress googleIp = System.Net.IPAddress.Parse("142.250.1.1");
+            System.Net.IPAddress discordIp = System.Net.IPAddress.Parse("162.159.128.1");
+            System.Net.IPAddress otherIp = System.Net.IPAddress.Parse("93.184.216.34");
+
+            AutoZapret.Zapret.Own.OwnProfile yt = set.MatchTcp(443, "www.youtube.com", googleIp);
+            Check("профили: youtube → google",
+                yt != null && yt.Name == "google",
+                yt == null ? "null" : yt.Name);
+
+            AutoZapret.Zapret.Own.OwnProfile dc = set.MatchTcp(443, "gateway.discord.gg", discordIp);
+            Check("профили: discord → discord",
+                dc != null && dc.Name == "discord",
+                dc == null ? "null" : dc.Name);
+
+            AutoZapret.Zapret.Own.OwnProfile other = set.MatchTcp(443, "example.com", otherIp);
+            Check("профили: остальное → выбранная техника",
+                other != null && other.Name == "остальное" && other.Technique == fallback,
+                other == null ? "null" : other.Name);
+
+            // чужой домен: не в списках — не трогаем вовсе
+            Check("профили: чужой домен не трогаем",
+                set.MatchTcp(443, "sberbank.ru", otherIp) == null, "sberbank.ru");
+
+            // исключение обязано работать ВНУТРИ профиля: bank.example попал бы
+            // в google только по ошибке конфигурации, но проверять надо
+            Check("профили: исключение наследуется",
+                set.MatchTcp(443, "bank.example", googleIp) == null, "bank.example");
+
+            // порт 8443 есть только у discord: youtube туда не лезет
+            Check("профили: чужой порт не трогаем",
+                set.MatchTcp(8443, "www.youtube.com", googleIp) == null, "8443");
+
+            // порядок: узкий профиль раньше широкого
+            AutoZapret.Zapret.Own.OwnProfileSet order = new AutoZapret.Zapret.Own.OwnProfileSet();
+
+            AutoZapret.Zapret.Own.OwnFilter narrow = new AutoZapret.Zapret.Own.OwnFilter();
+            narrow.AddHost("youtube.com");
+
+            order.Add(new AutoZapret.Zapret.Own.OwnProfile
+            {
+                Name = "узкий",
+                Technique = fallback,
+                Filter = narrow
+            });
+
+            order.Add(new AutoZapret.Zapret.Own.OwnProfile
+            {
+                Name = "широкий",
+                Technique = fallback,
+                Filter = general
+            });
+
+            AutoZapret.Zapret.Own.OwnProfile first = order.MatchTcp(443, "www.youtube.com", googleIp);
+
+            Check("профили: первый подходящий выигрывает",
+                first != null && first.Name == "узкий",
+                first == null ? "null" : first.Name);
+
+            // без фильтра профилей нет: режим «весь трафик» не меняется
+            AutoZapret.Zapret.Own.OwnProfileSet plain =
+                AutoZapret.Zapret.Own.OwnProfileSet.ZapretLike(fallback, null);
+
+            Check("профили: без фильтра один",
+                plain.Count == 1 && plain.MatchTcp(443, "", otherIp) != null,
+                plain.Describe());
+
+            // у split нет UDP-профилей: QUIC не трогаем
+            Check("профили: UDP не трогаем",
+                !set.HasUdp && set.MatchUdp(443, googleIp) == null, "udp");
+
+            try { System.IO.Directory.Delete(dir, true); } catch { }
         }
 
         private static void TestSniffResult()

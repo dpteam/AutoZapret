@@ -7,6 +7,7 @@ using System.IO.Compression;
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
+using AutoZapret.App;
 using AutoZapret.Core;
 
 namespace AutoZapret.Update
@@ -306,9 +307,23 @@ namespace AutoZapret.Update
                 if (!File.Exists(Path.Combine(extract, "AutoZapret.exe")))
                     return "в архиве нет AutoZapret.exe";
 
+                // ---- служба держит наш exe
+                //
+                // Если служба работает, то AutoZapret.exe занят ЕЁ процессом
+                // (--service), и xcopy не сможет его перезаписать. Хуже того,
+                // при падении служба перезапускается сама и будет драться с
+                // заменщиком за файл. Поэтому останавливаем её ДО замены и
+                // поднимаем после — это и есть «обновление при службе».
+                Report("проверяю службу…");
+                bool serviceWasRunning = StopServiceForUpdate();
+
                 Report("готовлю замену…");
-                string batPath = WriteReplacer(temp, extract);
-                if (batPath == null) return "не удалось создать скрипт замены";
+                string batPath = WriteReplacer(temp, extract, serviceWasRunning);
+                if (batPath == null)
+                {
+                    if (serviceWasRunning) StartServiceAfterUpdate();
+                    return "не удалось создать скрипт замены";
+                }
 
                 Report("перезапускаюсь…");
                 Process.Start(new ProcessStartInfo
@@ -331,10 +346,63 @@ namespace AutoZapret.Update
         }
 
         /// <summary>
+        /// Остановить службу перед заменой файлов. true — она работала и её
+        /// надо вернуть после обновления.
+        ///
+        /// Не через ServiceManager напрямую: там проверка прав, а обновление
+        /// может идти и без админа (тогда службы точно нет). Ошибку глушим —
+        /// если службу остановить не удалось, обновление всё равно попробуем,
+        /// но предупредим: файл может оказаться занят.
+        /// </summary>
+        private static bool StopServiceForUpdate()
+        {
+            try
+            {
+                ServiceStatus status = ServiceManager.Query();
+
+                if (!status.Installed || (!status.Running && !status.StartPending))
+                    return false;
+
+                Log.Info("UPD", "служба работает — останавливаю её на время обновления");
+
+                ServiceResult result = ServiceManager.Stop();
+
+                if (!result.Ok)
+                {
+                    Log.Warn("UPD", "служба не остановилась: " + result.Message +
+                                    " — замена файлов может не пройти");
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("UPD", "проверка службы: " + ex.Message);
+                return false;
+            }
+        }
+
+        /// <summary>Вернуть службу после неудачной подготовки обновления.</summary>
+        private static void StartServiceAfterUpdate()
+        {
+            try
+            {
+                ServiceResult result = ServiceManager.Start();
+
+                if (!result.Ok)
+                    Log.Warn("UPD", "служба не поднялась обратно: " + result.Message);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("UPD", "запуск службы: " + ex.Message);
+            }
+        }
+
+        /// <summary>
         /// Скрипт-заменщик. Ждёт нашего PID, потом копирует.
         /// Без ожидания Windows не даст перезаписать запущенный exe.
         /// </summary>
-        private static string WriteReplacer(string tempDir, string extractDir)
+        private static string WriteReplacer(string tempDir, string extractDir, bool restartService = false)
         {
             try
             {
@@ -360,11 +428,32 @@ namespace AutoZapret.Update
                 bat.AppendLine();
                 bat.AppendLine("rem на всякий случай гасим движок");
                 bat.AppendLine("taskkill /IM winws.exe /F >nul 2>&1");
+                bat.AppendLine("taskkill /IM winws2.exe /F >nul 2>&1");
                 bat.AppendLine("ping -n 2 127.0.0.1 >nul");
                 bat.AppendLine();
+
+                // Служба запускает ТОТ ЖЕ exe, который мы сейчас заменяем.
+                // Если её не остановить, xcopy упрётся в занятый файл, а
+                // восстановление после «падения» начнёт драться с нами за
+                // этот же файл — обновление будет циклически ломаться.
+                if (restartService)
+                {
+                    bat.AppendLine("rem служба держала обновляемый exe — останавливаем");
+                    bat.AppendLine("sc stop \"" + ServiceManager.Name + "\" >nul 2>&1");
+                    bat.AppendLine("ping -n 4 127.0.0.1 >nul");
+                }
+
                 bat.AppendLine("rem копируем поверх");
                 bat.AppendLine("xcopy \"" + extractDir + "\\*\" \"" + targetDir + "\\\" /E /Y /I /Q >nul");
                 bat.AppendLine();
+
+                if (restartService)
+                {
+                    bat.AppendLine("rem возвращаем службу — она уже на новой версии");
+                    bat.AppendLine("sc start \"" + ServiceManager.Name + "\" >nul 2>&1");
+                    bat.AppendLine("ping -n 2 127.0.0.1 >nul");
+                }
+
                 bat.AppendLine("rem запускаем новую версию");
                 bat.AppendLine("start \"\" \"" + exePath + "\"");
                 bat.AppendLine();

@@ -58,6 +58,38 @@ namespace AutoZapret.Zapret.Own
             return string.Join(", ", parts.ToArray());
         }
 
+        /// <summary>Добавить домен в цели (для профилей).</summary>
+        public void AddHost(string domain)
+        {
+            string d = NormalizeDomain(domain);
+            if (d.Length == 0) return;
+
+            if (!_hosts.Contains(d)) _hosts.Add(d);
+        }
+
+        /// <summary>
+        /// Скопировать исключения из другого фильтра.
+        ///
+        /// Нужно профилям: у них свои цели, но исключения общие. Банк не должен
+        /// обходиться только потому, что попал в профиль «google».
+        /// </summary>
+        public void CopyExcludesFrom(OwnFilter other)
+        {
+            if (other == null) return;
+
+            foreach (string host in other._hostsExclude)
+                if (!_hostsExclude.Contains(host)) _hostsExclude.Add(host);
+
+            if (other._ipsetExclude != null && other._ipsetExclude.Count > 0)
+            {
+                if (_ipsetExclude == null) _ipsetExclude = new IpRangeSet();
+
+                // копируем через строковое представление: IpRangeSet не хранит
+                // исходные CIDR, поэтому переносим диапазоны как есть
+                _ipsetExclude.CopyFrom(other._ipsetExclude);
+            }
+        }
+
         // ------------------------------------------------------------------ load
 
         /// <summary>Загрузить списки из engine\lists. Отсутствующие файлы — не ошибка.</summary>

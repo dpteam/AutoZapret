@@ -494,6 +494,10 @@ input:focus, select:focus { border-color: var(--accent-blue); }
 .switch.on { background: rgba(0,214,143,.18); border-color: rgba(0,214,143,.5); }
 .switch.on::after { transform: translateX(17px); background: var(--accent-green); }
 
+/* Переключатель, который сейчас ничего не значит: видно, что он не выключен
+   человеком, а недоступен по контексту (профили без фильтра). */
+.switch.disabled { opacity: .4; cursor: not-allowed; }
+
 /* ---------------------------------------------------------------- логи */
 
 .log-toolbar {
