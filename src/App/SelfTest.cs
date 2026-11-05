@@ -295,6 +295,29 @@ namespace AutoZapret.App
             Check("стратегия v1 round-trip", back.StrategyIdV1 == "flowseal.general-alt12", back.StrategyIdV1);
             Check("стратегия v2 round-trip", back.StrategyIdV2 == "zapret2.general-alt12", back.StrategyIdV2);
 
+            // КАЖДЫЙ допустимый движок обязан пережить сохранение.
+            //
+            // Регресс, который стоил живой отладки: Normalize() знал только
+            // v1/v2, поэтому `EngineKind = "own"` при Save() тихо превращался
+            // в "v1". Дальше смена движка останавливала winws, сохраняла
+            // настройки — и тут же запускала winws заново, потому что читала
+            // уже "v1". Со стороны: «выбрал свой движок, а оно перекинуло на
+            // winws». Проверяем не строку, а полный цикл save -> load.
+            foreach (string kind in new[] { "v1", "v2", "own" })
+            {
+                Settings each = new Settings { EngineKind = kind };
+                each.Save();
+
+                Settings eachBack = Settings.Load();
+
+                Check("движок «" + kind + "» переживает сохранение",
+                    eachBack.EngineKind == kind, eachBack.EngineKind);
+            }
+
+            // и после этого возвращаем исходное состояние проб
+            probe.Save();
+            back = Settings.Load();
+
             // нормализация
             Settings bad = new Settings { ProxyPort = 999999, GameFilter = "мусор", ProxySecret = "не hex" };
             bad.Normalize();

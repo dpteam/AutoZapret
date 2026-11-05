@@ -21,7 +21,7 @@ namespace AutoZapret.Core
         public const int CurrentSchema = 1;
 
         // ---- engine
-        public string EngineKind = "v1";           // v1 | v2
+        public string EngineKind = "v1";           // v1 | v2 | own
         public string EngineVersion = "";          // заполняется после fetch-engine
 
         // ---- zapret
@@ -317,7 +317,7 @@ namespace AutoZapret.Core
         /// <summary>Приводит всё в допустимые границы. Идемпотентно.</summary>
         public void Normalize()
         {
-            EngineKind = OneOf(EngineKind, "v1", "v2");
+            EngineKind = OneOf(EngineKind, "v1", "v2", "own");
             GameFilter = OneOf(GameFilter, "off", "tcp", "udp", "tcp+udp");
             IpsetMode = OneOf(IpsetMode, "off", "loaded", "any");
             Theme = OneOf(Theme, "dark", "light");

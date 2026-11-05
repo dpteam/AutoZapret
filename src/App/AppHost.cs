@@ -4436,8 +4436,15 @@ namespace AutoZapret.App
         /// </summary>
         private string StartEngine(string strategyId)
         {
-            if (KindOf(_settings.EngineKind) != EngineKind.Own)
-                return _zapret.Start(strategyId);
+            bool own = KindOf(_settings.EngineKind) == EngineKind.Own;
+
+            // Пишем ЯВНО, кого запускаем. Раньше в логе было «старт V1 стратегии»
+            // без указания, почему выбран winws, и разобраться, что настройка
+            // движка потерялась, можно было только чтением кода.
+            Log.Info("WINWS", "запуск обхода: движок " + _settings.EngineKind +
+                              " → " + (own ? "свой, без winws" : "winws"));
+
+            if (!own) return _zapret.Start(strategyId);
 
             return StartOwnWithStrategy(strategyId);
         }
