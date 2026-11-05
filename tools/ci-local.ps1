@@ -232,7 +232,14 @@ if ($engineReady -and -not $SkipEngine) {
 # Не «прочитать список флагов», а прогнать каждую стратегию через настоящий
 # движок с --dry-run: он проверяет имена опций, значения, файлы и форматы.
 # Именно так ловится «стратегия есть, а winws её не примет».
-if ($engineReady -and -not $SkipEngine) {
+#
+# ВАЖНО: winws.exe/winws2.exe имеют манифест requireAdministrator. Запуск из
+# НЕповышенной консоли показывает окно UAC на КАЖДЫЙ запуск — то есть 44 окна
+# на 44 стратегии. Поэтому без прав аудит пропускается, а не мучает человека:
+# вручную он запускается через tools\audit.cmd (там ровно один UAC).
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if ($engineReady -and -not $SkipEngine -and $isAdmin) {
     Section 'аргументы стратегий (dry-run движка)'
     Push-Location $root
     try {
@@ -243,6 +250,8 @@ if ($engineReady -and -not $SkipEngine) {
     $audit | Out-File -FilePath $log -Append -Encoding utf8
     $audit | Select-Object -Last 6 | ForEach-Object { Write-Host ("  " + $_) }
     Record 'стратегии: аргументы' ($code -eq 0) ''
+} elseif ($engineReady -and -not $SkipEngine) {
+    Record 'стратегии: аргументы' $true 'skip: нужны права администратора (запустите tools\audit.cmd)'
 } else {
     Record 'стратегии: аргументы' $true 'skip: движок не установлен'
 }

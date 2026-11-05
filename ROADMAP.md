@@ -1063,13 +1063,86 @@ WinDivert + модификация пакетов. Вся «магия» — н�
 
 ---
 
-### P12 — Android-версия `[ ]` ⭐ задача со звёздочкой, САМОЕ ПОСЛЕДНЕЕ
+### P12 — Android-версия `[~]` ⭐ решение принято 2026-11-05: делаем
 
 > Ориентир: [romanvht/ByeByeDPI](https://github.com/romanvht/ByeByeDPI) — Kotlin, **GPL-3.0**,
 > minSdk 21, 4 ABI, движок **byedpi** собран нативно через CMake, трафик заворачивается
 > через `VpnService` + tun fd.
 
-**Честная оценка «насколько легко»: приложение — средне, движок — это и есть вся работа.**
+#### Решение: .NET 9 Android, не Kotlin и не MAUI
+
+Проверено по коду: наш Telegram-прокси (`MtProtoHandshake`, `AesCtr`, `WsClient`,
+`WsTunnel`, `MtProtoSplitter`) — чистый BCL (`System.Net.Sockets`, `SslStream`,
+AES). Он **не требует WinDivert** и переносится на `net9.0-android` как есть.
+UI тоже: `web/` вшивается в APK, а `chrome.webview.postMessage` подменяется
+тонким шимом (`@JavascriptInterface`) — ровно ради этого мост и делался в двух
+функциях.
+
+Поэтому Android-версия = **отдельная папка `android/`** на `net9.0-android`:
+
+```
+web/ui.html + app.js + theme.css   (одни и те же файлы, без форка)
+        ↕  шим: window.chrome.webview → @JavascriptInterface
+MainActivity (WebView)  +  foreground-сервис (прокси/движок)
+```
+
+Kotlin не берём: он потребовал бы переписать уже отлаженный протокол прокси и
+дал бы два источника правды для UI.
+
+#### Две ступени (обе в P12)
+
+**Ступень A — движок desync и локальный SOCKS5 (первое, что можно потрогать).**
+
+Android без root **не умеет** ни WinDivert, ни raw-сокеты. Значит «полный обход»
+здесь делается на уровне сокета, как в ByeDPI:
+
+* принимаем SOCKS5 на `127.0.0.1`, поднимаем соединение к цели;
+* первый `write` (TLS ClientHello) режем на части и отправляем с `TCP_NODELAY` —
+  DPI видит два сегмента и не склеивает их;
+* режимы: `split` по позиции, `disorder` (вторая часть раньше первой),
+  `split+delay`, повтор фейкового **соединения** к декай-хосту (без raw-сокетов).
+* Telegram умеет SOCKS5 из коробки, браузер — через настройки прокси. Это уже
+  рабочий обход, без VPN и без root.
+
+**Ступень B — `VpnService` поверх ступени A.**
+
+Чтобы завернуть весь трафик в локальный прокси, нужен user-space TCP: tun отдаёт
+IP-пакеты, а нам нужны потоки. Это самая дорогая часть P12, и делать её имеет
+смысл только когда ступень A проверена на живом телефоне.
+
+#### Что остаётся в силе из прежней оценки
+
+| Наш компонент | На Android | Почему |
+|---|---|---|
+| .NET Framework 4.8 | ❌ | Только `net9.0-android` |
+| WinForms | ❌ | Activity + WebView, без MAUI |
+| WebView2 | ❌ | `android.webkit.WebView` + шим моста |
+| **WinDivert** | ❌❌ | Нужен `VpnService` (ступень B) или сокет-уровень (ступень A) |
+| **winws.exe / winws2.exe** | ❌❌ | Windows PE, на Android неприменимо |
+
+Переносится без изменений: `Json`, `AtomicFile`, `Log`, `Settings`,
+`StrategyParser`/`StrategyStore` (модель), `HostlistManager`, `PayloadValidator`,
+`ScoreStore`/`Bandit`/`WilsonLowerBound`, `BlockKind`/`DeepProbe`, а также весь
+`src/Proxy/*`.
+
+#### Оценка (пересмотрена под ступени)
+
+| Этап | Оценка |
+|---|---|
+| Тулчейн (`dotnet workload install android`), пустой APK на телефоне | 0.5 дня |
+| Шим моста + WebView + наши экраны (стабы движка) | 1–2 дня |
+| Ступень A: SOCKS5 + split/disorder + настройки + сервис | 3–5 дней |
+| Ступень B: `VpnService` + user-space TCP + per-app | 2–3 недели |
+| Тесты на живых устройствах (Android 7…15) | 1–2 недели |
+
+**Итого до первой полезной версии (ступень A): ~неделя.** До полного VPN —
+плюс 3–4 недели.
+
+#### Юридическая мина — не изменилась
+
+**ByeByeDPI — GPL-3.0.** Код и бинарники byedpi не берём: только идеи и своя
+реализация. Иначе Android-приложение обязано стать GPL-3.0 и это отпугнёт
+часть пользователей.
 
 #### Что НЕ переносится вообще (и почему)
 

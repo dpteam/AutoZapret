@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0-android</TargetFramework>
+    <SupportedOSPlatformVersion>21</SupportedOSPlatformVersion>
+    <OutputType>Exe</OutputType>
+
+    <!-- Стиль как в десктопном проекте: без NRT, без неявных using -->
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+
+    <ApplicationId>ru.autozapret.android</ApplicationId>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>0.1.0</ApplicationDisplayVersion>
+
+    <AssemblyName>AutoZapret.Android</AssemblyName>
+    <RootNamespace>AutoZapret.Android</RootNamespace>
+
+    <!--
+      Trimming выключен: у нас мало кода, а обрезатель любит выкидывать то,
+      что вызывается только из Java (JS-интерфейс) или через рефлексию.
+    -->
+    <TrimMode>partial</TrimMode>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Экран приложения: одна страница, без внешних зависимостей -->
+    <AndroidAsset Include="Assets\mobile.html">
+      <Link>Assets/mobile.html</Link>
+    </AndroidAsset>
+  </ItemGroup>
+</Project>
