@@ -1449,6 +1449,14 @@
     }
 
     function renderSystemDns(msg) {
+        // Кнопки по id, а не по переменной из чужой области видимости.
+        //
+        // Здесь стояло `if (on) { on.disabled = false; ... }`, где `on`
+        // объявлена в другой функции. Под "use strict" это ReferenceError,
+        // и renderSystemDns умирала на первой строке: статус не обновлялся,
+        // кнопки навсегда оставались в «Включаю…», а причина отказа не
+        // показывалась — человек видел «включил, а ничего не произошло».
+        var on = document.getElementById("btn-sysdns-on");
         if (on) { on.disabled = false; on.textContent = "Включить"; }
 
         var off = document.getElementById("btn-sysdns-off");
@@ -1463,10 +1471,22 @@
             return;
         }
 
+        // Опасное состояние важнее любой статистики: система смотрит на нас,
+        // а мы молчим. Это «нет интернета» целиком — пишем прямо.
+        if (msg.problem) {
+            status.textContent = msg.problem;
+            status.className = "row-hint diag-bad";
+            return;
+        }
+
         var parts = [];
         parts.push(msg.pointed ? msg.target : "системный DNS: провайдера (не переключён)");
         parts.push("резолвер: " + (msg.status || "—"));
         if (msg.upstream) parts.push("DoH: " + msg.upstream);
+
+        // Запасной сервер виден: человек должен знать, что выключение программы
+        // не оставит его без DNS.
+        if (msg.pointed && msg.fallback) parts.push("запасной DNS есть");
 
         status.textContent = parts.join(" · ");
         status.className = "row-hint " + (msg.enabled ? "diag-ok" : "");
@@ -2855,7 +2875,8 @@
         status.className = "row-hint " + (ok > 0 ? "diag-warn" : "diag-bad");
     }
 
-    function renderHostsFixes(msg) {        var list = document.getElementById("hosts-fixes-list");
+    function renderHostsFixes(msg) {
+        var list = document.getElementById("hosts-fixes-list");
         if (!list) return;
 
         list.innerHTML = "";
@@ -3455,6 +3476,9 @@
         // список стратегий: проверяется «не слетел ли выбор при перестройке»
         renderStrategies: renderStrategies,
         renderState: renderState,
+        // карточка DNS: проверяется, что опасное состояние видно и кнопки
+        // возвращаются из «Включаю…»
+        renderSystemDns: renderSystemDns,
         missingKeys: function () {
             // какие русские строки в разметке остались без перевода
             if (!i18nDict) return [];

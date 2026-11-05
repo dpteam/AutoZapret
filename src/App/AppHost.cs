@@ -237,6 +237,7 @@ namespace AutoZapret.App
                 PushAutoStart();
                 TryAutoUpdateLists();
                 TryStartSystemDns();
+                StartDnsWatchdog();
                 TryAutoStartProtection();
                 CheckUpdatesOnStart();
             });
@@ -556,6 +557,21 @@ namespace AutoZapret.App
                     if (error != null)
                     {
                         bridge.Send(WebBridge.Msg("sysdns", "ok", false, "error", error));
+                        return;
+                    }
+
+                    // Проверяем, что резолвер ОТВЕЧАЕТ, а не просто «порт открыт».
+                    // Переключить систему на молчащий 127.0.0.1 — это оставить
+                    // её без DNS вовсе, и человек будет думать на обход.
+                    if (!_localDns.SelfCheck(8000))
+                    {
+                        _localDns.Stop();
+
+                        Log.Error("DNS", "резолвер не ответил на самопроверку — системный DNS не меняем");
+
+                        bridge.Send(WebBridge.Msg("sysdns", "ok", false,
+                            "error", "локальный DNS не отвечает (DoH недоступен) — системный DNS " +
+                                     "не переключён, интернет остался как был"));
                         return;
                     }
 
@@ -2324,24 +2340,106 @@ namespace AutoZapret.App
 
             string error = _localDns.Start();
 
+            if (error == null && !_localDns.SelfCheck(8000))
+                error = "резолвер не отвечает (DoH недоступен?)";
+
             if (error != null)
             {
-                Log.Error("DNS", "системный DNS указывает на 127.0.0.1, а резолвер не запустился: " + error);
+                Log.Error("DNS", "системный DNS указывает на 127.0.0.1, а резолвер не работает: " + error);
+
+                // Ключевое: НЕ оставляем систему с мёртвым DNS.
+                //
+                // Раньше здесь было только уведомление в трее, а адаптер
+                // продолжал смотреть на 127.0.0.1. Человек получал машину без
+                // интернета и искал причину где угодно, кроме DNS. Возврат
+                // серверов — единственное правильное действие: пусть будет
+                // DNS провайдера, но будет.
+                string restored = Core.SystemDns.Disable();
+
+                _settings.SystemDns = false;
+                _settings.Save();
+
+                SendSystemDns();
 
                 _tray.Notify(AppInfo.Name,
-                    "DNS системы указывает на 127.0.0.1, но локальный резолвер не запустился (" + error +
-                    "). DNS не работает — откройте «Диагностика» и нажмите «Вернуть DNS».",
-                    ToolTipIcon.Error);
+                    restored == null
+                        ? "Локальный DNS не запустился (" + error + "). Системный DNS возвращён на прежний"
+                        : "Локальный DNS не запустился (" + error + "), и вернуть DNS не удалось: " + restored,
+                    restored == null ? ToolTipIcon.Warning : ToolTipIcon.Error);
+
+                return;
             }
-            else
-            {
-                Log.Info("DNS", "системный DNS поднят: " + _localDns.StatusLine());
-            }
+
+            Log.Info("DNS", "системный DNS поднят: " + _localDns.StatusLine());
 
             _settings.SystemDns = true;
             _settings.Save();
 
             SendSystemDns();
+        }
+
+        /// <summary>
+        /// Сторож системного DNS: раз в 30 секунд проверяет, что резолвер жив.
+        ///
+        /// Зачем: если локальный DNS умрёт (порт отобрали, поток упал, апстрим
+        /// перестал отвечать), система останется с единственным адресом
+        /// 127.0.0.1 и без интернета. Человек при этом не откроет диагностику —
+        /// он и не знает, что сломано.
+        ///
+        /// Сторож пытается поднять резолвер; если не выходит — возвращает
+        /// системе прежние серверы. Плохой DNS провайдера лучше отсутствия DNS.
+        /// </summary>
+        private void StartDnsWatchdog()
+        {
+            Thread watch = new Thread(delegate ()
+            {
+                while (!_exiting)
+                {
+                    try { Thread.Sleep(30000); } catch { break; }
+                    if (_exiting) break;
+
+                    try { WatchDnsOnce(); }
+                    catch (Exception ex) { Log.Debug("DNS", "сторож: " + ex.Message); }
+                }
+            })
+            {
+                IsBackground = true,
+                Name = "dns-watchdog"
+            };
+
+            watch.Start();
+        }
+
+        private void WatchDnsOnce()
+        {
+            if (!Core.SystemDns.IsEnabled) return;
+            if (_localDns.IsRunning) return;
+
+            Log.Warn("DNS", "система смотрит на 127.0.0.1, а резолвер не работает — поднимаю");
+
+            string error = _localDns.Start();
+
+            if (error == null && _localDns.SelfCheck(5000))
+            {
+                Log.Info("DNS", "резолвер поднят сторожем");
+                SendSystemDns();
+                return;
+            }
+
+            Log.Error("DNS", "резолвер не поднялся (" + (error ?? "нет ответа") + ") — возвращаю прежний DNS");
+
+            string restored = Core.SystemDns.Disable();
+
+            _settings.SystemDns = false;
+            _settings.Save();
+
+            SendSystemDns();
+
+            _tray.Notify(AppInfo.Name,
+                restored == null
+                    ? "Локальный DNS остановился. Системный DNS возвращён на прежний — интернет должен заработать"
+                    : "Локальный DNS остановился, вернуть DNS не удалось: " + restored,
+                restored == null ? ToolTipIcon.Warning : ToolTipIcon.Error);
         }
 
         /// <summary>Состояние своего движка для интерфейса.</summary>
@@ -2961,10 +3059,26 @@ namespace AutoZapret.App
 
         private void SendSystemDns()
         {
+            bool pointed = Core.SystemDns.IsEnabled;
+            bool running = _localDns.IsRunning;
+            bool fallback = Core.SystemDns.HasFallback();
+
+            // Опасное состояние: система смотрит на нас, а мы не отвечаем.
+            // Это «нет интернета» целиком, и человек должен видеть причину
+            // прямо на карточке DNS, а не догадываться.
+            string problem = "";
+
+            if (pointed && !running)
+                problem = "Система смотрит на 127.0.0.1, а локальный DNS не работает — "
+                        + "интернета не будет. Нажмите «Вернуть DNS».";
+
             _form.Bridge.Send(WebBridge.Msg("sysdns",
                 "ok", true,
-                "enabled", _settings.SystemDns && _localDns.IsRunning,
-                "pointed", Core.SystemDns.IsEnabled,
+                "enabled", _settings.SystemDns && running,
+                "pointed", pointed,
+                "running", running,
+                "fallback", fallback,
+                "problem", problem,
                 "status", _localDns.StatusLine(),
                 "target", Core.SystemDns.StatusText(),
                 "upstream", _localDns.Upstream));
@@ -4474,14 +4588,35 @@ namespace AutoZapret.App
 
             Log.Info("APP", "выход по запросу");
 
+            // ---- DNS: СНАЧАЛА вернуть системе прежние серверы, только потом
+            // гасить свой резолвер.
+            //
+            // Порядок критичен, и раньше он был обратным. Резолвер живёт в этом
+            // процессе: остановили его, а система всё ещё смотрит на 127.0.0.1 —
+            // интернета нет вовсе. Человек закрыл программу, открыл браузер,
+            // ничего не грузится, и «включить/выключить обход» не помогает,
+            // потому что дело не в обходе. Именно это и случилось на живом ПК.
+            try
+            {
+                if (Core.SystemDns.IsEnabled)
+                {
+                    string dnsError = Core.SystemDns.Disable();
+
+                    if (dnsError != null)
+                        Log.Error("DNS", "не удалось вернуть системный DNS при выходе: " + dnsError);
+                    else
+                        Log.Info("DNS", "системный DNS возвращён при выходе");
+                }
+            }
+            catch (Exception ex) { Log.Exception("APP", "возврат DNS при выходе", ex); }
+
             // сначала гасим winws, потом всё остальное
             try { _autoPilot.Dispose(); } catch (Exception ex) { Log.Exception("APP", "остановка автопилота", ex); }
             try { _zapret.Dispose(); } catch (Exception ex) { Log.Exception("APP", "остановка движка", ex); }
             try { _proxy.Dispose(); } catch (Exception ex) { Log.Exception("APP", "остановка прокси", ex); }
 
-            // Локальный DNS гасим последним: если система смотрит на 127.0.0.1,
-            // лучше, чтобы он работал до самого выхода. Состояние при этом НЕ
-            // сбрасываем — при следующем запуске он поднимется снова.
+            // Локальный DNS гасим последним — уже после того, как система на
+            // него больше не смотрит.
             try { _localDns.Dispose(); } catch (Exception ex) { Log.Exception("APP", "остановка DNS", ex); }
 
             try
@@ -4515,11 +4650,27 @@ namespace AutoZapret.App
             try { _autoPilot.Dispose(); } catch { }
             try { _presets.Dispose(); } catch { }
 
+            // Последний рубеж: если выход пошёл не через RequestExit (аварийное
+            // закрытие, исключение в UI), система не должна остаться с DNS,
+            // который указывает на уже мёртвый 127.0.0.1.
+            try
+            {
+                if (Core.SystemDns.IsEnabled)
+                {
+                    string error = Core.SystemDns.Disable();
+
+                    if (error != null) Log.Error("DNS", "аварийный возврат DNS: " + error);
+                    else Log.Info("DNS", "системный DNS возвращён при dispose");
+                }
+            }
+            catch (Exception ex) { Log.Debug("DNS", "аварийный возврат: " + ex.Message); }
+
             // Свой движок держит драйвер: если не погасить его явно, процесс
             // завершится, а WinDivert останется захваченным до перезагрузки —
             // и следующий запуск скажет «драйвер занят».
             try { StopOwnEngineNow(); } catch { }
 
+            try { _localDns.Dispose(); } catch { }
             try { _zapret.Dispose(); } catch { }
             try { _proxy.Dispose(); } catch { }
             try { _tray.Dispose(); } catch { }

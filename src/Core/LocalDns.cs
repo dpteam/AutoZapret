@@ -158,6 +158,73 @@ namespace AutoZapret.Core
                 : "выключен";
         }
 
+        /// <summary>
+        /// Проверить, что резолвер реально РАБОТАЕТ, а не просто «порт открыт».
+        ///
+        /// Зачем: переключать системный DNS на 127.0.0.1 можно ТОЛЬКО когда
+        /// там кто-то отвечает. Иначе одно нажатие оставляет машину без DNS
+        /// целиком — и человек ищет причину в обходе, в драйвере, в чём угодно,
+        /// кроме DNS, который «мы же просто включили».
+        ///
+        /// Мало получить пакет: наш резолвер на любой сбой отвечает SERVFAIL,
+        /// и Windows считает это полноценным ответом — на запасной сервер
+        /// не переключится. Поэтому требуем NOERROR и хотя бы одну запись
+        /// в ответе. Если DoH недоступен — включать системный DNS нельзя,
+        /// и это правильный отказ, а не придирка.
+        /// </summary>
+        public bool SelfCheck(int timeoutMs = 2500)
+        {
+            if (!_running) return false;
+
+            try
+            {
+                // Простейший запрос A для example.com, собранный руками:
+                // нам нужен ответ от СВОЕГО сокета, а не разбор пакета.
+                byte[] query =
+                {
+                    0xAB, 0xCD,             // ID
+                    0x01, 0x00,             // стандартный запрос, рекурсия
+                    0x00, 0x01,             // 1 вопрос
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x07, (byte)'e', (byte)'x', (byte)'a', (byte)'m', (byte)'p', (byte)'l', (byte)'e',
+                    0x03, (byte)'c', (byte)'o', (byte)'m',
+                    0x00,
+                    0x00, 0x01,             // тип A
+                    0x00, 0x01              // класс IN
+                };
+
+                using (UdpClient client = new UdpClient())
+                {
+                    client.Client.ReceiveTimeout = timeoutMs;
+                    client.Connect(new IPEndPoint(IPAddress.Loopback, Port));
+                    client.Send(query, query.Length);
+
+                    IPEndPoint remote = new IPEndPoint(IPAddress.Any, 0);
+                    byte[] answer = client.Receive(ref remote);
+
+                    if (answer == null || answer.Length < 12) return false;
+                    if (answer[0] != query[0] || answer[1] != query[1]) return false;   // чужой ответ
+
+                    int rcode = answer[3] & 0x0F;
+                    int ancount = (answer[6] << 8) | answer[7];
+
+                    if (rcode != 0)
+                    {
+                        Log.Warn("DNS", "самопроверка: резолвер ответил кодом " + rcode +
+                                        " (DoH недоступен?) — системный DNS включать нельзя");
+                        return false;
+                    }
+
+                    return ancount > 0;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("DNS", "самопроверка резолвера не прошла: " + ex.Message);
+                return false;
+            }
+        }
+
         private void Loop()
         {
             UdpClient socket;

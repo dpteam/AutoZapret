@@ -136,6 +136,9 @@ namespace AutoZapret.App
                 Section("свой движок как основной");
                 TestOwnAsEngine();
 
+                Section("безопасность системного DNS");
+                TestDnsSafety();
+
                 Section("служба");
                 TestServiceManager();
 
@@ -4754,6 +4757,81 @@ namespace AutoZapret.App
                         engine.UnavailableReason(AutoZapret.Zapret.EngineKind.Own));
                 }
             }
+        }
+
+        /// <summary>
+        /// Безопасность системного DNS.
+        ///
+        /// Здесь проверяется ровно та катастрофа, которая случилась вживую:
+        /// система осталась с единственным адресом 127.0.0.1, наш резолвер не
+        /// работал, и интернета не было вовсе. «Выключить обход» не помогал —
+        /// дело было не в обходе.
+        ///
+        /// Что проверяем без прав администратора (реально переключать DNS
+        /// в selftest нельзя):
+        ///   * молчащий резолвер НЕ проходит самопроверку — значит система
+        ///     на него не переключится;
+        ///   * состояние по умолчанию — «выключено», без запасного сервера;
+        ///   * StatusText не врёт.
+        /// </summary>
+        private static void TestDnsSafety()
+        {
+            // Резолвер не запущен — самопроверка обязана отказать.
+            AutoZapret.Core.LocalDns idle = new AutoZapret.Core.LocalDns();
+            idle.Port = 15353;   // заведомо не 53: 53 почти всегда занят
+
+            Check("DNS: молчащий резолвер не проходит самопроверку",
+                !idle.SelfCheck(300), "отказ");
+
+            // Запуск на свободном порту и настоящий запрос к себе.
+            string startError = idle.Start();
+
+            if (startError == null)
+            {
+                // Настоящий ответ требует живого DoH. Если его нет — это не
+                // поломка кода, а отсутствие сети: пропускаем, а не краснеем.
+                if (idle.SelfCheck(8000))
+                    Check("DNS: живой резолвер проходит самопроверку", true, "ответил");
+                else
+                    Skip("DNS: живой резолвер проходит самопроверку", "DoH недоступен");
+
+                idle.Stop();
+
+                Check("DNS: после остановки самопроверка снова отказ",
+                    !idle.SelfCheck(300), "отказ");
+            }
+            else
+            {
+                // Порт заняли — это нормальная ситуация, но не повод молчать.
+                Skip("DNS: живой резолвер проходит самопроверку", startError);
+            }
+
+            idle.Dispose();
+
+            // Состояние системы в selftest не трогаем: там может быть включено
+            // у человека. Проверяем только согласованность чтения.
+            bool enabled = AutoZapret.Core.SystemDns.IsEnabled;
+            string text = AutoZapret.Core.SystemDns.StatusText();
+
+            Check("DNS: состояние читается без исключений",
+                text.Length > 0, text);
+
+            Check("DNS: «выключен» без нашего состояния",
+                enabled || text.IndexOf("выключен", StringComparison.Ordinal) >= 0,
+                text);
+
+            Check("DNS: запасной сервер только когда включено",
+                enabled || !AutoZapret.Core.SystemDns.HasFallback(),
+                enabled ? "включено" : "выключено");
+
+            // Автоматический DNS: адаптер с интернетом обязан находиться,
+            // иначе Enable() не сможет ничего переключить.
+            string ip;
+            string adapter = AutoZapret.Core.SystemDns.DefaultRouteAdapter(out ip);
+
+            Check("DNS: адаптер с интернетом найден",
+                adapter != null && ip.Length > 0,
+                adapter == null ? "нет маршрута" : adapter + " / " + ip);
         }
 
         private static void TestSniffResult()

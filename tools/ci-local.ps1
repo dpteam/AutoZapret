@@ -101,6 +101,12 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
     $code = Invoke-Step 'node' @('tools\check-ui-ids.js')
     Record 'разметка и app.js' ($code -eq 0) ''
 
+    # Переменные, которые используются, но не объявлены в своей функции.
+    # Под "use strict" это ReferenceError, и весь обработчик умирает молча:
+    # так «Пересоздаю…» висело вечно, а статус DNS не обновлялся.
+    $code = Invoke-Step 'node' @('tools\check-ui-vars.js')
+    Record 'объявленные переменные UI' ($code -eq 0) ''
+
     $code = Invoke-Step 'node' @('tools\add-i18n-keys.js')
     Record 'словарь переводов' ($code -eq 0) ''
 } else {
