@@ -4,6 +4,14 @@
    компоненты ссылаются на переменные, а не на конкретные значения.
    ========================================================================== */
 
+/* Тем три. Переключение — атрибутом data-theme на <html>:
+   нет атрибута = dark, дальше light и oled.
+
+   Правило: ни один компонент не должен знать, какая тема включена.
+   Поэтому всё, что раньше было захардкожено (#07090F у логов, цвета строк
+   лога, фон кнопки питания), теперь переменная — иначе светлая тема
+   получалась бы «белое, а внутри чёрный терминал». */
+
 :root {
     --bg-main:      #0D0F1A;
     --bg-sidebar:   #080A12;
@@ -29,6 +37,99 @@
 
     --sidebar-w:    212px;
     --shadow:       0 8px 28px rgba(0, 0, 0, .45);
+
+    /* фон кнопки питания: у светлой темы он светлый, иначе выглядит дырой */
+    --power-bg:     radial-gradient(circle at 50% 40%, #141a2e, #0B0E18);
+
+    /* моноширинные поля и лог */
+    --log-bg:       #07090F;
+    --log-text:     #8E97B8;
+    --log-time:     #414868;
+    --log-cat:      #7AA2F7;
+    --log-info:     #C0CAF5;
+    --log-warn:     #E0AF68;
+    --log-error:    #F7768E;
+    --log-debug:    #565F89;
+    --scroll-hover: #333A58;
+
+    /* подписи на цветных плашках */
+    --btn-primary-text: #071019;
+    --notice-text:      #A9C4E8;
+    --notice-warn-text: #D9B978;
+    --danger-bg:        #120E14;
+    --danger-text:      #FFD9D4;
+    --danger-title:     #FFFFFF;
+}
+
+/* ------------------------------------------------------------ светлая тема */
+
+html[data-theme="light"] {
+    --bg-main:      #F3F5FA;
+    --bg-sidebar:   #E9EDF6;
+    --bg-card:      #FFFFFF;
+    --bg-input:     #FFFFFF;
+    --bg-hover:     #E4E9F4;
+
+    /* акценты темнее: на белом прежние светлые тона читались плохо */
+    --accent-blue:   #1F6FD0;
+    --accent-purple: #7A2AB8;
+    --accent-green:  #00875A;
+    --accent-red:    #C8342A;
+    --accent-yellow: #A67300;
+
+    --text-primary: #1A2236;
+    --text-muted:   #5A6480;
+    --text-dim:     #818BA3;
+
+    --border:       #DDE3EF;
+    --border-light: #C8D1E3;
+
+    --shadow:       0 8px 24px rgba(30, 45, 80, .10);
+
+    --power-bg:     radial-gradient(circle at 50% 40%, #FFFFFF, #E2E8F4);
+
+    --log-bg:       #FFFFFF;
+    --log-text:     #3C465E;
+    --log-time:     #98A1B8;
+    --log-cat:      #2F6FD0;
+    --log-info:     #1E4E8C;
+    --log-warn:     #8A5A00;
+    --log-error:    #C02A3E;
+    --log-debug:    #8A93AB;
+    --scroll-hover: #B7C1D6;
+
+    --btn-primary-text: #FFFFFF;
+    --notice-text:      #2C4A73;
+    --notice-warn-text: #6B4A00;
+    --danger-bg:        #FFF7F6;
+    --danger-text:      #8C2B24;
+    --danger-title:     #7A1F1A;
+}
+
+/* --------------------------------------------------------------- OLED-тема */
+
+html[data-theme="oled"] {
+    --bg-main:      #000000;
+    --bg-sidebar:   #000000;
+    --bg-card:      #0A0A0C;
+    --bg-input:     #101014;
+    --bg-hover:     #18181E;
+
+    --text-primary: #E8ECF7;
+    --text-muted:   #7B8398;
+    --text-dim:     #41465A;
+
+    --border:       #1A1A20;
+    --border-light: #26262E;
+
+    --shadow:       0 8px 28px rgba(0, 0, 0, .8);
+
+    --power-bg:     radial-gradient(circle at 50% 40%, #101014, #000000);
+
+    --log-bg:       #000000;
+    --scroll-hover: #2C2C36;
+
+    --danger-bg:    #140A0A;
 }
 
 * { box-sizing: border-box; }
@@ -150,7 +251,7 @@ html, body {
     border-radius: 6px;
     border: 2px solid var(--bg-main);
 }
-.content::-webkit-scrollbar-thumb:hover { background: #333A58; }
+.content::-webkit-scrollbar-thumb:hover { background: var(--scroll-hover); }
 
 .screen { display: none; }
 .screen.active { display: block; animation: fade .16s ease-out; }
@@ -220,7 +321,7 @@ h1 {
     flex: 0 0 92px;
     border-radius: 50%;
     border: 2px solid var(--border-light);
-    background: radial-gradient(circle at 50% 40%, #141a2e, #0B0E18);
+    background: var(--power-bg);
     color: var(--text-muted);
     font-size: 30px;
     cursor: pointer;
@@ -299,8 +400,8 @@ h1 {
 }
 
 .power.error {
-    border-color: #ff5c6c;
-    color: #ff5c6c;
+    border-color: var(--accent-red);
+    color: var(--accent-red);
     box-shadow: 0 0 0 6px rgba(255, 92, 108, .10), 0 0 24px rgba(255, 92, 108, .28);
 }
 
@@ -319,7 +420,7 @@ h1 {
 .power.service {
     border-color: var(--accent-blue);
     color: var(--accent-blue);
-    background: radial-gradient(circle at 50% 40%, #141a2e, #0B0E18);
+    background: var(--power-bg);
     box-shadow: 0 0 0 5px rgba(85, 170, 255, .10), 0 0 22px rgba(85, 170, 255, .22);
     opacity: 1;
     animation: none;
@@ -435,19 +536,19 @@ button.btn {
     transition: background .12s, border-color .12s;
 }
 
-button.btn:hover { background: var(--bg-hover); border-color: #333A58; }
+button.btn:hover { background: var(--bg-hover); border-color: var(--border-light); }
 button.btn:active { transform: translateY(1px); }
 
 button.btn.primary {
     background: linear-gradient(135deg, var(--accent-blue), #3D7FD6);
     border-color: transparent;
-    color: #071019;
+    color: var(--btn-primary-text);
     font-weight: 600;
 }
 
 button.btn.primary:hover { filter: brightness(1.08); }
 
-button.btn.danger { border-color: rgba(231,76,60,.4); color: #F1908A; }
+button.btn.danger { border-color: rgba(231,76,60,.4); color: var(--accent-red); }
 button.btn.danger:hover { background: rgba(231,76,60,.12); }
 
 button.btn:disabled { opacity: .45; cursor: not-allowed; }
@@ -509,7 +610,7 @@ input:focus, select:focus { border-color: var(--accent-blue); }
 }
 
 .log-view {
-    background: #07090F;
+    background: var(--log-bg);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 12px 14px;
@@ -528,18 +629,18 @@ input:focus, select:focus { border-color: var(--accent-blue); }
 .log-view::-webkit-scrollbar-thumb {
     background: var(--border-light);
     border-radius: 6px;
-    border: 2px solid #07090F;
+    border: 2px solid var(--log-bg);
 }
 
-.log-line { color: #8E97B8; }
-.log-line .t { color: #414868; }
-.log-line .c { color: #7AA2F7; }
-.log-line.info  .m { color: #C0CAF5; }
-.log-line.warn  { color: #E0AF68; }
-.log-line.warn  .m { color: #E0AF68; }
-.log-line.error { color: #F7768E; }
-.log-line.error .m { color: #F7768E; }
-.log-line.debug .m { color: #565F89; }
+.log-line { color: var(--log-text); }
+.log-line .t { color: var(--log-time); }
+.log-line .c { color: var(--log-cat); }
+.log-line.info  .m { color: var(--log-info); }
+.log-line.warn  { color: var(--log-warn); }
+.log-line.warn  .m { color: var(--log-warn); }
+.log-line.error { color: var(--log-error); }
+.log-line.error .m { color: var(--log-error); }
+.log-line.debug .m { color: var(--log-debug); }
 
 /* ---------------------------------------------------------------- прочее */
 
@@ -550,7 +651,7 @@ input:focus, select:focus { border-color: var(--accent-blue); }
     border-radius: var(--radius-sm);
     background: rgba(85,170,255,.07);
     border: 1px solid rgba(85,170,255,.18);
-    color: #A9C4E8;
+    color: var(--notice-text);
     font-size: 12.5px;
     margin-bottom: 16px;
 }
@@ -558,7 +659,7 @@ input:focus, select:focus { border-color: var(--accent-blue); }
 .notice.warn {
     background: rgba(240,180,41,.07);
     border-color: rgba(240,180,41,.2);
-    color: #D9B978;
+    color: var(--notice-warn-text);
 }
 
 .muted { color: var(--text-muted); }
@@ -656,7 +757,7 @@ input:focus, select:focus { border-color: var(--accent-blue); }
 }
 
 .badge.ok   { background: rgba(0,214,143,.15); color: var(--accent-green); }
-.badge.bad  { background: rgba(231,76,60,.15); color: #F1908A; }
+.badge.bad  { background: rgba(231,76,60,.15); color: var(--accent-red); }
 .badge.warn { background: rgba(240,180,41,.15); color: var(--accent-yellow); }
 
 .advice {
@@ -760,7 +861,7 @@ textarea.list-input {
     padding: 10px 12px;
     border-radius: var(--radius-sm);
     border: 1px solid var(--border-light);
-    background: #07090F;
+    background: var(--log-bg);
     color: var(--text-primary);
     outline: none;
     user-select: text;
@@ -815,7 +916,7 @@ textarea.list-input::placeholder { color: var(--text-dim); }
     max-width: 460px;
     padding: 26px 26px 20px;
 
-    background: #120E14;
+    background: var(--danger-bg);
     border: 1px solid rgba(231, 76, 60, .55);
     border-radius: 14px;
 
@@ -854,7 +955,7 @@ textarea.list-input::placeholder { color: var(--text-dim); }
     font-weight: 700;
     letter-spacing: .02em;
     text-transform: uppercase;
-    color: #fff;
+    color: var(--danger-title);
     margin-bottom: 12px;
 }
 
@@ -871,7 +972,7 @@ textarea.list-input::placeholder { color: var(--text-dim); }
     padding: 10px 12px;
     font-size: 12.5px;
     line-height: 1.55;
-    color: #FFD9D4;
+    color: var(--danger-text);
     background: rgba(231, 76, 60, .10);
     border-left: 3px solid var(--accent-red);
     border-radius: 0 var(--radius-sm) var(--radius-sm) 0;

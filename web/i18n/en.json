@@ -333,5 +333,9 @@
   "Windows держит ответы в кэше: после правки hosts или смены DNS старые адреса продолжают работать. Сбрасывается автоматически при записи hosts и при включении DNS — эта кнопка на всякий случай": "Windows keeps answers cached: after editing hosts or changing DNS the old addresses keep working. It is flushed automatically when hosts is written and when DNS is enabled - this button is just in case",
   "Обход без окна": "Bypass without a window",
   "Служба держит обход до входа в систему и после выхода из неё. Пока она работает, кнопка включения выше заблокирована — два перехватчика не делят драйвер": "The service keeps the bypass running before sign-in and after sign-out. While it runs, the power button above is disabled - two interceptors cannot share the driver",
-  "Отклонено на входе": "Rejected on connect"
+  "Отклонено на входе": "Rejected on connect",
+  "Тема": "Theme",
+  "Тёмная, светлая или OLED (чистый чёрный, экономит батарею)": "Dark, light or OLED (true black, saves battery)",
+  "Тёмная": "Dark",
+  "Светлая": "Light"
 }

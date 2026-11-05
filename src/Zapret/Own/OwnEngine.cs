@@ -386,15 +386,24 @@ namespace AutoZapret.Zapret.Own
 
             if (_options.Profiles != null && _options.Profiles.Count > 0)
             {
-                inner = _options.Profiles.FilterExpression();
+                inner = _options.Profiles.FilterExpression(!_options.Profiles.NeedsAnyPayload);
             }
             else
             {
                 bool udpMode = _options.Technique != null && _options.Technique.Kind == Technique.UdpLen;
 
+                // Без профилей — только ClientHello, если это не UDP-режим и не
+                // any-protocol. Тот же принцип, что и у профилей: ловим ровно
+                // один пакет на соединение, а не весь исходящий поток.
+                bool anyProtocol = _options.Technique != null && _options.Technique.AnyProtocol;
+
                 inner = udpMode
                     ? "udp.DstPort == " + _options.Port + " and udp.PayloadLength >= 20"
-                    : "tcp.DstPort == " + _options.Port + " and tcp.PayloadLength > 40";
+                    : (anyProtocol
+                        ? "tcp.DstPort == " + _options.Port + " and tcp.PayloadLength > 40"
+                        : "tcp.DstPort == " + _options.Port +
+                          " and tcp.PayloadLength >= 6 and tcp.Payload[0] == 0x16 and " +
+                          "tcp.Payload[1] == 0x03 and tcp.Payload[5] == 0x01");
             }
 
             if (inner.Length == 0) return "";
@@ -420,11 +429,18 @@ namespace AutoZapret.Zapret.Own
         ///
         /// 30 секунд, а не «навсегда»: поток может замолчать и продолжиться,
         /// и новый сеанс с тем же портом должен снова получить обход.
+        ///
+        /// `kind` — тип первого пакета (stun / dtls / quic). Он входит в ключ,
+        /// потому что у одного и того же пятикортежа их может быть несколько:
+        /// голос начинается со STUN, а показ экрана с того же порта — с DTLS.
+        /// Без этого второй тип считался «поток уже трогали» и оставался без
+        /// фейка — ровно то, почему экран не работал при работающем голосе.
         /// </summary>
-        private bool FirstUdpPacket(UdpPacket udp)
+        private bool FirstUdpPacket(UdpPacket udp, string kind)
         {
             string key = udp.SrcPort + ">" + udp.DstPort + "@" +
-                         (UdpDestination(udp) == null ? "?" : UdpDestination(udp).ToString());
+                         (UdpDestination(udp) == null ? "?" : UdpDestination(udp).ToString()) +
+                         "/" + kind;
 
             DateTime now = DateTime.UtcNow;
 
@@ -500,13 +516,37 @@ namespace AutoZapret.Zapret.Own
         }
 
         /// <summary>
-        /// UDP-ветка: `udplen` (QUIC) и `fake` (STUN/QUIC/игры).
+        /// DTLS-запись: 0x16 (handshake) и версия 0xFE.. (1.0 / 1.2 / 1.3).
+        ///
+        /// Зачем отдельная проверка. Демонстрация экрана в Discord идёт
+        /// собственным медиапотоком, и первым пакетом там уходит DTLS
+        /// ClientHello, а не STUN. Раньше UDP-ветка узнавала только QUIC и
+        /// STUN — DTLS молча не считался «нашим», фейк не отправлялся, и
+        /// показ экрана не поднимался, хотя голос работал: у голоса первый
+        /// пакет как раз STUN.
+        ///
+        /// Проверяем ровно сигнатуру записи, без угадываний: 0x16 и старший
+        /// байт версии 0xFE. TLS-ClientHello (0x16 0x03) сюда не попадает —
+        /// это TCP, и у него своя ветка.
+        /// </summary>
+        internal static bool IsDtls(byte[] packet, int offset, int payloadLength)
+        {
+            if (payloadLength < 13) return false;
+            if (offset < 0 || offset + 13 > packet.Length) return false;
+
+            return packet[offset] == 0x16 && packet[offset + 1] == 0xFE;
+        }
+
+        /// <summary>
+        /// UDP-ветка: `udplen` (QUIC) и `fake` (STUN/DTLS/QUIC/игры).
         ///
         /// Проверка «наше ли это» проще, чем у TLS, но не «любой UDP»:
         ///   * QUIC Initial — long header form (старшие два бита 11) и тип 0;
-        ///   * STUN — magic cookie 0x2112A442 в байтах 4..7, тип 0x0000..0x0004.
-        /// Голосовой Discord идёт именно STUN-ом, и без этой проверки он не
-        /// обходился бы вовсе: профиль есть, техника выбрана, а пакет не узнан.
+        ///   * STUN — magic cookie 0x2112A442 в байтах 4..7, тип 0x0000..0x0004;
+        ///   * DTLS — запись 0x16 с версией 0xFE (медиа и показ экрана Discord).
+        /// Голосовой Discord идёт STUN-ом, показ экрана — DTLS. Без второй
+        /// проверки экран не обходился: профиль есть, техника выбрана, а пакет
+        /// не узнан.
         /// </summary>
         private bool HandleUdp(IntPtr handle, IntPtr addressPtr, byte[] packet, int length)
         {
@@ -521,7 +561,9 @@ namespace AutoZapret.Zapret.Own
 
             bool stun = IsStun(packet, udp.PayloadOffset, udp.PayloadLength);
 
-            if (!quic && !stun) return false;
+            bool dtls = IsDtls(packet, udp.PayloadOffset, udp.PayloadLength);
+
+            if (!quic && !stun && !dtls) return false;
 
             _stats.ClientHellos++;    // для UDP это первый пакет соединения
 
@@ -573,7 +615,9 @@ namespace AutoZapret.Zapret.Own
             //
             // zapret решает то же самое через учёт соединений и cutoff; у нас
             // достаточно «первый пакет пятикортежа за последние 30 секунд».
-            if (!FirstUdpPacket(udp)) return false;
+            string kind = dtls ? "dtls" : (stun ? "stun" : "quic");
+
+            if (!FirstUdpPacket(udp, kind)) return false;
 
             // `fake` для UDP — это поддельный payload, а не «сдвиг seq»:
             // в UDP его нет. `udplen` — игра с полем длины.

@@ -116,18 +116,57 @@ namespace AutoZapret.Zapret.Own
         /// какие порты мы вообще собираемся ловить. Ошибка тут не видна в
         /// логах — ядро просто не отдаёт пакеты, и движок «работает», ничего
         /// не делая.
+        ///
+        /// `clientHelloOnly` — не косметика, а разница между «работает» и
+        /// «режет скорость». Раньше условие было `tcp.PayloadLength > 40`, то
+        /// есть в user mode забирался КАЖДЫЙ исходящий пакет с данными:
+        /// загрузка файла, отправка сообщения, отдача экрана. Каждый такой
+        /// пакет копировался в процесс, разбирался и возвращался — отсюда
+        /// просадка именно исходящей скорости (входящие подтверждения мелкие
+        /// и под условие не попадали). Техника всё равно применяется к
+        /// ClientHello, больше ловить нечего.
         /// </summary>
-        public string FilterExpression()
+        public string FilterExpression(bool clientHelloOnly = true)
         {
             List<string> parts = new List<string>();
 
             string tcp = PortExpression("tcp", AllTcpPorts());
-            if (tcp.Length > 0) parts.Add("(" + tcp + ") and tcp.PayloadLength > 40");
+
+            if (tcp.Length > 0)
+            {
+                // ClientHello: 0x16 (handshake), 0x03 (SSL/TLS), payload[5] == 0x01
+                // (тип handshake). Это ровно первый пакет соединения, а не
+                // эвристика: фильтр проверяет байты, а не «похоже на TLS».
+                string guard = clientHelloOnly
+                    ? "tcp.PayloadLength >= 6 and tcp.Payload[0] == 0x16 and " +
+                      "tcp.Payload[1] == 0x03 and tcp.Payload[5] == 0x01"
+                    : "tcp.PayloadLength > 40";
+
+                parts.Add("(" + tcp + ") and " + guard);
+            }
 
             string udp = PortExpression("udp", AllUdpPorts());
             if (udp.Length > 0) parts.Add("(" + udp + ") and udp.PayloadLength >= 20");
 
             return string.Join(" or ", parts.ToArray());
+        }
+
+        /// <summary>
+        /// Нужен ли кому-то из профилей НЕ только TLS ClientHello.
+        ///
+        /// Единственный случай — `--dpi-desync-any-protocol`: тогда техника
+        /// применяется к данным вообще, и сузить фильтр до ClientHello нельзя,
+        /// иначе профиль «есть», а обхода нет.
+        /// </summary>
+        public bool NeedsAnyPayload
+        {
+            get
+            {
+                foreach (OwnProfile profile in _profiles)
+                    if (profile.Technique != null && profile.Technique.AnyProtocol) return true;
+
+                return false;
+            }
         }
 
         /// <summary>`tcp.DstPort == 443 or tcp.DstPort == 2053` без повторов.</summary>

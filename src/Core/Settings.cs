@@ -320,7 +320,7 @@ namespace AutoZapret.Core
             EngineKind = OneOf(EngineKind, "v1", "v2", "own");
             GameFilter = OneOf(GameFilter, "off", "tcp", "udp", "tcp+udp");
             IpsetMode = OneOf(IpsetMode, "off", "loaded", "any");
-            Theme = OneOf(Theme, "dark", "light");
+            Theme = OneOf(Theme, "dark", "light", "oled");
             UpdateChannel = OneOf(UpdateChannel, "stable", "beta");
 
             if (string.IsNullOrWhiteSpace(StrategyId)) StrategyId = "flowseal.general";

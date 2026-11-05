@@ -131,6 +131,13 @@ namespace AutoZapret.App
                 return 2;
             }
 
+            // DPI: без явного вызова режим из csproj (<ApplicationHighDpiMode>) не
+            // применяется — свойство только генерирует ApplicationConfiguration.
+            // Initialize(), а мы настраиваем WinForms сами. Симптом на 125 %:
+            // окно нарисовано в масштабе 100 % и растянуто — всё мыло.
+            if (!DpiSetup.Apply())
+                Log.Warn("APP", "PerMonitorV2 не включился — при масштабировании интерфейс может быть размыт");
+
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 

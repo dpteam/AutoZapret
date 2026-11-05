@@ -150,10 +150,27 @@ namespace AutoZapret.Diag
                     continue;
                 }
 
-                // даём winws подняться и WinDivert встать на место
-                Thread.Sleep(Math.Max(1, holdSeconds) * 1000);
+                // Отмена во время запуска: Start уже мог занять несколько секунд,
+                // и человек всё это время ждал. Дальше не пробуем — гасим движок
+                // и выходим из цикла, иначе отмена «срабатывает» через полминуты.
+                if (cancel.IsCancellationRequested)
+                {
+                    try { _zapret.Stop(); } catch { }
+                    Report("отменено");
+                    break;
+                }
 
-                ProbeReport report = _probe.CheckAll(targets, timeoutSec, 4);
+                // даём winws подняться и WinDivert встать на место.
+                // Sleep заменён на ожидание с отменой: пять секунд — это ровно
+                // столько, сколько человек готов ждать реакции на «Отменить».
+                if (cancel.WaitHandle.WaitOne(Math.Max(1, holdSeconds) * 1000))
+                {
+                    try { _zapret.Stop(); } catch { }
+                    Report("отменено");
+                    break;
+                }
+
+                ProbeReport report = _probe.CheckAll(targets, timeoutSec, 4, cancel);
 
                 foreach (ProbeResult r in report.Results)
                     if (!r.Ok) score.Failed.Add(r.Name);
@@ -189,8 +206,13 @@ namespace AutoZapret.Diag
 
                 _zapret.Stop();
 
-                // пауза на выгрузку драйвера: без неё следующая стратегия стартует в пустоту
-                Thread.Sleep(1200);
+                // пауза на выгрузку драйвера: без неё следующая стратегия стартует
+                // в пустоту. Тоже с отменой — это ещё 1,2 с ожидания.
+                if (cancel.WaitHandle.WaitOne(1200))
+                {
+                    Report("отменено");
+                    break;
+                }
 
                 Log.Info("DIAG", score.ToLine());
                 Report(score.ToLine());

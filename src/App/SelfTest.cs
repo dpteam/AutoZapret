@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using System.Threading;
+using System.Windows.Forms;
 using AutoZapret.Core;
 
 namespace AutoZapret.App
@@ -55,8 +57,16 @@ namespace AutoZapret.App
                 Section("json");
                 TestJson();
 
+                Section("масштабирование");
+                Check("DPI: PerMonitorV2 включается",
+                    DpiSetup.Apply() && Application.HighDpiMode == DpiSetup.Mode,
+                    Application.HighDpiMode.ToString());
+
                 Section("настройки");
                 TestSettings();
+
+                Section("отмена проверок");
+                TestCancellation();
 
                 Section("атомарная запись");
                 TestAtomicFile();
@@ -296,6 +306,31 @@ namespace AutoZapret.App
             Check("тема round-trip", back.Theme == "light", back.Theme);
             Check("simpleMode round-trip", !back.SimpleMode, back.SimpleMode.ToString());
 
+            // КАЖДАЯ тема обязана пережить сохранение.
+            //
+            // Здесь та же ловушка, что была с EngineKind: `Normalize()` со
+            // списком из двух значений молча превращал "oled" в "dark", и
+            // человек видел, что тема «не запоминается». Поэтому проверяем
+            // все три значения, а не одно.
+            string[] themes = new string[] { "dark", "light", "oled" };
+            foreach (string theme in themes)
+            {
+                Settings t = new Settings();
+                t.Theme = theme;
+                t.Normalize();
+                Check("тема допустима: " + theme, t.Theme == theme, t.Theme);
+            }
+
+            Settings badTheme = new Settings();
+            badTheme.Theme = "neon";
+            badTheme.Normalize();
+            Check("тема: неизвестная сводится к dark", badTheme.Theme == "dark", badTheme.Theme);
+
+            probe.Theme = "oled";
+            probe.Save();
+            Settings oledBack = Settings.Load();
+            Check("тема oled round-trip", oledBack.Theme == "oled", oledBack.Theme);
+
             // выбор стратегии помнится отдельно для каждого движка: иначе при
             // переключении v1 <-> v2 выбор сгорал и человек искал его заново
             Check("стратегия v1 round-trip", back.StrategyIdV1 == "flowseal.general-alt12", back.StrategyIdV1);
@@ -360,6 +395,69 @@ namespace AutoZapret.App
             Settings.SetCurrent(original);
         }
 
+        /// <summary>
+        /// Отмена долгих проверок.
+        ///
+        /// Жалоба с живой машины: «нельзя стопнуть подбор стратегий». Причина
+        /// была не в кнопке (она отправляет diag.cancel исправно), а в том, что
+        /// перебор проверял токен ТОЛЬКО перед следующей стратегией: внутри
+        /// одной итерации было `Thread.Sleep(5 c)` + пробы с таймаутами. Итог —
+        /// «Отменяю…» висело полминуты, и это неотличимо от «кнопка не работает».
+        ///
+        /// Здесь проверяется то, что можно проверить без движка и без прав:
+        /// с уже отменённым токеном ни перебор, ни пробы ничего не запускают
+        /// и возвращаются сразу.
+        /// </summary>
+        private static void TestCancellation()
+        {
+            CancellationTokenSource cts = new CancellationTokenSource();
+            cts.Cancel();
+
+            List<AutoZapret.Diag.ProbeTarget> targets = new List<AutoZapret.Diag.ProbeTarget>();
+            targets.Add(new AutoZapret.Diag.ProbeTarget("пример", "https://example.com"));
+            targets.Add(new AutoZapret.Diag.ProbeTarget("пример-2", "https://example.org"));
+
+            System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+            AutoZapret.Diag.ProbeReport report =
+                new AutoZapret.Diag.ConnectivityProbe().CheckAll(targets, 10, 2, cts.Token);
+            watch.Stop();
+
+            Check("отмена пробы: ничего не проверено", report.Results.Count == 0,
+                report.Results.Count + " шт.");
+
+            Check("отмена пробы: не ждёт таймауты", watch.ElapsedMilliseconds < 1500,
+                watch.ElapsedMilliseconds + " мс");
+
+            // перебор стратегий с отменённым токеном: ни одна не запускается,
+            // и это видно по пустому результату, а не по «проверено 1»
+            try
+            {
+                using (AutoZapret.Zapret.ZapretService svc = new AutoZapret.Zapret.ZapretService())
+                {
+                    AutoZapret.Diag.StrategyTester tester =
+                        new AutoZapret.Diag.StrategyTester(svc, new AutoZapret.Diag.ConnectivityProbe());
+
+                    watch = System.Diagnostics.Stopwatch.StartNew();
+
+                    List<AutoZapret.Diag.StrategyScore> scores = tester.Run(
+                        new string[] { "flowseal.general", "flowseal.general-alt" },
+                        null, 5, 8, cts.Token);
+
+                    watch.Stop();
+
+                    Check("отмена перебора: ни одна стратегия не запущена", scores.Count == 0,
+                        scores.Count + " шт.");
+
+                    Check("отмена перебора: сразу", watch.ElapsedMilliseconds < 3000,
+                        watch.ElapsedMilliseconds + " мс");
+                }
+            }
+            catch (Exception ex)
+            {
+                Check("отмена перебора: без исключения", false, ex.Message);
+            }
+        }
+
         private static void TestAtomicFile()
         {
             string dir = Path.Combine(Paths.StateDir, "selftest");
@@ -407,6 +505,16 @@ namespace AutoZapret.App
             Check("app.js общается через chrome.webview",
                 js.IndexOf("chrome.webview", StringComparison.Ordinal) >= 0, "ok");
             Check("app.js умеет postMessage", js.IndexOf("postMessage", StringComparison.Ordinal) >= 0, "ok");
+
+        // Темы: мало иметь выбор в настройках — в CSS должны быть сами
+        // наборы переменных, иначе светлая тема «включается», но ничего не
+        // меняет. Проверяем и селектор, и наличие нужных токенов.
+        Check("css: светлая тема есть", css.IndexOf("html[data-theme=\"light\"]", StringComparison.Ordinal) >= 0, "ok");
+        Check("css: OLED-тема есть", css.IndexOf("html[data-theme=\"oled\"]", StringComparison.Ordinal) >= 0, "ok");
+        Check("css: фон логов — переменная", css.IndexOf("--log-bg", StringComparison.Ordinal) >= 0 &&
+                                              css.IndexOf("background: var(--log-bg)", StringComparison.Ordinal) >= 0, "ok");
+        Check("html: выбор темы в настройках", html.IndexOf("id=\"set-theme\"", StringComparison.Ordinal) >= 0, "ok");
+        Check("js: тема применяется", js.IndexOf("data-theme", StringComparison.Ordinal) >= 0, "ok");
         }
 
         private static void TestWebView2()
@@ -4335,6 +4443,25 @@ namespace AutoZapret.App
             Check("UDP: RTP не считается STUN",
                 !AutoZapret.Zapret.Own.OwnEngine.LooksLikeStun(rtp, 0, rtp.Length), "0x80");
 
+            // DTLS — показ экрана в Discord. Первым пакетом медиапотока идёт
+            // не STUN, а DTLS ClientHello; раньше он не считался «нашим», и
+            // экран не поднимался при работающем голосе.
+            byte[] dtls = new byte[64];
+            dtls[0] = 0x16;
+            dtls[1] = 0xFE;
+            dtls[2] = 0xFD;   // DTLS 1.2
+
+            Check("UDP: DTLS распознан",
+                AutoZapret.Zapret.Own.OwnEngine.IsDtls(dtls, 0, dtls.Length), "0x16 0xFE 0xFD");
+
+            byte[] tlsHello = new byte[64];
+            tlsHello[0] = 0x16;
+            tlsHello[1] = 0x03;   // это TCP/TLS, не DTLS
+            tlsHello[2] = 0x01;
+
+            Check("UDP: TLS не считается DTLS",
+                !AutoZapret.Zapret.Own.OwnEngine.IsDtls(tlsHello, 0, tlsHello.Length), "0x16 0x03");
+
             // ---- не UDP пакет не считается нашим
             Check("UDP: TCP не считается UDP",
                 AutoZapret.Zapret.Own.UdpPacket.Parse(SynthTlsPacket(100, 1), 140) == null, "ok");
@@ -4803,8 +4930,43 @@ namespace AutoZapret.App
             // `a or (b and c)`, и условие payload приклеилось бы только к
             // последнему порту. Группируем скобками явно.
             Check("профили: скобки вокруг портов",
-                expr.IndexOf(") and tcp.PayloadLength > 40", StringComparison.Ordinal) >= 0,
+                expr.IndexOf(") and tcp.PayloadLength >= 6", StringComparison.Ordinal) >= 0,
                 expr);
+
+            // ---- фильтр сужен до ClientHello, и это НЕ косметика
+            //
+            // Регресс с живой машины: «свой движок режет исходящую скорость
+            // сильнее, чем zapret 1». Причина была в условии
+            // `tcp.PayloadLength > 40`: в user mode забирался каждый исходящий
+            // пакет с данными, и весь «обход» превращался в копирование
+            // трафика через процесс. Техника применяется к ClientHello — значит
+            // ловить надо только его.
+            Check("профили: фильтр ловит только ClientHello",
+                expr.IndexOf("tcp.Payload[0] == 0x16", StringComparison.Ordinal) >= 0 &&
+                expr.IndexOf("tcp.Payload[5] == 0x01", StringComparison.Ordinal) >= 0,
+                expr);
+
+            Check("профили: широкий фильтр — по запросу",
+                set.FilterExpression(false).IndexOf("tcp.PayloadLength > 40", StringComparison.Ordinal) >= 0,
+                "ok");
+
+            Check("профили: any-protocol не требуется", !set.NeedsAnyPayload, "нет");
+
+            // ...но если профиль правда просит any-protocol, сужать нельзя:
+            // иначе профиль «есть», техника выбрана, а обхода нет
+            AutoZapret.Zapret.Own.OwnProfileSet anySet = new AutoZapret.Zapret.Own.OwnProfileSet();
+
+            anySet.Add(new AutoZapret.Zapret.Own.OwnProfile
+            {
+                Name = "any",
+                Technique = new AutoZapret.Zapret.Own.TechniqueOptions
+                {
+                    Kind = AutoZapret.Zapret.Own.Technique.Split,
+                    AnyProtocol = true
+                }
+            });
+
+            Check("профили: any-protocol виден", anySet.NeedsAnyPayload, "да");
 
             try { System.IO.Directory.Delete(dir, true); } catch { }
         }

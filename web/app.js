@@ -508,6 +508,39 @@
         if (el && value !== undefined && value !== null) el.value = value;
     }
 
+    // ------------------------------------------------------------ тема
+    //
+    // Три темы, переключение атрибутом на <html>: dark (по умолчанию),
+    // light, oled. В CSS всё уже разведено по переменным, здесь только
+    // выбор и запоминание.
+    //
+    // Дублируем выбор в localStorage: состояние от ядра приходит чуть позже
+    // первой отрисовки, и без этого окно успевает мигнуть тёмным перед
+    // светлой темой — каждый запуск. Настройка всё равно главная: если
+    // localStorage и settings.json разошлись, побеждает состояние.
+
+    var THEME_KEY = "az-theme";
+    var THEMES = { dark: 1, light: 1, oled: 1 };
+    var currentTheme = "";
+
+    function applyTheme(name) {
+        if (!THEMES[name]) name = "dark";
+
+        var root = document.documentElement;
+        if (name === "dark") root.removeAttribute("data-theme");
+        else root.setAttribute("data-theme", name);
+
+        currentTheme = name;
+
+        try { localStorage.setItem(THEME_KEY, name); } catch (e) { }
+    }
+
+    function restoreTheme() {
+        var saved = "";
+        try { saved = localStorage.getItem(THEME_KEY) || ""; } catch (e) { }
+        if (THEMES[saved]) applyTheme(saved);
+    }
+
     var GAME_FILTER_LABEL = {
         "off": "Выключен",
         "tcp": "TCP",
@@ -546,6 +579,10 @@
 
         // язык пришёл в настройках — подтягиваем словарь один раз на смену
         if (s.language && s.language !== i18nLang) requestLanguage(s.language);
+
+        // тема: каждая перерисовка не должна дёргать localStorage, поэтому
+        // сравниваем с текущей
+        if (s.theme && s.theme !== currentTheme) applyTheme(s.theme);
 
         text("env-mode", s.portable ? "portable" : "installed");
         text("env-admin", t(s.admin ? "администратор" : "без прав админа"));
@@ -702,6 +739,11 @@
 
         var langSelect = document.getElementById("set-language");
         if (langSelect && s.language) langSelect.value = s.language;
+
+        // Поле выбора молча ставит первый пункт, если такого значения нет:
+        // проверяем, что тема из настроек реально есть в списке
+        var themeSelect = document.getElementById("set-theme");
+        if (themeSelect && s.theme && hasOption(themeSelect, s.theme)) themeSelect.value = s.theme;
 
         renderAlerts(s);
     }
@@ -1071,6 +1113,14 @@
         }
 
         bindSwitch("set-simple-mode", "simpleMode");
+
+        var theme = document.getElementById("set-theme");
+        if (theme) theme.addEventListener("change", function () {
+            // применяем сразу, не дожидаясь ответа ядра: переключение темы —
+            // это рисование, а не операция с сетью
+            applyTheme(theme.value);
+            queueSave({ theme: theme.value });
+        });
 
         // простой режим должен переключаться сразу, а не после round-trip
         var simple = document.getElementById("set-simple-mode");
@@ -3456,6 +3506,8 @@
     // ------------------------------------------------------------ старт
 
     function boot() {
+        restoreTheme();
+
         initNav();
         bindDanger();
         initDns();
@@ -3515,6 +3567,8 @@
         renderService: renderService,
         // список фиксов hosts: проверяется, что наборы и счётчики видны
         renderHostsFixes: renderHostsFixes,
+        // тема: проверяется «светлая и OLED включаются, тёмная снимает атрибут»
+        applyTheme: applyTheme,
         missingKeys: function () {
             // какие русские строки в разметке остались без перевода
             if (!i18nDict) return [];
