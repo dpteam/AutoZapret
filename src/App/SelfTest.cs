@@ -5621,6 +5621,58 @@ namespace AutoZapret.App
             Check("маршруты: пустой список",
                 AutoZapret.Proxy.UpstreamRoutes.Order(2, false, new List<string>()).Count == 0, "ok");
 
+            // ---- пауза после полного отказа: backoff растёт и сбрасывается
+            //
+            // Это вторая половина ротации из refs/_Add15: если не работает
+            // НИЧЕГО, пробовать на каждом соединении бессмысленно — клиент
+            // висит на «соединение…», пока мы перебираем всё с таймаутами.
+            AutoZapret.Proxy.UpstreamRoutes.Reset();
+
+            string downReason;
+            int downLeft;
+
+            Check("пауза: до отказа её нет",
+                !AutoZapret.Proxy.UpstreamRoutes.IsDown(out downReason, out downLeft), "нет");
+
+            int first = AutoZapret.Proxy.UpstreamRoutes.MarkDown("тест");
+            Check("пауза: первая 2 секунды", first == 2, first + " с");
+
+            int second = AutoZapret.Proxy.UpstreamRoutes.MarkDown("тест");
+            Check("пауза: вторая вдвое больше", second == 4, second + " с");
+
+            int third = AutoZapret.Proxy.UpstreamRoutes.MarkDown("тест");
+            Check("пауза: третья ещё вдвое", third == 8, third + " с");
+
+            // потолок: 30 секунд, а не бесконечность — сеть может вернуться
+            int capped = 0;
+            for (int i = 0; i < 10; i++) capped = AutoZapret.Proxy.UpstreamRoutes.MarkDown("тест");
+
+            Check("пауза: потолок 30 секунд", capped == 30, capped + " с");
+
+            Check("пауза: состояние читается",
+                AutoZapret.Proxy.UpstreamRoutes.IsDown(out downReason, out downLeft) && downLeft > 0,
+                downLeft + " с, причина: " + downReason);
+
+            // ручная проверка обязана снимать паузу
+            AutoZapret.Proxy.UpstreamRoutes.Wake();
+
+            Check("пауза: ручная проверка снимает",
+                !AutoZapret.Proxy.UpstreamRoutes.IsDown(out downReason, out downLeft), "снята");
+
+            // успех тоже снимает: заработало — значит «лежит» больше не правда
+            AutoZapret.Proxy.UpstreamRoutes.MarkDown("тест");
+            AutoZapret.Proxy.UpstreamRoutes.Remember(2, false, "kws2.web.telegram.org");
+
+            Check("пауза: успех снимает",
+                !AutoZapret.Proxy.UpstreamRoutes.IsDown(out downReason, out downLeft), "снята");
+
+            // и Reset тоже
+            AutoZapret.Proxy.UpstreamRoutes.MarkDown("тест");
+            AutoZapret.Proxy.UpstreamRoutes.Reset();
+
+            Check("пауза: Reset снимает",
+                !AutoZapret.Proxy.UpstreamRoutes.IsDown(out downReason, out downLeft), "снята");
+
             // ---- домены WS: у обычного подключения ОБЯЗАН быть резерв
             //
             // Регресс с живой машины: для не-медиа отдавался только один

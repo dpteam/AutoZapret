@@ -411,6 +411,21 @@ namespace AutoZapret.Proxy
             tls = null;
             error = null;
 
+            // Пауза после того, как не сработало НИЧЕГО.
+            //
+            // Без неё каждое соединение клиента заново перебирает все домены
+            // с таймаутами: Telegram висит на «соединение…», а мы честно
+            // тратим 25 секунд, зная заранее, что не выйдет. Пауза растёт
+            // вдвое за каждую неудачу, но ручная проверка её сбрасывает.
+            string downReason;
+            int downLeft;
+
+            if (UpstreamRoutes.IsDown(out downReason, out downLeft))
+            {
+                error = downReason + " — повтор через " + downLeft + " с";
+                return null;
+            }
+
             List<string> domains = UpstreamRoutes.Order(dc, isMedia, DcTable.WsDomains(dc, isMedia));
             string path = DcTable.PathFor(isTest);
 
@@ -504,6 +519,13 @@ namespace AutoZapret.Proxy
                         "Нужен внешний релей: Cloudflare Worker или свой сервер — " +
                         "прямое подключение из этой сети не пройдёт";
             }
+
+            // Не вышло ничего — уходим в паузу, чтобы следующие соединения
+            // не платили полный перебор заведомо впустую.
+            int pause = UpstreamRoutes.MarkDown(error ?? "нет доступных маршрутов");
+
+            error = (error ?? "нет доступных маршрутов") +
+                    " · следующая попытка через " + pause + " с";
 
             return null;
         }

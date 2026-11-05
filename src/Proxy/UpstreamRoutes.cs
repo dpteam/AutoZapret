@@ -31,6 +31,12 @@ namespace AutoZapret.Proxy
         /// <summary>Карантин упавшего маршрута.</summary>
         public const int CooldownSec = 30;
 
+        /// <summary>Первая пауза, когда не работает ВООБЩЕ ничего.</summary>
+        public const int RecheckPauseSec = 2;
+
+        /// <summary>Потолок экспоненциальной паузы.</summary>
+        public const int RecheckMaxSec = 30;
+
         private sealed class RouteState
         {
             public string Domain = "";
@@ -43,6 +49,18 @@ namespace AutoZapret.Proxy
         private static readonly Dictionary<string, RouteState> Good = new Dictionary<string, RouteState>();
         private static readonly Dictionary<string, DateTime> Failed = new Dictionary<string, DateTime>();
         private static readonly Dictionary<string, int> Strikes = new Dictionary<string, int>();
+
+        // «Всё лежит» — отдельное состояние от «этот домен упал».
+        //
+        // Если не работает НИ ОДИН маршрут, то пробовать снова на каждом
+        // соединении бессмысленно: клиент всё равно ждёт, пока мы переберём
+        // всё с таймаутами, и видит «соединение…». Пауза растёт вдвое за
+        // каждую неудачу (2 → 4 → 8 → 16 → 30 и дальше по 30), а ручная
+        // проверка её сбрасывает — человек не должен ждать из-за того, что
+        // мы сами себя затормозили.
+        private static DateTime _downUntil = DateTime.MinValue;
+        private static string _downReason = "";
+        private static int _downFails;
 
         private static string Key(int dc, bool isMedia)
         {
@@ -115,6 +133,75 @@ namespace AutoZapret.Proxy
 
                 Failed.Remove(domain);
                 Strikes.Remove(domain);
+
+                // заработало — значит «всё лежит» больше не правда
+                _downUntil = DateTime.MinValue;
+                _downReason = "";
+                _downFails = 0;
+            }
+        }
+
+        /// <summary>
+        /// Не работает НИ ОДИН маршрут. Считаем паузу и запоминаем причину.
+        ///
+        /// Возвращает паузу в секундах: 2, 4, 8, 16, 30, 30… — вдвое за каждую
+        /// неудачу подряд, но не больше 30. Дальше по 30, а не «навсегда»:
+        /// сеть может восстановиться сама, и мы обязаны это заметить.
+        /// </summary>
+        public static int MarkDown(string reason)
+        {
+            lock (Gate)
+            {
+                _downFails++;
+
+                int delay = RecheckPauseSec * (1 << Math.Min(_downFails - 1, 10));
+
+                if (delay > RecheckMaxSec) delay = RecheckMaxSec;
+
+                _downUntil = DateTime.UtcNow.AddSeconds(delay);
+                _downReason = reason ?? "";
+
+                return delay;
+            }
+        }
+
+        /// <summary>
+        /// Лежим ли мы сейчас в паузе. Если да — зачем и сколько осталось.
+        ///
+        /// Вызывается в начале подключения: во время паузы пробовать нечего,
+        /// и лучше честно сказать «повтор через N с», чем заставить клиент
+        /// ждать полный перебор.
+        /// </summary>
+        public static bool IsDown(out string reason, out int secondsLeft)
+        {
+            lock (Gate)
+            {
+                int left = (int)Math.Ceiling((_downUntil - DateTime.UtcNow).TotalSeconds);
+
+                if (left <= 0)
+                {
+                    reason = "";
+                    secondsLeft = 0;
+                    return false;
+                }
+
+                reason = _downReason;
+                secondsLeft = left;
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Сбросить паузу. Вызывается при ручной проверке и при старте прокси:
+        /// человек нажал кнопку — он не должен ждать из-за нашего backoff.
+        /// </summary>
+        public static void Wake()
+        {
+            lock (Gate)
+            {
+                _downUntil = DateTime.MinValue;
+                _downReason = "";
+                _downFails = 0;
             }
         }
 
@@ -164,6 +251,10 @@ namespace AutoZapret.Proxy
                 Good.Clear();
                 Failed.Clear();
                 Strikes.Clear();
+
+                _downUntil = DateTime.MinValue;
+                _downReason = "";
+                _downFails = 0;
             }
         }
 
@@ -172,9 +263,15 @@ namespace AutoZapret.Proxy
         {
             lock (Gate)
             {
-                if (Good.Count == 0) return "маршрут не запомнен";
-
                 List<string> parts = new List<string>();
+
+                if (_downUntil > DateTime.UtcNow)
+                {
+                    int left = (int)Math.Ceiling((_downUntil - DateTime.UtcNow).TotalSeconds);
+                    parts.Add("пауза ещё " + left + " с (" + _downReason + ")");
+                }
+
+                if (Good.Count == 0) parts.Add("маршрут не запомнен");
 
                 foreach (KeyValuePair<string, RouteState> pair in Good)
                     parts.Add(pair.Key + " -> " + pair.Value.Domain);

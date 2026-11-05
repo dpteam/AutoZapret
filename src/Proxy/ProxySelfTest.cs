@@ -29,11 +29,20 @@ namespace AutoZapret.Proxy
 
         public static List<Step> Run(int dc, bool verbose)
         {
+            // Ручная проверка сбрасывает паузу: человек нажал кнопку — он не
+            // должен ждать из-за нашего же backoff. Иначе «проверить» врёт:
+            // показывает «недоступно», хотя сеть уже вернулась.
+            UpstreamRoutes.Wake();
+
             List<Step> steps = new List<Step>();
 
             steps.Add(StepDirectTls(dc, verbose));
             steps.Add(StepWsUpgrade(dc, verbose));
             steps.Add(StepLocalHandshake(dc, verbose));
+
+            // И на выходе тоже: проверка не должна оставлять прокси в паузе.
+            // Иначе «проверил» превращается в «и теперь 30 секунд не работает».
+            UpstreamRoutes.Wake();
 
             return steps;
         }
@@ -97,44 +106,61 @@ namespace AutoZapret.Proxy
         private static Step StepWsUpgrade(int dc, bool verbose)
         {
             Step step = new Step { Name = "WebSocket /apiws" };
-            List<string> domains = DcTable.WsDomains(dc, false);
-            string domain = domains[0];
 
-            try
+            // Тот же порядок, что у реального подключения, иначе проверка
+            // говорит «ок» по одному домену, а прокси ходит через другой.
+            List<string> domains = UpstreamRoutes.Order(dc, false, DcTable.WsDomains(dc, false));
+
+            string error = "";
+
+            foreach (string domain in domains)
             {
-                using (TcpClient client = new TcpClient())
+                try
                 {
-                    IAsyncResult ar = client.BeginConnect(domain, 443, null, null);
-                    if (!ar.AsyncWaitHandle.WaitOne(8000))
+                    using (TcpClient client = new TcpClient())
                     {
-                        step.Detail = "таймаут TCP";
-                        return step;
-                    }
-                    client.EndConnect(ar);
-
-                    using (SslStream ssl = new SslStream(client.GetStream(), false, delegate { return true; }))
-                    {
-                        ssl.AuthenticateAsClient(domain);
-
-                        string error;
-                        WsClient ws = WsClient.Connect(ssl, domain, DcTable.WsPath, 8000, out error);
-
-                        if (ws == null)
+                        IAsyncResult ar = client.BeginConnect(domain, 443, null, null);
+                        if (!ar.AsyncWaitHandle.WaitOne(8000))
                         {
-                            step.Detail = error;
-                            return step;
+                            error = domain + ": таймаут TCP";
+                            UpstreamRoutes.Fail(domain, true);
+                            continue;
                         }
+                        client.EndConnect(ar);
 
-                        step.Ok = true;
-                        step.Detail = domain + DcTable.WsPath + " — 101";
-                        ws.Close();
+                        using (SslStream ssl = new SslStream(client.GetStream(), false, delegate { return true; }))
+                        {
+                            ssl.AuthenticateAsClient(domain);
+
+                            string wsError;
+                            WsClient ws = WsClient.Connect(ssl, domain, DcTable.WsPath, 8000, out wsError);
+
+                            if (ws == null)
+                            {
+                                error = domain + ": " + wsError;
+                                UpstreamRoutes.Fail(domain, false);
+                                continue;
+                            }
+
+                            step.Ok = true;
+                            step.Detail = domain + DcTable.WsPath + " — 101";
+
+                            UpstreamRoutes.Remember(dc, false, domain);
+
+                            ws.Close();
+                        }
                     }
+
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    error = domain + ": " + Short(ex);
+                    UpstreamRoutes.Fail(domain, false);
                 }
             }
-            catch (Exception ex)
-            {
-                step.Detail = domain + ": " + Short(ex);
-            }
+
+            if (!step.Ok) step.Detail = error;
 
             if (verbose) Log.Info("PROXY", "шаг 2: " + (step.Ok ? "ok" : "FAIL") + " " + step.Detail);
             return step;
