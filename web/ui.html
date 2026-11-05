@@ -1179,6 +1179,39 @@
   </main>
 </div>
 
+<!-- ===================================================================
+     Окно «вы точно уверены» для по-настоящему опасных действий.
+
+     Зачем своё, а не window.confirm: у системного диалога одна кнопка «ОК»
+     и никакого способа заставить человека ПОДОЖДАТЬ. А здесь ожидание —
+     единственное, что вообще работает против «нажал не думая».
+
+     Правила этого окна (записаны со слов заказчика, «как в Xiaomi»):
+       * «Отмена» доступна сразу и всегда — уйти можно в любой момент;
+       * «ОК» заблокирована и показывает обратный отсчёт;
+       * после согласия — ВТОРОЕ предупреждение, короткое и злое;
+       * только потом действие.
+     =================================================================== -->
+<div class="danger-overlay" id="danger-overlay" style="display:none">
+  <div class="danger-box" role="alertdialog" aria-modal="true" aria-labelledby="danger-title">
+
+    <div class="danger-icon">!</div>
+
+    <div class="danger-title" id="danger-title">Вы точно уверены?</div>
+
+    <div class="danger-text" id="danger-text"></div>
+
+    <div class="danger-extra" id="danger-extra"></div>
+
+    <div class="danger-buttons">
+      <button class="btn" id="danger-cancel">Отмена</button>
+      <button class="btn danger" id="danger-ok" disabled>Подождите…</button>
+    </div>
+
+    <div class="danger-hint" id="danger-hint"></div>
+  </div>
+</div>
+
 <script>
 //{{APP}}
 </script>

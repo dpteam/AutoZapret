@@ -123,6 +123,145 @@
         Object.keys(busyButtons).forEach(idleBtn);
     }
 
+    // ------------------------------------------------- опасное подтверждение
+    //
+    // Зачем своё окно, а не window.confirm: у системного диалога нет способа
+    // заставить человека ПОДОЖДАТЬ. А ожидание — единственное, что работает
+    // против «нажал не думая»: предупреждения читают первые два раза.
+    //
+    // Порядок строго такой (со слов заказчика, «как в Xiaomi»):
+    //   1. «Отмена» доступна сразу — уйти можно в любой момент;
+    //   2. «ОК» заблокирована и показывает обратный отсчёт;
+    //   3. после согласия — ВТОРОЕ предупреждение, короткое и злое;
+    //   4. только потом действие.
+    //
+    // Отсчёт не блокирует интерфейс: это setTimeout, а не sleep, — иначе
+    // окно замирало бы и человек решил бы, что программа повисла.
+    var dangerTimer = null;
+    var dangerCallback = null;
+    var dangerSecondStage = false;
+
+    /// opts: { title, text, extra, wait, confirm, onConfirm }
+    function dangerConfirm(opts) {
+        var overlay = document.getElementById("danger-overlay");
+        if (!overlay) {
+            // разметки нет — не оставляем человека без возможности подтвердить
+            if (window.confirm((opts.text || "") + "\n\n" + (opts.confirm || "")) && opts.onConfirm) {
+                opts.onConfirm();
+            }
+            return;
+        }
+
+        var title = document.getElementById("danger-title");
+        var text = document.getElementById("danger-text");
+        var extra = document.getElementById("danger-extra");
+        var ok = document.getElementById("danger-ok");
+        var hint = document.getElementById("danger-hint");
+
+        if (title) title.textContent = opts.title || t("Вы точно уверены?");
+        if (text) text.textContent = opts.text || "";
+        if (extra) extra.textContent = "";        // показывается после согласия
+        if (hint) hint.textContent = opts.hint || "";
+
+        dangerCallback = opts;
+        dangerSecondStage = false;
+
+        var wait = Math.max(0, opts.wait || 0);
+
+        if (ok) {
+            // wait = 0 — это «подтверждение без отсчёта», и кнопка обязана быть
+            // доступна сразу. Иначе она осталась бы заблокированной навсегда:
+            // отсчёт, который её включает, просто не запустится.
+            ok.disabled = wait > 0;
+            ok.textContent = wait > 0 ? "Подождите " + wait + "…" : t("Да, продолжить");
+        }
+
+        overlay.style.display = "flex";
+
+        // фокус на «Отмену»: если человек нажмёт Enter не читая, он отменит,
+        // а не подтвердит. Это осознанно несимметрично.
+        var cancel = document.getElementById("danger-cancel");
+        if (cancel) { try { cancel.focus(); } catch (e) { } }
+
+        if (wait > 0) startDangerCountdown(wait);
+    }
+
+    function startDangerCountdown(seconds) {
+        var ok = document.getElementById("danger-ok");
+        var left = seconds;
+
+        if (dangerTimer) clearInterval(dangerTimer);
+
+        dangerTimer = setInterval(function () {
+            left--;
+
+            if (left > 0) {
+                if (ok) ok.textContent = "Подождите " + left + "…";
+                return;
+            }
+
+            clearInterval(dangerTimer);
+            dangerTimer = null;
+
+            if (ok) {
+                ok.disabled = false;
+                ok.textContent = t("Да, я понимаю риск");
+            }
+        }, 1000);
+    }
+
+    function closeDanger() {
+        var overlay = document.getElementById("danger-overlay");
+        if (overlay) overlay.style.display = "none";
+
+        if (dangerTimer) { clearInterval(dangerTimer); dangerTimer = null; }
+
+        dangerCallback = null;
+        dangerSecondStage = false;
+    }
+
+    function bindDanger() {
+        var cancel = document.getElementById("danger-cancel");
+        if (cancel) cancel.addEventListener("click", function () { closeDanger(); });
+
+        var ok = document.getElementById("danger-ok");
+        if (ok) ok.addEventListener("click", function () {
+            if (ok.disabled) return;               // отсчёт ещё идёт
+
+            var opts = dangerCallback;
+            if (!opts) { closeDanger(); return; }
+
+            // Два этапа в одном обработчике, а не в двух: второй обработчик,
+            // добавленный «поверх» первого, срабатывал бы вместе с ним —
+            // окно закрывалось бы и одновременно заново показывало текст.
+            // Этап хранится в флаге, и это единственное место, где он меняется.
+            var extra = document.getElementById("danger-extra");
+
+            if (!dangerSecondStage && extra && opts.extra) {
+                dangerSecondStage = true;
+
+                extra.textContent = opts.extra;
+                ok.disabled = true;
+                ok.textContent = t("Понятно, продолжить");
+
+                // задержка без отсчёта: подтверждение уже получено, и заставлять
+                // ждать второй раз — издевательство, а не забота
+                setTimeout(function () { ok.disabled = false; }, 400);
+                return;
+            }
+
+            closeDanger();
+            if (opts.onConfirm) opts.onConfirm();
+        });
+
+        // Esc = отмена. Привычка сильнее кнопки, и это безопасное действие.
+        document.addEventListener("keydown", function (e) {
+            var overlay = document.getElementById("danger-overlay");
+            if (!overlay || overlay.style.display === "none") return;
+            if (e.key === "Escape") { e.preventDefault(); closeDanger(); }
+        });
+    }
+
     function applyLanguage(lang, json) {
         i18nLang = lang === "en" ? "en" : "ru";
 
@@ -2415,13 +2554,19 @@
         // полный сброс: остаётся только localhost
         var reset = document.getElementById("btn-hosts-reset");
         if (reset) reset.addEventListener("click", function () {
-            if (!window.confirm(
-                "hosts будет ПЕРЕСОЗДАН: останется только 127.0.0.1 localhost.\n\n" +
-                "Все остальные записи пропадут. Резервная копия сохранится,\n" +
-                "вернуть прежнее можно кнопкой «Восстановить». Продолжить?")) return;
-
-            busyBtn("btn-hosts-reset", "Пересоздаю…");
-            send("hosts.reset");
+            // Здесь то самое окно с отсчётом: действие необратимо кнопкой
+            // «назад», а window.confirm такой возможности не даёт вовсе.
+            dangerConfirm({
+                title: t("Пересоздать hosts?"),
+                text: t("Останется только 127.0.0.1 localhost. Все остальные записи пропадут."),
+                hint: t("Резервная копия сохранится: вернуть прежнее можно кнопкой «Восстановить»"),
+                wait: 5,
+                extra: t("Ну ладно, я предупредил. Резервная копия есть, но проверьте её до перезагрузки — после неё вернуть будет нечего, если она не создалась."),
+                onConfirm: function () {
+                    busyBtn("btn-hosts-reset", "Пересоздаю…");
+                    send("hosts.reset");
+                }
+            });
         });
 
         // ---- редактор hosts
@@ -3204,6 +3349,7 @@
 
     function boot() {
         initNav();
+        bindDanger();
         initSettings();
         initDiag();
         initLists();
@@ -3246,6 +3392,9 @@
         translateDom: translateDom,
         renderAlerts: renderAlerts,
         setPreflight: function (items) { lastPreflight = items || []; },
+        // окно опасного подтверждения — для проверки глазами и для тестов:
+        // без этого его нельзя вызвать вручную, не нажимая настоящую кнопку
+        dangerConfirm: dangerConfirm,
         missingKeys: function () {
             // какие русские строки в разметке остались без перевода
             if (!i18nDict) return [];

@@ -322,5 +322,17 @@
   "свой движок": "own engine",
   "свой движок - те же стратегии, но перехват наш. Драйвер WinDivert общий": "own engine - the same strategies, but our interception. The WinDivert driver is shared",
   "свой движок недоступен": "own engine is unavailable",
-  "Обновить наборы": "Update sets"
+  "Обновить наборы": "Update sets",
+  "Вы точно уверены?": "Are you absolutely sure?",
+  "Отмена": "Cancel",
+  "Подождите…": "Please wait…",
+  "Да, продолжить": "Yes, continue",
+  "Да, я понимаю риск": "Yes, I understand the risk",
+  "Понятно, продолжить": "Understood, continue",
+  "Пересоздать hosts?": "Recreate hosts?",
+  "Резервная копия сохранится: вернуть прежнее можно кнопкой «Восстановить»": "A backup is kept: you can restore the previous file with the \"Restore\" button",
+  "Ну ладно, я предупредил. Резервная копия есть, но проверьте её до перезагрузки — после неё вернуть будет нечего, если она не создалась.": "Alright, I warned you. A backup exists, but check it before rebooting - after that there will be nothing to restore from if it was never created.",
+  "не установлен": "not installed",
+  "{0} из {1}": "{0} of {1}",
+  "Останется только 127.0.0.1 localhost. Все остальные записи пропадут.": "Only 127.0.0.1 localhost will remain. All other entries will be lost."
 }

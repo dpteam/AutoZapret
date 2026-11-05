@@ -118,3 +118,7 @@ scratch/
 # temporary commit-message files (git add -A after writing one of these
 # has already polluted the history twice - do not let it happen again)
 cmsg*.txt
+
+# preview.html - страница, собранная tools\preview.js для просмотра в браузере.
+# Это артефакт сборки, а не исходник: ui.html + theme.css + app.js в одном файле.
+preview.html

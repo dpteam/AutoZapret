@@ -781,6 +781,134 @@ textarea.list-input::placeholder { color: var(--text-dim); }
    Элементы с data-advanced видны только в расширенном режиме.
    Атрибут стоит рядом с самим элементом в разметке, поэтому
    список скрытого нельзя забыть обновить в двух местах. */
+/* ------------------------------------------------------- опасное окно
+
+   «Вы точно уверены?» для действий, которые нельзя отменить кнопкой
+   «назад». Ключевая деталь — кнопка «ОК» заблокирована и тикает:
+   ожидание работает там, где предупреждение уже не читают.
+
+   Всё в одном файле и без внешних зависимостей: окно должно открываться
+   даже если остальной интерфейс сломался — это последний рубеж. */
+.danger-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+
+    /* фон затемнён и размыт: человек не должен читать список за окном
+       и решать «а, там всё равно нормально» */
+    background: rgba(4, 6, 12, .82);
+    backdrop-filter: blur(3px);
+    animation: danger-fade .16s ease-out;
+}
+
+@keyframes danger-fade {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+.danger-box {
+    width: 100%;
+    max-width: 460px;
+    padding: 26px 26px 20px;
+
+    background: #120E14;
+    border: 1px solid rgba(231, 76, 60, .55);
+    border-radius: 14px;
+
+    /* красное свечение: это не «подтвердите действие», это «вы уверены» */
+    box-shadow: 0 0 0 1px rgba(231, 76, 60, .12), 0 24px 60px rgba(0, 0, 0, .7);
+    text-align: center;
+
+    animation: danger-pop .18s cubic-bezier(.2, .9, .3, 1.2);
+}
+
+@keyframes danger-pop {
+    from { transform: scale(.94); opacity: 0; }
+    to   { transform: scale(1);   opacity: 1; }
+}
+
+.danger-icon {
+    width: 46px;
+    height: 46px;
+    margin: 0 auto 14px;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    font-size: 26px;
+    font-weight: 700;
+    color: #fff;
+
+    background: var(--accent-red);
+    border-radius: 50%;
+    box-shadow: 0 0 0 8px rgba(231, 76, 60, .12);
+}
+
+.danger-title {
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: .02em;
+    text-transform: uppercase;
+    color: #fff;
+    margin-bottom: 12px;
+}
+
+.danger-text {
+    font-size: 13.5px;
+    line-height: 1.6;
+    color: var(--text-primary);
+    white-space: pre-line;
+}
+
+/* второе предупреждение, после согласия: короткое, злое, другим цветом */
+.danger-extra {
+    margin-top: 14px;
+    padding: 10px 12px;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: #FFD9D4;
+    background: rgba(231, 76, 60, .10);
+    border-left: 3px solid var(--accent-red);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    text-align: left;
+    white-space: pre-line;
+}
+
+.danger-extra:empty { display: none; }
+
+.danger-buttons {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+.danger-buttons .btn {
+    flex: 1;
+    justify-content: center;
+    padding: 10px 14px;
+}
+
+/* кнопка «ОК» во время отсчёта выглядит так, будто она не готова, —
+   потому что она и не готова */
+.danger-buttons .btn:disabled {
+    opacity: .5;
+    cursor: not-allowed;
+    filter: grayscale(.35);
+}
+
+.danger-hint {
+    margin-top: 12px;
+    font-size: 11.5px;
+    color: var(--text-muted);
+}
+
+.danger-hint:empty { display: none; }
+
 body.simple [data-advanced] {
     display: none !important;
 }

@@ -45,7 +45,23 @@ const textNodes = [...rawHtml.matchAll(/>([^<>]*[\u0400-\u04FF][^<>]*)</g)]
   .map((m) => m[1].replace(/\s+/g, " ").trim())
   .filter((t) => t.length > 0);
 
-const missing = [...new Set(textNodes)].filter((t) => !dict[t]);
+// То же для app.js: t("...") и tf("...") — это тоже интерфейс.
+//
+// Раньше проверялись только узлы разметки, и динамические подписи (заголовки
+// окон, тексты подтверждений) проходили мимо: ключа нет, перевод молча не
+// применяется, а CI зелёный. Именно так «Вы точно уверены?» и осталось бы
+// непереведённым при английском интерфейсе.
+const jsSource = fs.readFileSync(path.join(root, "web", "app.js"), "utf8");
+const jsStrings = [];
+
+const callRe = /\btf?\(\s*"((?:[^"\\]|\\.)*)"/g;
+let call;
+while ((call = callRe.exec(jsSource)) !== null) {
+  const value = call[1].replace(/\\n/g, " ").replace(/\\"/g, '"').replace(/\s+/g, " ").trim();
+  if (/[\u0400-\u04FF]/.test(value)) jsStrings.push(value);
+}
+
+const missing = [...new Set(textNodes.concat(jsStrings))].filter((t) => !dict[t]);
 
 console.log("keys: " + Object.keys(dict).length + ", added: " + added);
 console.log("orphans: " + orphans.length + (orphans.length ? " " + JSON.stringify(orphans) : ""));
