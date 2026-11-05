@@ -1484,9 +1484,13 @@
         parts.push("резолвер: " + (msg.status || "—"));
         if (msg.upstream) parts.push("DoH: " + msg.upstream);
 
-        // Запасной сервер виден: человек должен знать, что выключение программы
-        // не оставит его без DNS.
-        if (msg.pointed && msg.fallback) parts.push("запасной DNS есть");
+        // Запасные серверы видно поимённо: человек должен знать, что именно
+        // спасёт его, если программа закроется или упадёт.
+        if (msg.pointed) {
+            parts.push(msg.fallbacks
+                ? "запасной: " + msg.fallbacks
+                : "запасного нет — при падении программы DNS пропадёт");
+        }
 
         status.textContent = parts.join(" · ");
         status.className = "row-hint " + (msg.enabled ? "diag-ok" : "");

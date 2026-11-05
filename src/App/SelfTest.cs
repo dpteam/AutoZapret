@@ -4832,6 +4832,26 @@ namespace AutoZapret.App
             Check("DNS: адаптер с интернетом найден",
                 adapter != null && ip.Length > 0,
                 adapter == null ? "нет маршрута" : adapter + " / " + ip);
+
+            if (adapter != null)
+            {
+                // Шлюз — второй запасной сервер: на домашнем роутере он
+                // почти всегда и есть DNS, и он точно доступен из этой сети.
+                string gateway = AutoZapret.Core.SystemDns.DefaultGateway(adapter);
+
+                Check("DNS: шлюз найден (кандидат в запасные)",
+                    gateway.Length > 0, gateway.Length > 0 ? gateway : "не найден");
+
+                // Сломанное состояние: 127.0.0.1 без нашего state-файла.
+                // Проверяем, что детектор не врёт при выключенном режиме.
+                string brokenAdapter, brokenServers;
+
+                bool broken = AutoZapret.Core.SystemDns.IsBrokenWithoutState(out brokenAdapter, out brokenServers);
+
+                Check("DNS: сломанное состояние детектируется согласованно",
+                    !broken || (brokenAdapter.Length > 0 && brokenServers.IndexOf("127.0.0.1", StringComparison.Ordinal) >= 0),
+                    broken ? brokenAdapter + " / " + brokenServers : "не сломано");
+            }
         }
 
         private static void TestSniffResult()

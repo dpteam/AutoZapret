@@ -64,8 +64,24 @@ namespace AutoZapret.Core
         /// </summary>
         public static bool HasFallback()
         {
+            return FallbackList().Count > 0;
+        }
+
+        /// <summary>
+        /// Запасные серверы, реально прописанные у адаптера сейчас (без нашего
+        /// 127.0.0.1). Пустой список — запасного нет, и падение программы
+        /// оставит систему без DNS.
+        ///
+        /// Читаем с адаптера, а не из нашего state-файла: адрес мог не
+        /// добавиться (netsh отказал), и «запасной есть» было бы враньём
+        /// в самый неподходящий момент.
+        /// </summary>
+        public static List<string> FallbackList()
+        {
+            List<string> result = new List<string>();
+
             Saved saved = Load();
-            if (saved == null) return false;
+            if (saved == null) return result;
 
             try
             {
@@ -73,20 +89,19 @@ namespace AutoZapret.Core
                 {
                     if (!string.Equals(ni.Name, saved.Adapter, StringComparison.OrdinalIgnoreCase)) continue;
 
-                    int count = 0;
-
                     foreach (IPAddress dns in ni.GetIPProperties().DnsAddresses)
                     {
                         if (dns.AddressFamily != AddressFamily.InterNetwork) continue;
-                        count++;
-                    }
+                        if (IPAddress.IsLoopback(dns)) continue;
 
-                    return count > 1;
+                        string value = dns.ToString();
+                        if (!result.Contains(value)) result.Add(value);
+                    }
                 }
             }
             catch { }
 
-            return false;
+            return result;
         }
 
         /// <summary>
@@ -130,20 +145,26 @@ namespace AutoZapret.Core
                 return error;
             }
 
-            // Запасной сервер: молчание нашего резолвера не должно оставлять
+            // Запасные серверы: молчание нашего резолвера не должно оставлять
             // человека без DNS. Ошибку не считаем фатальной — основной адрес
-            // уже стоит, а без второго будет просто «как раньше».
-            string fallback = FallbackServer(saved);
+            // уже стоит, а без запасных будет просто «как раньше».
+            List<string> fallbacks = FallbackServers(saved, adapter);
 
-            string fallbackError = Netsh("interface ipv4 add dnsservers name=\"" + adapter +
-                                         "\" address=" + fallback + " index=2");
-
-            if (fallbackError != null)
+            for (int i = 0; i < fallbacks.Count; i++)
             {
-                Log.Warn("DNS", "запасной DNS " + fallback + " не добавлен: " + fallbackError);
+                // index=2, 3, ... — сразу после нашего 127.0.0.1
+                string fallbackError = Netsh("interface ipv4 add dnsservers name=\"" + adapter +
+                                             "\" address=" + fallbacks[i] + " index=" + (i + 2));
+
+                if (fallbackError != null)
+                {
+                    Log.Warn("DNS", "запасной DNS " + fallbacks[i] + " не добавлен: " + fallbackError);
+                    break;      // дальше добавлять бессмысленно: netsh уже не слушается
+                }
             }
 
-            Log.Info("DNS", "системный DNS → 127.0.0.1 (+ запасной " + fallback + ") на адаптере «" + adapter +
+            Log.Info("DNS", "системный DNS → 127.0.0.1 (+ запасные " +
+                            string.Join(", ", fallbacks.ToArray()) + ") на адаптере «" + adapter +
                             "» (было: " + (saved.Automatic ? "автоматически" :
                                 string.Join(", ", saved.Servers.ToArray())) + ")");
 
@@ -151,15 +172,27 @@ namespace AutoZapret.Core
         }
 
         /// <summary>
-        /// Запасной DNS-сервер на случай, если наш резолвер не ответит.
+        /// Набор запасных DNS-серверов рядом с нашим 127.0.0.1.
         ///
-        /// Берём прежний сервер пользователя — он заведомо рабочий в этой сети.
-        /// Если прежние выдавались по DHCP и мы их не запомнили, берём
-        /// Cloudflare: он же наш DoH-апстрим по умолчанию, и его адрес
-        /// не зависит от DNS (задан числом).
+        /// Порядок — от «самого родного» к «самому универсальному»:
+        ///   1. прежние серверы пользователя (они заведомо работали в этой сети);
+        ///   2. шлюз по умолчанию — на домашних роутерах он почти всегда и есть
+        ///      DNS-сервер; если нет — Windows просто пойдёт к следующему;
+        ///   3. публичный 77.88.8.8 (Яндекс) — он доступен там, где 1.1.1.1
+        ///      уже подменён или заблокирован; это последний рубеж.
+        ///
+        /// Проверять доступность заранее не нужно и вредно: это лишние запросы
+        /// при каждом включении, а Windows сам перебирает адреса, пока кто-то
+        /// не ответит. Наша задача — чтобы список не был пуст.
+        ///
+        /// Почему не 1.1.1.1 по умолчанию: в российских сетях он часто сам
+        /// попадает под подмену, и «запасной», который не работает, — это
+        /// отсутствие запасного.
         /// </summary>
-        private static string FallbackServer(Saved saved)
+        private static List<string> FallbackServers(Saved saved, string adapter)
         {
+            List<string> result = new List<string>();
+
             if (saved != null && saved.Servers != null)
             {
                 foreach (string server in saved.Servers)
@@ -169,15 +202,89 @@ namespace AutoZapret.Core
                     // TryParse, а не Parse: в state-файле мог оказаться мусор
                     // после ручной правки, а падать на этом нельзя.
                     IPAddress parsed;
-
                     if (!IPAddress.TryParse(server, out parsed)) continue;
                     if (IPAddress.IsLoopback(parsed)) continue;
 
-                    return server;
+                    if (!result.Contains(server)) result.Add(server);
                 }
             }
 
-            return "1.1.1.1";
+            string gateway = DefaultGateway(adapter);
+
+            if (gateway.Length > 0 && !result.Contains(gateway)) result.Add(gateway);
+
+            if (!result.Contains("77.88.8.8")) result.Add("77.88.8.8");
+
+            return result;
+        }
+
+        /// <summary>
+        /// Система смотрит на 127.0.0.1, а нашего состояния нет.
+        ///
+        /// Это ровно сломанное состояние с живого ПК: единственный DNS —
+        /// 127.0.0.1, второй пуст, программы, которая его обслуживает, нет.
+        /// Показываем красным на карточке DNS и чиним кнопкой «Вернуть DNS».
+        /// </summary>
+        public static bool IsBrokenWithoutState(out string adapter, out string current)
+        {
+            adapter = "";
+            current = "";
+
+            if (IsEnabled) return false;      // есть состояние — это нормальный режим
+
+            string found = DefaultRouteAdapter(out _);
+            if (found == null) return false;
+
+            bool pointsToUs = false;
+            List<string> servers = new List<string>();
+
+            try
+            {
+                foreach (NetworkInterface ni in NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (!string.Equals(ni.Name, found, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    foreach (IPAddress dns in ni.GetIPProperties().DnsAddresses)
+                    {
+                        if (dns.AddressFamily != AddressFamily.InterNetwork) continue;
+
+                        servers.Add(dns.ToString());
+                        if (IPAddress.IsLoopback(dns)) pointsToUs = true;
+                    }
+                }
+            }
+            catch { }
+
+            if (!pointsToUs) return false;
+
+            adapter = found;
+            current = string.Join(", ", servers.ToArray());
+
+            return true;
+        }
+
+        /// <summary>Шлюз по умолчанию адаптера — обычно это и есть DNS роутера.</summary>
+        public static string DefaultGateway(string adapter)
+        {
+            try
+            {
+                foreach (NetworkInterface ni in NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (!string.Equals(ni.Name, adapter, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    foreach (GatewayIPAddressInformation gw in ni.GetIPProperties().GatewayAddresses)
+                    {
+                        if (gw.Address == null) continue;
+                        if (gw.Address.AddressFamily != AddressFamily.InterNetwork) continue;
+                        if (IPAddress.IsLoopback(gw.Address)) continue;
+
+                        return gw.Address.ToString();
+                    }
+                }
+            }
+            catch { }
+
+            return "";
         }
 
         /// <summary>Вернуть: автоматически или прежние серверы.</summary>
@@ -185,7 +292,17 @@ namespace AutoZapret.Core
         {
             Saved saved = Load();
 
-            if (saved == null) return null;
+            if (saved == null)
+            {
+                // Состояния нет — но система всё равно может смотреть на
+                // 127.0.0.1: файл потеряли, чистили data, или DNS сломали
+                // прошлой версией программы (именно так и случилось вживую:
+                // единственный адрес 127.0.0.1, второй пуст, интернета нет).
+                //
+                // «Вернуть DNS» обязана чинить и это, иначе кнопка бесполезна
+                // ровно в той ситуации, ради которой её нажимают.
+                return RepairIfPointingAtUs();
+            }
 
             string error;
 
@@ -210,6 +327,56 @@ namespace AutoZapret.Core
             try { File.Delete(StatePath); } catch { }
 
             Log.Info("DNS", "системный DNS возвращён на адаптере «" + saved.Adapter + "»");
+
+            return null;
+        }
+
+        /// <summary>
+        /// Ремонт сломанного состояния без нашего state-файла.
+        ///
+        /// Признак поломки: у адаптера с интернетом DNS — это ТОЛЬКО 127.0.0.1
+        /// (или 127.0.0.1 + что-то, что не отвечает). Тогда единственный
+        /// разумный шаг — вернуть адаптер на автоматический DNS: он почти
+        /// всегда правильный, а руками прописанные серверы восстановить всё
+        /// равно неоткуда.
+        /// </summary>
+        private static string RepairIfPointingAtUs()
+        {
+            string adapter = DefaultRouteAdapter(out _);
+
+            if (adapter == null) return null;
+
+            List<string> current = DnsServers(adapter);
+
+            // нас интересует именно «смотрит на loopback»
+            bool pointsToUs = false;
+
+            try
+            {
+                foreach (NetworkInterface ni in NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (!string.Equals(ni.Name, adapter, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    foreach (IPAddress dns in ni.GetIPProperties().DnsAddresses)
+                    {
+                        if (dns.AddressFamily != AddressFamily.InterNetwork) continue;
+                        if (IPAddress.IsLoopback(dns)) pointsToUs = true;
+                    }
+                }
+            }
+            catch { }
+
+            if (!pointsToUs) return null;
+
+            Log.Warn("DNS", "у адаптера «" + adapter + "» DNS указывает на 127.0.0.1 без нашего состояния — " +
+                            "возвращаю автоматический (было: " +
+                            (current.Count == 0 ? "пусто" : string.Join(", ", current.ToArray())) + ")");
+
+            string error = Netsh("interface ipv4 set dnsservers name=\"" + adapter + "\" dhcp");
+
+            if (error != null) return error;
+
+            Log.Info("DNS", "DNS адаптера «" + adapter + "» возвращён на автоматический");
 
             return null;
         }

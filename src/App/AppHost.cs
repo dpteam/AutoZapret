@@ -28,6 +28,10 @@ namespace AutoZapret.App
         private readonly TgProxyServer _proxy;
         private readonly Core.LocalDns _localDns = new Core.LocalDns();
 
+        // сколько раз подряд сторож увидел, что резолвер не отвечает:
+        // одна неудача — случайность, две — пора возвращать DNS
+        private int _dnsBadChecks;
+
         // Свой движок (P10): один экземпляр, запускается и останавливается
         // по кнопке. Отдельный от winws — это другой механизм перехвата.
         private readonly object _ownGate = new object();
@@ -2412,21 +2416,67 @@ namespace AutoZapret.App
 
         private void WatchDnsOnce()
         {
-            if (!Core.SystemDns.IsEnabled) return;
-            if (_localDns.IsRunning) return;
-
-            Log.Warn("DNS", "система смотрит на 127.0.0.1, а резолвер не работает — поднимаю");
-
-            string error = _localDns.Start();
-
-            if (error == null && _localDns.SelfCheck(5000))
+            if (!Core.SystemDns.IsEnabled)
             {
-                Log.Info("DNS", "резолвер поднят сторожем");
-                SendSystemDns();
+                _dnsBadChecks = 0;
                 return;
             }
 
-            Log.Error("DNS", "резолвер не поднялся (" + (error ?? "нет ответа") + ") — возвращаю прежний DNS");
+            // ---- резолвер не запущен: поднимаем
+            if (!_localDns.IsRunning)
+            {
+                Log.Warn("DNS", "система смотрит на 127.0.0.1, а резолвер не работает — поднимаю");
+
+                string error = _localDns.Start();
+
+                if (error == null && _localDns.SelfCheck(5000))
+                {
+                    _dnsBadChecks = 0;
+
+                    Log.Info("DNS", "резолвер поднят сторожем");
+                    SendSystemDns();
+                    return;
+                }
+
+                RestoreDns("резолвер не поднялся: " + (error ?? "не отвечает"));
+                return;
+            }
+
+            // ---- резолвер работает, но отвечает ли он по-настоящему?
+            //
+            // Это второй, неочевидный отказ: порт открыт, поток жив, а DoH
+            // недоступен — значит на каждый запрос уходит SERVFAIL. Windows
+            // считает SERVFAIL ответом и на запасной сервер НЕ переключится,
+            // то есть интернета не будет, хотя «всё запущено».
+            if (_localDns.SelfCheck(5000))
+            {
+                _dnsBadChecks = 0;
+                return;
+            }
+
+            _dnsBadChecks++;
+
+            Log.Warn("DNS", "резолвер не ответил на проверку (" + _dnsBadChecks + "/2)");
+
+            // Две неудачи подряд, а не одна: одиночный таймаут — это нормальная
+            // сетевая случайность, и рвать из-за него DNS нельзя.
+            if (_dnsBadChecks < 2) return;
+
+            RestoreDns("локальный DNS отвечает ошибкой");
+        }
+
+        /// <summary>
+        /// Вернуть системе прежний DNS и сказать об этом.
+        ///
+        /// Плохой DNS провайдера лучше отсутствия DNS: в первом случае хоть
+        /// что-то открывается, во втором не работает ничего и человек не
+        /// понимает почему.
+        /// </summary>
+        private void RestoreDns(string reason)
+        {
+            _dnsBadChecks = 0;
+
+            Log.Error("DNS", reason + " — возвращаю прежний DNS");
 
             string restored = Core.SystemDns.Disable();
 
@@ -2437,8 +2487,8 @@ namespace AutoZapret.App
 
             _tray.Notify(AppInfo.Name,
                 restored == null
-                    ? "Локальный DNS остановился. Системный DNS возвращён на прежний — интернет должен заработать"
-                    : "Локальный DNS остановился, вернуть DNS не удалось: " + restored,
+                    ? "Локальный DNS не работает (" + reason + "). Прежний DNS возвращён — интернет должен заработать"
+                    : "Локальный DNS не работает (" + reason + "), вернуть DNS не удалось: " + restored,
                 restored == null ? ToolTipIcon.Warning : ToolTipIcon.Error);
         }
 
@@ -3061,7 +3111,9 @@ namespace AutoZapret.App
         {
             bool pointed = Core.SystemDns.IsEnabled;
             bool running = _localDns.IsRunning;
-            bool fallback = Core.SystemDns.HasFallback();
+            List<string> fallbacks = pointed
+                ? Core.SystemDns.FallbackList()
+                : new List<string>();
 
             // Опасное состояние: система смотрит на нас, а мы не отвечаем.
             // Это «нет интернета» целиком, и человек должен видеть причину
@@ -3072,12 +3124,27 @@ namespace AutoZapret.App
                 problem = "Система смотрит на 127.0.0.1, а локальный DNS не работает — "
                         + "интернета не будет. Нажмите «Вернуть DNS».";
 
+            // Отдельный случай: состояние потеряно, а DNS уже сломан прошлой
+            // версией программы. Тогда `pointed` = false, и без этой проверки
+            // карточка молчала бы о самой опасной поломке.
+            string brokenAdapter, brokenServers;
+
+            if (problem.Length == 0 && Core.SystemDns.IsBrokenWithoutState(out brokenAdapter, out brokenServers))
+            {
+                problem = "DNS адаптера «" + brokenAdapter + "» указывает на 127.0.0.1 (" + brokenServers +
+                          "), а программы, которая его обслуживает, нет — интернета не будет. " +
+                          "Нажмите «Вернуть DNS».";
+            }
+
             _form.Bridge.Send(WebBridge.Msg("sysdns",
                 "ok", true,
                 "enabled", _settings.SystemDns && running,
                 "pointed", pointed,
                 "running", running,
-                "fallback", fallback,
+                "fallback", fallbacks.Count > 0,
+                // Запасные адреса показываем поимённо: человеку важно знать,
+                // что именно спасёт его, если программа закроется.
+                "fallbacks", string.Join(", ", fallbacks.ToArray()),
                 "problem", problem,
                 "status", _localDns.StatusLine(),
                 "target", Core.SystemDns.StatusText(),
