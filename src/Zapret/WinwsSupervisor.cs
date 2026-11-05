@@ -95,6 +95,16 @@ namespace AutoZapret.Zapret
         public string Start(Strategy strategy, Dictionary<string, string> placeholders,
                             List<string> extraArgs = null)
         {
+            return StartCore(strategy, placeholders, extraArgs, false);
+        }
+
+        /// <summary>
+        /// Тело запуска. retried — уже была одна попытка после «фильтр занят»;
+        /// второй раз не повторяем, иначе на чужом процессе получится цикл.
+        /// </summary>
+        private string StartCore(Strategy strategy, Dictionary<string, string> placeholders,
+                                 List<string> extraArgs, bool retried)
+        {
             if (strategy == null) return "Стратегия не выбрана.";
 
             lock (_gate)
@@ -123,6 +133,22 @@ namespace AutoZapret.Zapret
             {
                 Log.Warn("WINWS", "обнаружен чужой winws: " + foreign);
                 return "Уже работает другой winws (например, служба zapret). Остановите его: sc stop zapret";
+            }
+
+            // Остатки НАШЕГО же winws держат фильтр WinDivert и не дают новому
+            // стартовать: winws честно отвечает «A copy of winws is already
+            // running with the same filter» и выходит с кодом 1.
+            //
+            // Приходит это от аварийного завершения, двойного старта или
+            // убитого процесса, у которого остались дети. Убираем по ПУТИ к
+            // exe, а не по имени: чужой winws из установки Flowseal может
+            // жить рядом и трогать его нельзя.
+            int leftovers = KillOwnWinws("перед запуском");
+
+            if (leftovers > 0)
+            {
+                Log.Warn("WINWS", "снято своих winws перед стартом: " + leftovers);
+                Thread.Sleep(500);      // драйверу нужно мгновение
             }
 
             SetState(ProtectionState.Starting, null);
@@ -176,6 +202,28 @@ namespace AutoZapret.Zapret
                 if (proc.WaitForExit(700))
                 {
                     int code = SafeExitCode(proc);
+
+                    // Отдельный, очень частый случай: фильтр уже занят другим
+                    // winws. По коду это тот же «1», что и неверные аргументы,
+                    // но лечится не правкой стратегии, а снятием остатка.
+                    string output = AllOutputText();
+
+                    if (output.IndexOf("already running with the same filter",
+                                       StringComparison.OrdinalIgnoreCase) >= 0 &&
+                        !retried)
+                    {
+                        Log.Warn("WINWS", "фильтр занят другим winws — снимаю свои и пробую ещё раз");
+
+                        lock (_gate) { _process = null; _trackedPids.Clear(); }
+                        ForgetOwn(proc.Id);
+
+                        if (KillOwnWinws("фильтр был занят") > 0) Thread.Sleep(600);
+
+                        // повторяем ровно один раз: если и теперь занято,
+                        // значит это ЧУЖОЙ процесс, и его трогать нельзя
+                        return StartCore(strategy, placeholders, extraArgs, true);
+                    }
+
                     string msg = "winws завершился сразу (код " + code + "). Проверьте аргументы стратегии.";
                     Log.Error("WINWS", msg);
                     lock (_gate) { _process = null; _trackedPids.Clear(); }
@@ -311,6 +359,18 @@ namespace AutoZapret.Zapret
         }
 
         /// <summary>
+        /// Весь вывод движка одной строкой — для поиска известных сообщений.
+        ///
+        /// winws говорит «A copy of winws is already running with the same
+        /// filter» и выходит с кодом 1: по коду это неотличимо от неверных
+        /// аргументов, а лечится совершенно иначе.
+        /// </summary>
+        private string AllOutputText()
+        {
+            lock (_gate) return string.Join("\n", _output.ToArray());
+        }
+
+        /// <summary>
         /// Слить весь накопленный вывод в файл. Нужно для отладочного прогона:
         /// в логе живут только первые строки, а разбираться приходится по всем.
         /// </summary>
@@ -389,6 +449,14 @@ namespace AutoZapret.Zapret
 
             // добиваем всё, что осталось от дерева
             foreach (int pid in pids) TryKillPid(pid);
+
+            // И проверяем по ПУТИ, а не по PID: после аварии или двойного
+            // старта могут остаться наши winws, которых нет в списке PID-ов.
+            // Они держат фильтр и ломают следующий запуск.
+            int leftovers = KillOwnWinws("после остановки");
+
+            if (leftovers > 0)
+                Log.Warn("WINWS", "добито своих winws после остановки: " + leftovers);
 
             // даём драйверу выгрузиться
             Thread.Sleep(300);
@@ -509,6 +577,101 @@ namespace AutoZapret.Zapret
         }
 
         /// <summary>
+        /// Запущен ли процесс из НАШЕГО каталога движка.
+        ///
+        /// По имени процесса судить нельзя: winws.exe от службы Flowseal
+        /// называется так же. Путь к exe — единственный признак, по которому
+        /// можно отличить «наш» от «чужого», не убивая чужое.
+        /// </summary>
+        private static bool IsOurEnginePath(Process p)
+        {
+            try
+            {
+                return IsOurEngineExe(p.MainModule.FileName);
+            }
+            catch
+            {
+                // нет прав на MainModule — не гадаем, считаем чужим
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Лежит ли этот exe в НАШЕМ каталоге движка.
+        ///
+        /// Отдельный метод от Process-версии, чтобы правило можно было
+        /// проверить без запуска процессов: ошибка здесь стоит дорого —
+        /// либо мы не убьём свой зависший winws, либо убьём чужой.
+        /// </summary>
+        public static bool IsOurEngineExe(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return false;
+
+            try
+            {
+                string dir = Core.Paths.EngineBinDir;
+                if (!dir.EndsWith("\\", StringComparison.Ordinal)) dir += "\\";
+
+                return path.StartsWith(dir, StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Убить НАШИ winws/winws2 по пути к exe, не по PID.
+        ///
+        /// Зачем не по PID: PID-метка живёт только пока процесс помнит наша
+        /// программа. После аварийного завершения, двойного старта или
+        /// убийства родителя остаётся процесс, который держит фильтр
+        /// WinDivert, но никому не известен. winws тогда отвечает «A copy of
+        /// winws is already running with the same filter» и выходит с кодом 1 —
+        /// а со стороны это «обход не включается, хотя всё выключено».
+        ///
+        /// Чужие процессы не трогаем: фильтр по пути к exe.
+        /// </summary>
+        public static int KillOwnWinws(string reason)
+        {
+            int killed = 0;
+
+            foreach (string name in new[] { "winws", "winws2" })
+            {
+                Process[] all;
+
+                try { all = Process.GetProcessesByName(name); }
+                catch { continue; }
+
+                foreach (Process p in all)
+                {
+                    try
+                    {
+                        int pid = p.Id;
+
+                        if (!IsOwn(pid) && !IsOurEnginePath(p)) continue;
+
+                        KillTree(pid);
+                        ForgetOwn(pid);
+
+                        killed++;
+                        Log.Warn("WINWS", "снят свой " + name + " pid=" + pid + " (" + reason + ")");
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Debug("WINWS", "не смог снять " + name + ": " + ex.Message);
+                    }
+                    finally
+                    {
+                        try { p.Dispose(); } catch { }
+                    }
+                }
+            }
+
+            return killed;
+        }
+
+        /// <summary>
         /// Ищет ЧУЖОЙ запущенный winws/winws2. Возвращает описание или null.
         /// Нужно, чтобы не гадать, почему «не работает»: чаще всего виновата служба zapret.
         ///
@@ -529,7 +692,14 @@ namespace AutoZapret.Zapret
                         try
                         {
                             int pid = p.Id;
-                            if (IsOwn(pid)) continue;
+
+                            // Свой — по PID-метке ИЛИ по пути к exe. Второе важно:
+                            // после аварийного завершения PID-метка теряется, и
+                            // остаток нашего же winws выглядел бы «чужим» —
+                            // программа отказывалась бы запускаться, ссылаясь на
+                            // службу zapret, которой нет.
+                            if (IsOwn(pid) || IsOurEnginePath(p)) continue;
+
                             descr.Add(name + " pid " + pid);
                         }
                         catch { descr.Add(name + " pid ?"); }

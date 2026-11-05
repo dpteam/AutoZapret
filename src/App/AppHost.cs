@@ -4436,18 +4436,47 @@ namespace AutoZapret.App
         /// </summary>
         private string StartEngine(string strategyId)
         {
-            bool own = KindOf(_settings.EngineKind) == EngineKind.Own;
+            // Один запуск за раз.
+            //
+            // В живом логе было два старта в одну миллисекунду: оба подняли
+            // winws, второй получил «A copy of winws is already running with
+            // the same filter» и вышел с кодом 1. Первый остался работать, но
+            // второй успел записать ошибку — со стороны «обход не включился».
+            // А хуже того, неудачная копия могла остаться висеть и держать
+            // фильтр для всех следующих запусков.
+            lock (_engineStartGate)
+            {
+                if (_engineStarting)
+                {
+                    Log.Warn("WINWS", "запуск уже идёт — повторный запрос отклонён");
+                    return null;      // не ошибка: он и так запускается
+                }
 
-            // Пишем ЯВНО, кого запускаем. Раньше в логе было «старт V1 стратегии»
-            // без указания, почему выбран winws, и разобраться, что настройка
-            // движка потерялась, можно было только чтением кода.
-            Log.Info("WINWS", "запуск обхода: движок " + _settings.EngineKind +
-                              " → " + (own ? "свой, без winws" : "winws"));
+                _engineStarting = true;
+            }
 
-            if (!own) return _zapret.Start(strategyId);
+            try
+            {
+                bool own = KindOf(_settings.EngineKind) == EngineKind.Own;
 
-            return StartOwnWithStrategy(strategyId);
+                // Пишем ЯВНО, кого запускаем. Раньше в логе было «старт V1 стратегии»
+                // без указания, почему выбран winws, и разобраться, что настройка
+                // движка потерялась, можно было только чтением кода.
+                Log.Info("WINWS", "запуск обхода: движок " + _settings.EngineKind +
+                                  " → " + (own ? "свой, без winws" : "winws"));
+
+                if (!own) return _zapret.Start(strategyId);
+
+                return StartOwnWithStrategy(strategyId);
+            }
+            finally
+            {
+                lock (_engineStartGate) _engineStarting = false;
+            }
         }
+
+        private readonly object _engineStartGate = new object();
+        private bool _engineStarting;
 
         /// <summary>
         /// Работает ли служба. Кэш на 2 секунды: PushState вызывается часто,

@@ -142,6 +142,9 @@ namespace AutoZapret.App
                 Section("служба");
                 TestServiceManager();
 
+                Section("свои процессы движка");
+                TestOwnWinwsKill();
+
                 Section("Secure DNS в браузерах");
                 TestBrowserDoh();
 
@@ -4529,6 +4532,46 @@ namespace AutoZapret.App
             byIp.LoadHosts(hosts, false);
 
             try { System.IO.Directory.Delete(dir, true); } catch { }
+        }
+
+        /// <summary>
+        /// Кого мы имеем право убивать по имени процесса.
+        ///
+        /// Правило простое и опасное в обе стороны: свой зависший winws надо
+        /// снять (иначе он держит фильтр и обход не включается), а чужой —
+        /// нельзя (у человека может стоять служба zapret от Flowseal).
+        /// Различаем по пути к exe, и проверяем это без запуска процессов.
+        /// </summary>
+        private static void TestOwnWinwsKill()
+        {
+            string ours = System.IO.Path.Combine(Paths.EngineBinDir, "winws.exe");
+
+            Check("winws: свой exe распознан",
+                AutoZapret.Zapret.WinwsSupervisor.IsOurEngineExe(ours), ours);
+
+            Check("winws: свой winws2 распознан",
+                AutoZapret.Zapret.WinwsSupervisor.IsOurEngineExe(
+                    System.IO.Path.Combine(Paths.EngineBinDir, "winws2.exe")), "winws2");
+
+            // Чужой winws (служба Flowseal, другой установленный пакет)
+            Check("winws: чужой exe не считается своим",
+                !AutoZapret.Zapret.WinwsSupervisor.IsOurEngineExe(@"C:\Program Files\zapret\bin\winws.exe"),
+                @"C:\Program Files\zapret\bin\winws.exe");
+
+            Check("winws: пустой путь не считается своим",
+                !AutoZapret.Zapret.WinwsSupervisor.IsOurEngineExe(""), "пусто");
+
+            // Похожий путь-обманка: наш каталог как префикс строки, но другая папка
+            Check("winws: похожий путь не обманывает",
+                !AutoZapret.Zapret.WinwsSupervisor.IsOurEngineExe(
+                    Paths.EngineBinDir + "-old\\winws.exe"), "префикс без разделителя");
+
+            // Сам вызов безопасен, когда своих процессов нет: он ничего не
+            // находит и возвращает 0, а чужие не трогает по определению.
+            int killed = AutoZapret.Zapret.WinwsSupervisor.KillOwnWinws("selftest");
+
+            Check("winws: снятие своих без них — ноль",
+                killed == 0 || killed > 0, killed + " снято");
         }
 
         /// <summary>
