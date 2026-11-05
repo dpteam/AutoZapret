@@ -820,6 +820,22 @@ namespace AutoZapret.Diag
                     continue;
                 }
 
+                // --fooling badsum,badseq,md5sig,datanoack — как в zapret
+                if (string.Equals(a, "--fooling", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    foreach (string part in args[i + 1].Split(','))
+                    {
+                        string name = part.Trim().ToLowerInvariant();
+
+                        if (name == "badsum") options.Technique.BadSum = true;
+                        else if (name == "badseq") options.Technique.BadSeq = true;
+                        else if (name == "md5sig") options.Technique.Md5Sig = true;
+                        else if (name == "datanoack") options.Technique.DataNoAck = true;
+                    }
+
+                    continue;
+                }
+
                 // --filter — брать списки движка (как winws), а не весь трафик
                 if (string.Equals(a, "--filter", StringComparison.OrdinalIgnoreCase))
                 {

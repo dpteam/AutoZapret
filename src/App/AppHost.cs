@@ -2499,6 +2499,9 @@ namespace AutoZapret.App
             technique.Repeats = Math.Max(1, Math.Min(16, Json.GetInt(msg, "repeats", 6)));
             technique.Overlap = Math.Max(0, Math.Min(1400, Json.GetInt(msg, "overlap", 0)));
             technique.BadSum = Json.GetBool(msg, "badsum", false);
+            technique.BadSeq = Json.GetBool(msg, "badseq", false);
+            technique.Md5Sig = Json.GetBool(msg, "md5sig", false);
+            technique.DataNoAck = Json.GetBool(msg, "datanoack", false);
 
             string positions = Json.GetString(msg, "positions", "");
             if (positions.Length > 0)

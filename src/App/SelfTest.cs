@@ -3923,6 +3923,87 @@ namespace AutoZapret.App
                     "ok");
             }
 
+            // ---- fooling: md5sig, datanoack, badseq
+            //
+            // Здесь легко ошибиться молча: пакет уйдёт «почти правильный», и
+            // никто не заметит, что опция не добавилась. Проверяем по байтам.
+            AutoZapret.Zapret.Own.TechniqueOptions md5 =
+                new AutoZapret.Zapret.Own.TechniqueOptions
+                {
+                    Kind = AutoZapret.Zapret.Own.Technique.Fake,
+                    Repeats = 1,
+                    Md5Sig = true,
+                    DataNoAck = true
+                };
+
+            System.Collections.Generic.List<AutoZapret.Zapret.Own.Desync.Outgoing> md5Ones =
+                AutoZapret.Zapret.Own.Desync.Build(tcp, md5, out error);
+
+            if (md5Ones.Count == 2)
+            {
+                AutoZapret.Zapret.Own.TcpPacket withMd5 =
+                    AutoZapret.Zapret.Own.TcpPacket.Parse(md5Ones[0].Data, md5Ones[0].Length);
+
+                Check("md5sig: заголовок TCP вырос на 20 байт (18 + выравнивание)",
+                    withMd5 != null && withMd5.TcpHeaderLength == tcp.TcpHeaderLength + 20,
+                    withMd5 == null ? "не разобран" : withMd5.TcpHeaderLength + " vs " + tcp.TcpHeaderLength);
+
+                Check("md5sig: опция 19 длиной 18 на месте",
+                    withMd5 != null &&
+                    md5Ones[0].Data[withMd5.TcpOffset + 20] == 19 &&
+                    md5Ones[0].Data[withMd5.TcpOffset + 21] == 18,
+                    "kind/len");
+
+                Check("datanoack: флаг ACK снят",
+                    withMd5 != null && (withMd5.Flags & 0x10) == 0,
+                    withMd5 == null ? "?" : "0x" + withMd5.Flags.ToString("X2"));
+
+                Check("md5sig: данные фейка не потеряны",
+                    withMd5 != null && withMd5.PayloadLength > 40,
+                    withMd5 == null ? "?" : withMd5.PayloadLength.ToString());
+
+                // сумма пересчитана: увеличенный заголовок обязан попасть в неё,
+                // иначе получатель (и половина DPI) отбросит пакет по другой причине
+                Check("md5sig: сумма пересчитана",
+                    withMd5 != null && AutoZapret.Zapret.Own.TcpPacket.VerifyTcpChecksum(
+                        md5Ones[0].Data, withMd5.TcpOffset, md5Ones[0].Length - withMd5.TcpOffset),
+                    "ok");
+
+                AutoZapret.Zapret.Own.TcpPacket realMd5 =
+                    AutoZapret.Zapret.Own.TcpPacket.Parse(md5Ones[1].Data, md5Ones[1].Length);
+
+                Check("md5sig: настоящий пакет без изменений",
+                    realMd5 != null &&
+                    realMd5.TcpHeaderLength == tcp.TcpHeaderLength &&
+                    realMd5.PayloadLength == tcp.PayloadLength &&
+                    (realMd5.Flags & 0x10) != 0,
+                    "ok");
+            }
+
+            // badseq: каждый повтор со своим seq — иначе DPI запомнит один
+            AutoZapret.Zapret.Own.TechniqueOptions seq =
+                new AutoZapret.Zapret.Own.TechniqueOptions
+                {
+                    Kind = AutoZapret.Zapret.Own.Technique.Fake,
+                    Repeats = 3,
+                    BadSeq = true
+                };
+
+            System.Collections.Generic.List<AutoZapret.Zapret.Own.Desync.Outgoing> seqOnes =
+                AutoZapret.Zapret.Own.Desync.Build(tcp, seq, out error);
+
+            if (seqOnes.Count == 4)
+            {
+                AutoZapret.Zapret.Own.TcpPacket s0 =
+                    AutoZapret.Zapret.Own.TcpPacket.Parse(seqOnes[0].Data, seqOnes[0].Length);
+                AutoZapret.Zapret.Own.TcpPacket s1 =
+                    AutoZapret.Zapret.Own.TcpPacket.Parse(seqOnes[1].Data, seqOnes[1].Length);
+
+                Check("badseq: у повторов разные seq",
+                    s0 != null && s1 != null && s0.Seq != s1.Seq,
+                    s0 == null || s1 == null ? "?" : s0.Seq + " / " + s1.Seq);
+            }
+
             // ---- выключено: ничего не делаем
             AutoZapret.Zapret.Own.TechniqueOptions off =
                 new AutoZapret.Zapret.Own.TechniqueOptions { Kind = AutoZapret.Zapret.Own.Technique.Off };

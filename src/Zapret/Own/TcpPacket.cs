@@ -154,6 +154,86 @@ namespace AutoZapret.Zapret.Own
             packet[tcpOffset + 17] = (byte)(packet[tcpOffset + 17] ^ 0xFF);
         }
 
+        /// <summary>
+        /// Фейк с приёмами fooling: `md5sig` и `datanoack`.
+        ///
+        /// Зачем отдельный метод, а не флаги в BuildWithPayload: md5sig УВЕЛИЧИВАЕТ
+        /// заголовок TCP на 18 байт, то есть сдвигает payload и требует нового
+        /// data offset. Это меняет раскладку пакета целиком, и смешивать такой
+        /// случай с обычной сборкой в одном методе — верный способ однажды
+        /// посчитать смещение не там.
+        ///
+        /// md5sig: опция TCP kind=19 len=18 с 16 байтами «подписи». Часть DPI
+        /// не умеет разбирать нестандартную длину заголовка и теряет поток.
+        /// Получатель пакет всё равно отбросит — seq не тот.
+        ///
+        /// datanoack: снять флаг ACK. Пакет с данными и без ACK невалиден, но
+        /// DPI, который смотрит только payload, этого не замечает.
+        /// </summary>
+        public byte[] BuildFake(byte[] payload, int seqAdjust, bool md5sig, bool dataNoAck,
+                                out int outLength)
+        {
+            int payloadSize = payload == null ? 0 : payload.Length;
+
+            // 18 байт опции + 2 байта выравнивания: длина TCP-заголовка
+            // обязана быть кратна 4, иначе data offset в неё не влезет и
+            // пакет развалится у получателя.
+            int extra = md5sig ? 20 : 0;
+            int tcpHeaderSize = 20 + extra;
+
+            int tcpStart = IpOffset + IpHeaderLength;
+            int payloadStart = tcpStart + tcpHeaderSize;
+            int size = payloadStart + payloadSize;
+
+            byte[] result = new byte[size];
+
+            // IP-заголовок копируется как есть: адреса, TOS, TTL не меняются
+            Array.Copy(_packet, 0, result, 0, tcpStart);
+
+            // первые 20 байт TCP: порты, seq, ack, флаги, окно
+            Array.Copy(_packet, TcpOffset, result, tcpStart, 20);
+
+            // data offset в старших четырёх битах 12-го байта TCP
+            int dataOffsetWords = tcpHeaderSize / 4;
+            result[tcpStart + 12] = (byte)((dataOffsetWords << 4) | (result[tcpStart + 12] & 0x0F));
+
+            if (md5sig)
+            {
+                result[tcpStart + 20] = 19;      // kind: MD5 signature
+                result[tcpStart + 21] = 18;      // length
+
+                // «Подпись» детерминированная: псевдослучайная, но одинаковая
+                // для одинакового входа. Случайная тоже годится, но тогда
+                // тест на синтетическом пакете не сможет ничего сравнить.
+                uint seed = unchecked(Seq + (uint)seqAdjust + (uint)payloadSize);
+
+                for (int i = 0; i < 16; i++)
+                {
+                    seed = unchecked(seed * 1103515245u + 12345u);
+                    result[tcpStart + 22 + i] = (byte)(seed >> 16);
+                }
+
+                // выравнивание до 4 байт: два NOP (kind 1)
+                result[tcpStart + 38] = 1;
+                result[tcpStart + 39] = 1;
+            }
+
+            if (payloadSize > 0)
+                Array.Copy(payload, 0, result, payloadStart, payloadSize);
+
+            result[2] = (byte)(size >> 8);
+            result[3] = (byte)(size & 0xFF);
+
+            WriteU32(result, tcpStart + 4, unchecked(Seq + (uint)seqAdjust));
+
+            if (dataNoAck) result[tcpStart + 13] = (byte)(result[tcpStart + 13] & ~0x10);
+
+            RecomputeChecksums(result, size, IpHeaderLength, tcpStart, size - tcpStart);
+
+            outLength = size;
+            return result;
+        }
+
         /// <summary>Копия payload — для техник, которым нужны сами данные.</summary>
         public byte[] PayloadCopy()
         {

@@ -412,6 +412,34 @@
 
         <div class="row">
           <div>
+            <div class="row-label">Fooling</div>
+            <div class="row-hint">
+              Как заставить DPI выбросить фейк, а получателя — не принять его.
+              Работает только с техниками fake и fakedsplit
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <span style="display:flex;align-items:center;gap:4px">
+              <span class="row-hint">badsum</span>
+              <span class="switch" id="own-badsum"></span>
+            </span>
+            <span style="display:flex;align-items:center;gap:4px">
+              <span class="row-hint">badseq</span>
+              <span class="switch" id="own-badseq"></span>
+            </span>
+            <span style="display:flex;align-items:center;gap:4px">
+              <span class="row-hint">md5sig</span>
+              <span class="switch" id="own-md5sig"></span>
+            </span>
+            <span style="display:flex;align-items:center;gap:4px">
+              <span class="row-hint">datanoack</span>
+              <span class="switch" id="own-datanoack"></span>
+            </span>
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
             <div class="row-label">Только показать</div>
             <div class="row-hint">Ничего не отправлять: увидеть, что было бы сделано</div>
           </div>

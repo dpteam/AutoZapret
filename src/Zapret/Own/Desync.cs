@@ -70,6 +70,19 @@ namespace AutoZapret.Zapret.Own
         public bool BadSum;
 
         /// <summary>
+        /// fooling badseq: каждый повтор фейка уходит со своим seq, сдвинутым
+        /// ещё дальше. Один и тот же «битый» seq DPI может запомнить и начать
+        /// отбрасывать, а разные — заставляют его переразбирать каждый пакет.
+        /// </summary>
+        public bool BadSeq;
+
+        /// <summary>fooling md5sig: опция TCP MD5 — нестандартная длина заголовка.</summary>
+        public bool Md5Sig;
+
+        /// <summary>fooling datanoack: снять флаг ACK у фейка.</summary>
+        public bool DataNoAck;
+
+        /// <summary>
         /// Насколько перекрыть куски (seqovl). Второй кусок уходит с seq,
         /// сдвинутым назад: получатель считает это повтором, а DPI видит
         /// перемешанный поток. 0 — без перекрытия.
@@ -97,10 +110,25 @@ namespace AutoZapret.Zapret.Own
                 case Technique.Oob: return "oob";
                 case Technique.WindowSize: return "wsize";
                 case Technique.UdpLen: return "udplen";
-                case Technique.Fake: return "fake seq=" + FakeSeqOffset + (BadSum ? " badsum" : "") + " x" + Repeats;
-                case Technique.FakeSplit: return "fakedsplit pos=" + Position + " seq=" + FakeSeqOffset;
+                case Technique.Fake:
+                    return "fake seq=" + FakeSeqOffset + " x" + Repeats + FoolingText();
+                case Technique.FakeSplit:
+                    return "fakedsplit pos=" + Position + " seq=" + FakeSeqOffset + FoolingText();
                 default: return "выключено";
             }
+        }
+
+        /// <summary>Список включённых приёмов fooling — для лога и интерфейса.</summary>
+        public string FoolingText()
+        {
+            List<string> parts = new List<string>();
+
+            if (BadSum) parts.Add("badsum");
+            if (BadSeq) parts.Add("badseq");
+            if (Md5Sig) parts.Add("md5sig");
+            if (DataNoAck) parts.Add("datanoack");
+
+            return parts.Count == 0 ? "" : " " + string.Join(",", parts.ToArray());
         }
     }
 
@@ -366,22 +394,29 @@ namespace AutoZapret.Zapret.Own
             }
 
             int repeats = Math.Max(1, Math.Min(16, options.Repeats));
-            int length;
 
-            // Фейк собираем один раз: заголовки и данные одинаковые, отличается
-            // только момент отправки. Пересобирать на каждый повтор — лишняя работа
-            // в горячем пути.
-            byte[] fake = tcp.BuildWithPayload(payload, options.FakeSeqOffset, out length);
-
-            if (options.BadSum) TcpPacket.CorruptTcpChecksum(fake, tcp.TcpOffset);
+            // badseq: каждый повтор уходит со своим сдвигом seq. Один и тот же
+            // «битый» seq DPI может запомнить, а разные заставляют его
+            // переразбирать пакет заново. Шаг — длина payload: тогда seq
+            // каждого повтора попадает на «стык» предыдущего.
+            int step = options.BadSeq ? Math.Max(1, payload.Length) : 0;
 
             for (int i = 0; i < repeats; i++)
             {
+                int adjust = options.FakeSeqOffset - i * step;
+                int length;
+
+                byte[] fake = tcp.BuildFake(payload, adjust, options.Md5Sig, options.DataNoAck,
+                                            out length);
+
+                if (options.BadSum) TcpPacket.CorruptTcpChecksum(fake, tcp.TcpOffset);
+
                 result.Add(new Outgoing
                 {
                     Data = fake,
                     Length = length,
-                    Note = "фейк " + (i + 1) + "/" + repeats + " (" + source + ")"
+                    Note = "фейк " + (i + 1) + "/" + repeats + " (" + source + ")" +
+                           (options.BadSeq ? " seq" + adjust : "")
                 });
             }
 

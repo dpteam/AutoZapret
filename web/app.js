@@ -974,6 +974,10 @@
                 overlap: parseInt(document.getElementById("own-overlap").value, 10) || 0,
                 seconds: parseInt(document.getElementById("own-seconds").value, 10) || 30,
                 dry: document.getElementById("own-dry").classList.contains("on"),
+                badsum: document.getElementById("own-badsum").classList.contains("on"),
+                badseq: document.getElementById("own-badseq").classList.contains("on"),
+                md5sig: document.getElementById("own-md5sig").classList.contains("on"),
+                datanoack: document.getElementById("own-datanoack").classList.contains("on"),
                 filter: document.getElementById("own-filter").classList.contains("on"),
                 profiles: document.getElementById("own-filter").classList.contains("on") &&
                     !!document.getElementById("own-profiles") &&
@@ -991,6 +995,12 @@
         var ownDry = document.getElementById("own-dry");
         if (ownDry) ownDry.addEventListener("click", function () {
             ownDry.classList.toggle("on");
+        });
+
+        // Fooling: четыре независимых переключателя, одинаковое поведение
+        ["own-badsum", "own-badseq", "own-md5sig", "own-datanoack"].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.addEventListener("click", function () { el.classList.toggle("on"); });
         });
 
         var ownFilter = document.getElementById("own-filter");
