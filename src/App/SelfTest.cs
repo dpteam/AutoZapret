@@ -5031,6 +5031,44 @@ namespace AutoZapret.App
 
             Check("профили: any-protocol виден", anySet.NeedsAnyPayload, "да");
 
+            // any-protocol сужает фильтр ТОЛЬКО на своих портах.
+            //
+            // Регресс: при любом таком профиле широким становился фильтр для
+            // всех портов, и на ALT12 в user mode уходил каждый пакет данных
+            // на 443 — просадка скорости возвращалась.
+            AutoZapret.Zapret.Own.OwnProfileSet mixed = new AutoZapret.Zapret.Own.OwnProfileSet();
+
+            mixed.Add(new AutoZapret.Zapret.Own.OwnProfile
+            {
+                Name = "обычный",
+                Technique = new AutoZapret.Zapret.Own.TechniqueOptions
+                {
+                    Kind = AutoZapret.Zapret.Own.Technique.Split
+                },
+                TcpPorts = new List<int> { 443 }
+            });
+
+            mixed.Add(new AutoZapret.Zapret.Own.OwnProfile
+            {
+                Name = "игры",
+                Technique = new AutoZapret.Zapret.Own.TechniqueOptions
+                {
+                    Kind = AutoZapret.Zapret.Own.Technique.Split,
+                    AnyProtocol = true
+                },
+                TcpPorts = new List<int> { 12 }
+            });
+
+            string mixedFilter = mixed.FilterExpression(true);
+
+            Check("профили: any-protocol только на своём порту",
+                mixedFilter.IndexOf("tcp.DstPort == 12) and tcp.PayloadLength > 40", StringComparison.Ordinal) >= 0,
+                mixedFilter);
+
+            Check("профили: обычный порт остался ClientHello-only",
+                mixedFilter.IndexOf("tcp.DstPort == 443) and tcp.PayloadLength >= 6", StringComparison.Ordinal) >= 0,
+                mixedFilter);
+
             try { System.IO.Directory.Delete(dir, true); } catch { }
         }
 

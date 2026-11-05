@@ -130,23 +130,61 @@ namespace AutoZapret.Zapret.Own
         {
             List<string> parts = new List<string>();
 
-            string tcp = PortExpression("tcp", AllTcpPorts());
+            // Порты делим на две группы: те, где достаточно ClientHello, и те,
+            // где профиль просит любой payload (--dpi-desync-any-protocol).
+            //
+            // Раньше при любом таком профиле широким становился фильтр для
+            // ВСЕХ портов, и на ALT12 в user mode уходил каждый исходящий
+            // пакет с данными на 80/443 — то есть возвращалась та самая
+            // просадка скорости, которую мы только что убрали. any-protocol
+            // в этих стратегиях нужен игровым портам, а не HTTPS.
+            List<int> plainPorts = new List<int>();
+            List<int> broadPorts = new List<int>();
 
-            if (tcp.Length > 0)
+            foreach (OwnProfile profile in _profiles)
             {
-                // ClientHello: 0x16 (handshake), 0x03 (SSL/TLS), payload[5] == 0x01
-                // (тип handshake). Это ровно первый пакет соединения, а не
-                // эвристика: фильтр проверяет байты, а не «похоже на TLS».
-                string guard = clientHelloOnly
-                    ? "tcp.PayloadLength >= 6 and tcp.Payload[0] == 0x16 and " +
-                      "tcp.Payload[1] == 0x03 and tcp.Payload[5] == 0x01"
-                    : "tcp.PayloadLength > 40";
+                if (profile.TcpPorts == null) continue;
 
-                parts.Add("(" + tcp + ") and " + guard);
+                bool anyPayload = profile.Technique != null && profile.Technique.AnyProtocol;
+
+                foreach (int port in profile.TcpPorts)
+                {
+                    if (anyPayload)
+                    {
+                        if (!broadPorts.Contains(port)) broadPorts.Add(port);
+                    }
+                    else if (!plainPorts.Contains(port) && !broadPorts.Contains(port))
+                    {
+                        plainPorts.Add(port);
+                    }
+                }
             }
 
+            // порт, который нужен обоим, остаётся только в широкой группе
+            plainPorts.RemoveAll(delegate (int port) { return broadPorts.Contains(port); });
+
+            if (!clientHelloOnly)
+            {
+                broadPorts.AddRange(plainPorts);
+                plainPorts.Clear();
+            }
+
+            string plain = PortExpression("tcp", plainPorts);
+
+            if (plain.Length > 0)
+            {
+                parts.Add("((" + plain + ") and tcp.PayloadLength >= 6 and " +
+                          "tcp.Payload[0] == 0x16 and tcp.Payload[1] == 0x03 and " +
+                          "tcp.Payload[5] == 0x01)");
+            }
+
+            string broadExpr = PortExpression("tcp", broadPorts);
+
+            if (broadExpr.Length > 0)
+                parts.Add("((" + broadExpr + ") and tcp.PayloadLength > 40)");
+
             string udp = PortExpression("udp", AllUdpPorts());
-            if (udp.Length > 0) parts.Add("(" + udp + ") and udp.PayloadLength >= 20");
+            if (udp.Length > 0) parts.Add("((" + udp + ") and udp.PayloadLength >= 20)");
 
             return string.Join(" or ", parts.ToArray());
         }

@@ -242,17 +242,27 @@ namespace AutoZapret.Zapret.Own
             // Протокол смотрим ДО разбора TCP: TcpPacket.Parse на UDP вернёт
             // null, и без этой проверки UDP-профиль молча не сработал бы —
             // «профиль есть, техника выбрана, обхода нет».
+            //
+            // IPv6 поддерживается для UDP: Discord нередко уводит медиа в v6,
+            // а фильтр WinDivert ловит его наравне с v4. Раньше такие пакеты
+            // отбрасывались на первой же проверке версии — и голос с экраном
+            // оставались без обхода на сетях с IPv6. TCP-ветка по-прежнему
+            // только IPv4 (см. TcpPacket).
             if (length < 20) return false;
-            if ((packet[0] >> 4) != 4) return false;
 
-            byte protocol = packet[9];
+            int version = (packet[0] >> 4) & 0x0F;
+            if (version != 4 && version != 6) return false;
+
+            byte protocol = version == 4 ? packet[9] : packet[6];
 
             bool udpWanted = _options.Profiles != null
                 ? _options.Profiles.HasUdp
                 : (_options.Technique != null && _options.Technique.Kind == Technique.UdpLen);
 
             if (protocol == 17) return udpWanted && HandleUdp(handle, addressPtr, packet, length);
+
             if (protocol != 6) return false;
+            if (version != 4) return false;
 
             TcpPacket tcp = TcpPacket.Parse(packet, length);
 
@@ -311,6 +321,16 @@ namespace AutoZapret.Zapret.Own
             }
 
             _stats.ClientHellos++;
+
+            // Ретрансмиссия того же ClientHello — не повод резать его второй раз.
+            //
+            // В живом логе один и тот же seq разрезался дважды подряд, и это
+            // не «дубль в логе»: вторые копии уходили в сеть с теми же seq,
+            // сервер получал лишние сегменты, а соединение с медиасервером
+            // Discord иногда не поднималось (ошибка 2012). Повторная отправка
+            // того же пакета означает, что первые куски не дошли — пусть
+            // ретрансмиссия уйдёт как есть, целой.
+            if (!AllowTcpDesync(tcp)) return false;
 
             if (technique == null) return false;
 
@@ -386,7 +406,10 @@ namespace AutoZapret.Zapret.Own
 
             if (_options.Profiles != null && _options.Profiles.Count > 0)
             {
-                inner = _options.Profiles.FilterExpression(!_options.Profiles.NeedsAnyPayload);
+                // Сужение до ClientHello решается ПОРТАМИ внутри набора:
+                // профили с any-protocol получают широкое условие только на
+                // своих портах, остальные — байтовую проверку.
+                inner = _options.Profiles.FilterExpression(true);
             }
             else
             {
@@ -426,6 +449,71 @@ namespace AutoZapret.Zapret.Own
 
         /// <summary>Сколько помним поток, прежде чем снова считать его новым.</summary>
         private const int UdpFlowSeconds = 30;
+
+        /// <summary>
+        /// Почему именно этот пакет не узнан — в лог, но не бесконечно.
+        ///
+        /// Первые десять показывают, что за протокол идёт на порту профиля.
+        /// Дальше молчим: иначе один медиапоток утопит лог.
+        /// </summary>
+        private void LogUnrecognizedUdp(UdpPacket udp, byte[] packet)
+        {
+            int n = System.Threading.Interlocked.Increment(ref _unrecognizedUdp);
+
+            if (n > 10) return;
+
+            int count = Math.Min(8, udp.PayloadLength);
+            string head = "";
+
+            for (int i = 0; i < count; i++)
+            {
+                if (i > 0) head += " ";
+                head += packet[udp.PayloadOffset + i].ToString("x2");
+            }
+
+            Log.Info("OWN", "udp не распознан: порт " + udp.DstPort + ", " +
+                            udp.PayloadLength + " байт, начало: " + head +
+                            (n == 10 ? " (дальше молчу)" : ""));
+        }
+
+        private int _unrecognizedUdp;
+
+        /// <summary>Можно ли применять технику к этому TCP-пакету (не ретрансмиссия).</summary>
+        private bool AllowTcpDesync(TcpPacket tcp)
+        {
+            string key = tcp.SrcPort + ">" + tcp.DstPort + "@" + tcp.Seq;
+
+            DateTime now = DateTime.UtcNow;
+
+            lock (_flowGate)
+            {
+                DateTime seen;
+
+                if (_tcpDesynced.TryGetValue(key, out seen) &&
+                    (now - seen).TotalSeconds < UdpFlowSeconds)
+                {
+                    return false;
+                }
+
+                if (_tcpDesynced.Count > 4096)
+                {
+                    List<string> dead = new List<string>();
+
+                    foreach (KeyValuePair<string, DateTime> pair in _tcpDesynced)
+                        if ((now - pair.Value).TotalSeconds >= UdpFlowSeconds) dead.Add(pair.Key);
+
+                    foreach (string old in dead) _tcpDesynced.Remove(old);
+
+                    if (_tcpDesynced.Count > 8192) _tcpDesynced.Clear();
+                }
+
+                _tcpDesynced[key] = now;
+                return true;
+            }
+        }
+
+        private readonly Dictionary<string, DateTime> _tcpDesynced =
+            new Dictionary<string, DateTime>();
 
         /// <summary>
         /// Сколько фейков максимум на один поток за окно.
@@ -624,7 +712,16 @@ namespace AutoZapret.Zapret.Own
 
             bool dtls = IsDtls(packet, udp.PayloadOffset, udp.PayloadLength);
 
-            if (!quic && !stun && !dtls) return false;
+            if (!quic && !stun && !dtls)
+            {
+                // Диагностика: пакет пришёл на порт профиля, но протокол не
+                // узнан. Раньше такие уходили молча, и по логу нельзя было
+                // понять, почему медиа осталось без обхода. Первые байты
+                // называют протокол лучше любого описания.
+                LogUnrecognizedUdp(udp, packet);
+
+                return false;
+            }
 
             // Отличаем НАЧАЛО рукопожатия от всего остального.
             //
