@@ -211,8 +211,6 @@
   "Идёт проверка": "Check running",
   "Проверки идут по одной, иначе мешают друг другу. Обход на время замера выключается и потом возвращается как был": "Checks run one at a time, otherwise they get in each other's way. The bypass is turned off for the measurement and restored afterwards",
   "Отменить": "Cancel",
-  "Движок и стратегия": "Engine and strategy",
-  "Выбираются на главном экране — там же, где кнопка включения": "Chosen on the home screen, right next to the power button",
   "Уже идёт другая проверка": "Another check is already running",
   "Идёт проверка: ": "Check running: ",
   "Шаг 1б — видит ли драйвер трафик": "Step 1b — does the driver see traffic",
@@ -233,8 +231,6 @@
   "Выключаю…": "Disabling…",
   "Убрать дубли": "Remove duplicates",
   "Редактор hosts": "hosts editor",
-  "Системный DNS через DoH (все программы)": "System DNS over DoH (all programs)",
-  "В Windows 10 своего DoH нет. Включаем локальный резолвер на 127.0.0.1, который ходит в DoH, и переключаем на него адаптер с интернетом — так Discord, игры и Telegram перестают попадать на заглушку 198.18.x. Обратимо: «Вернуть» восстанавливает прежние серверы": "Windows 10 has no DoH of its own. We start a local resolver on 127.0.0.1 that talks DoH and point the internet adapter at it, so Discord, games and Telegram stop landing on the 198.18.x stub. Reversible: \"Restore\" puts the previous servers back",
   "Вернуть DNS": "Restore DNS",
   "ВЫКЛ": "OFF",
   "ВКЛ": "ON",
@@ -246,7 +242,6 @@
   "Здесь лежат и ваши списки, и скачиваемые: основной, Google, исключения, IP-подсети": "Both your lists and the downloaded ones live here: main, Google, exclusions, IP subnets",
   "стр.": "lines",
   "Сбросить кэш DNS": "Flush DNS cache",
-  "Windows держит ответы в кэше: после правки hosts или смены DNS старые адреса продолжают работать. Сбрасывается автоматически при записи hosts и при включении системного DNS — эта кнопка на всякий случай": "Windows caches answers: after editing hosts or changing DNS the old addresses keep working. Flushed automatically when hosts is written and when system DNS is enabled - this button is for everything else",
   "Сбросить кэш": "Flush cache",
   "Сбрасываю…": "Flushing…",
   "Запас в поставке": "Bundled fallback",
@@ -334,5 +329,8 @@
   "Ну ладно, я предупредил. Резервная копия есть, но проверьте её до перезагрузки — после неё вернуть будет нечего, если она не создалась.": "Alright, I warned you. A backup exists, but check it before rebooting - after that there will be nothing to restore from if it was never created.",
   "не установлен": "not installed",
   "{0} из {1}": "{0} of {1}",
-  "Останется только 127.0.0.1 localhost. Все остальные записи пропадут.": "Only 127.0.0.1 localhost will remain. All other entries will be lost."
+  "Останется только 127.0.0.1 localhost. Все остальные записи пропадут.": "Only 127.0.0.1 localhost will remain. All other entries will be lost.",
+  "DNS для всех программ": "DNS for all programs",
+  "Discord, игры и Telegram ходят мимо браузера, поэтому Secure DNS в Chrome им не помогает. Включаем локальный резолвер на 127.0.0.1, который ходит в DoH, и переключаем на него адаптер — заглушка 198.18.x перестаёт ловить всё подряд. Обратимо: «Вернуть DNS» восстанавливает прежние серверы": "Discord, games and Telegram do not go through the browser, so Secure DNS in Chrome does not help them. We start a local resolver on 127.0.0.1 that speaks DoH and point the adapter at it - the 198.18.x placeholder stops catching everything. Reversible: \"Restore DNS\" brings the previous servers back",
+  "Windows держит ответы в кэше: после правки hosts или смены DNS старые адреса продолжают работать. Сбрасывается автоматически при записи hosts и при включении DNS — эта кнопка на всякий случай": "Windows keeps answers cached: after editing hosts or changing DNS the old addresses keep working. It is flushed automatically when hosts is written and when DNS is enabled - this button is just in case"
 }

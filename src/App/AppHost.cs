@@ -4123,6 +4123,10 @@ namespace AutoZapret.App
                               _zapret.State == ProtectionState.Starting ||
                               OwnEngineRunning();
 
+            // Запоминаем ДО записи нового значения: от него зависит, меняется
+            // ли вообще список стратегий (zapret 1 и «свой» — один и тот же).
+            string previousKind = _settings.EngineKind;
+
             Log.Info("WINWS", "смена движка на " + kind + (wasRunning ? " (обход был включён)" : ""));
 
             // Проверяем, что движок вообще установлен. Раньше переключение
@@ -4138,6 +4142,14 @@ namespace AutoZapret.App
 
                 Log.Warn("WINWS", "движок " + kind + " недоступен: " + reason);
                 _tray.Notify(AppInfo.Name, "Движок не переключён: " + reason, ToolTipIcon.Warning);
+
+                // Раньше причина уходила только в трей, а список движков просто
+                // возвращался к прежнему пункту — со стороны это выглядело как
+                // «выбрал, а оно перекинуло на первый». Теперь причина на экране.
+                _form.Bridge.Send(WebBridge.Msg("engine.result",
+                    "ok", false,
+                    "kind", kind,
+                    "message", reason));
 
                 PushState();
                 PushStrategies();
@@ -4157,23 +4169,38 @@ namespace AutoZapret.App
 
             // Выбор стратегии на каждый движок свой. Порядок: сохранённый слот
             // этого движка -> та же стратегия по имени -> первая из списка.
-            // Раньше при смене движка выбор сбрасывался на первую стратегию,
-            // и человек каждый раз искал свою заново.
             //
-            // Слот общий для «zapret 1» и «свой»: это одни и те же стратегии,
-            // и переключение исполнителя не должно менять выбор.
-            string strategyEngine = StrategyEngine(kind);
-            string remembered = SavedStrategy(kind);
-            Strategy candidate = string.IsNullOrEmpty(remembered) ? null : _zapret.Strategies.Find(remembered);
+            // Но главное правило здесь другое, и оно важнее порядка: если
+            // списки стратегий у старого и нового движка СОВПАДАЮТ (zapret 1
+            // и «свой» исполняют одни и те же стратегии), выбор трогать нельзя
+            // вообще. Иначе получается «переключил движок — стратегия слетела
+            // на первую», хотя человек ничего не менял. Меняется исполнитель,
+            // а не правила.
+            _zapret.EnsureStrategies();
 
-            if (candidate == null || !string.Equals(candidate.Engine, strategyEngine, StringComparison.OrdinalIgnoreCase))
+            string fromList = StrategyEngine(previousKind);
+            string toList = StrategyEngine(kind);
+
+            Strategy candidate;
+
+            if (string.Equals(fromList, toList, StringComparison.OrdinalIgnoreCase))
             {
-                candidate = FindSameStrategyOtherEngine(_settings.StrategyId, strategyEngine);
+                candidate = _zapret.Strategies.Find(_settings.StrategyId);
+            }
+            else
+            {
+                string remembered = SavedStrategy(kind);
+                candidate = string.IsNullOrEmpty(remembered) ? null : _zapret.Strategies.Find(remembered);
 
-                if (candidate == null)
+                if (candidate == null || !string.Equals(candidate.Engine, toList, StringComparison.OrdinalIgnoreCase))
                 {
-                    List<Strategy> pool = _zapret.Strategies.ByEngine(strategyEngine);
-                    candidate = pool.Count > 0 ? pool[0] : null;
+                    candidate = FindSameStrategyOtherEngine(_settings.StrategyId, toList);
+
+                    if (candidate == null)
+                    {
+                        List<Strategy> pool = _zapret.Strategies.ByEngine(toList);
+                        candidate = pool.Count > 0 ? pool[0] : null;
+                    }
                 }
             }
 
@@ -4202,6 +4229,12 @@ namespace AutoZapret.App
 
             PushState();
             PushStrategies();
+
+            _form.Bridge.Send(WebBridge.Msg("engine.result",
+                "ok", true,
+                "kind", kind,
+                "message", "движок: " + EngineTitle(kind) +
+                           (candidate != null ? " · стратегия: " + candidate.Name : "")));
         }
 
         /// <summary>Название движка для человека, а не код из настроек.</summary>

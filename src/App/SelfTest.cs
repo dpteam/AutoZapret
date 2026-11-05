@@ -4731,6 +4731,15 @@ namespace AutoZapret.App
                 Check("движок «свой»: v2 остаётся на v2",
                     AutoZapret.Zapret.ZapretService.StrategyEngineFor("v2") == "v2", "v2");
 
+                // Переключение v1 <-> own не меняет список стратегий, а значит
+                // не должно менять и выбранную. Иначе «переключил движок —
+                // стратегия слетела на первую», хотя правила те же.
+                Check("движок «свой»: тот же список стратегий, что у v1",
+                    AutoZapret.Zapret.ZapretService.StrategyEngineFor("own") ==
+                    AutoZapret.Zapret.ZapretService.StrategyEngineFor("v1"),
+                    "own -> " + AutoZapret.Zapret.ZapretService.StrategyEngineFor("own") +
+                    ", v1 -> " + AutoZapret.Zapret.ZapretService.StrategyEngineFor("v1"));
+
                 Dictionary<string, object> engines = svc.DescribeEngines();
 
                 Check("движок «свой»: есть в списке движков",

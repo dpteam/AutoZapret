@@ -361,12 +361,16 @@
             // и ждать, пока человек догадается нажать «Обновить»
             send("logs.get");
         }
+        if (name === "home") {
+            // DNS теперь на главной: карточка должна открываться с настоящим
+            // состоянием, а не с «—» до первого захода в настройки
+            send("browser.doh.get");
+            send("sysdns.get");
+        }
         if (name === "diag") {
             // идёт ли уже проверка: экран должен открываться с этим знанием,
             // иначе кнопки выглядят свободными, а нажатие молча отклоняется
             send("diag.state");
-            send("browser.doh.get");
-            send("sysdns.get");
             send("own.state");
             send("own.compat");
         }
@@ -654,8 +658,6 @@
         // настройки
         setSelect("set-engine", s.engineKind);
 
-        var setScan = document.getElementById("set-strategy-scan");
-        if (setScan) setScan.textContent = s.scan ? " · " + s.scan : "";
         var engHint = document.getElementById("engine-hint");
         if (engHint) {
             if (s.engineKind === "own") {
@@ -716,18 +718,43 @@
         return tf("{0} с", s);
     }
 
+    /// Результат смены движка. Раньше при отказе список молча возвращался
+    /// к прежнему пункту, и это выглядело как «выбрал, а оно перекинуло на
+    /// первый». Теперь причина видна прямо под списком.
+    function renderEngineResult(msg) {
+        var el = document.getElementById("engine-result");
+        if (!el) return;
+
+        el.textContent = msg.message || "";
+        el.className = "row-hint " + (msg.ok ? "diag-ok" : "diag-bad");
+
+        // Успешное переключение — не новость навсегда: строка живёт несколько
+        // секунд, иначе она висит до перезапуска и мешает читать подсказку.
+        if (msg.ok) {
+            setTimeout(function () {
+                if (el.textContent === msg.message) {
+                    el.textContent = "";
+                    el.className = "row-hint";
+                }
+            }, 4000);
+        }
+    }
+
     function renderStrategies(items) {
         var sel = document.getElementById("strategy-select");
         if (!sel) return;
 
-        var current = sel.value || state.strategyId;
+        // Что было выбрано. Берём значение из самого списка, а если его там нет
+        // (список только что перестроен) — то, что прислало ядро.
+        var wanted = sel.value || state.strategyId || "";
+
         sel.innerHTML = "";
 
         if (!items || items.length === 0) {
-            var opt = document.createElement("option");
-            opt.textContent = "нет доступных стратегий";
-            opt.value = "";
-            sel.appendChild(opt);
+            var empty = document.createElement("option");
+            empty.textContent = "нет доступных стратегий";
+            empty.value = "";
+            sel.appendChild(empty);
             return;
         }
 
@@ -741,9 +768,27 @@
             sel.appendChild(opt);
         });
 
-        if (current) sel.value = current;
-        else if (state.strategyId) sel.value = state.strategyId;
+        // Раньше здесь стояло `sel.value = current` без проверки: если такого
+        // пункта в новом списке нет, браузер молча оставляет ПЕРВЫЙ. Со стороны
+        // это выглядело как «переключил движок — стратегия слетела на первую».
+        // Теперь выбираем осознанно и говорим, если выбранного не нашлось.
+        if (wanted && hasOption(sel, wanted)) {
+            sel.value = wanted;
+        } else if (state.strategyId && hasOption(sel, state.strategyId)) {
+            sel.value = state.strategyId;
+        } else if (wanted) {
+            console.warn("стратегия «" + wanted + "» отсутствует в списке движка " +
+                         (state.engineKind || "?") + " — оставлена первая");
+        }
+
         updateStrategyNote(items);
+    }
+
+    function hasOption(select, value) {
+        for (var i = 0; i < select.options.length; i++) {
+            if (select.options[i].value === value) return true;
+        }
+        return false;
     }
 
     function updateStrategyNote(items) {
@@ -1160,32 +1205,6 @@
             send("diag.cancel");
         });
 
-        var dohOn = document.getElementById("btn-browser-doh-on");
-        if (dohOn) dohOn.addEventListener("click", function () {
-            dohOn.disabled = true;
-            dohOn.textContent = "Включаю…";
-            send("browser.doh.enable");
-        });
-
-        var dohOff = document.getElementById("btn-browser-doh-off");
-        if (dohOff) dohOff.addEventListener("click", function () {
-            dohOff.disabled = true;
-            dohOff.textContent = "Выключаю…";
-            send("browser.doh.disable");
-        });
-
-        var sysOn = document.getElementById("btn-sysdns-on");
-        if (sysOn) sysOn.addEventListener("click", function () {
-            if (!window.confirm(
-                "Системный DNS будет переключён на 127.0.0.1 (наш резолвер с DoH).\n\n" +
-                "Нужны права администратора. Прежние настройки запомнятся,\n" +
-                "вернуть можно кнопкой «Вернуть DNS».")) return;
-
-            sysOn.disabled = true;
-            sysOn.textContent = "Включаю…";
-            send("sysdns.enable");
-        });
-
         // ---- свой движок
         var ownStart = document.getElementById("btn-own-start");
         if (ownStart) ownStart.addEventListener("click", function () {
@@ -1260,6 +1279,39 @@
             document.getElementById("diag-test-progress").style.display = "";
 
             send("own.compare");
+        });
+    }
+
+    /// DNS: три операции, которые раньше жили в диагностике, а теперь на
+    /// главной. Отдельная функция, потому что экран один, а карточка другая —
+    /// искать привязку «кнопки главной» внутри initDiag больше не нужно.
+    function initDns() {
+        var dohOn = document.getElementById("btn-browser-doh-on");
+        if (dohOn) dohOn.addEventListener("click", function () {
+            dohOn.disabled = true;
+            dohOn.textContent = "Включаю…";
+            send("browser.doh.enable");
+        });
+
+        var dohOff = document.getElementById("btn-browser-doh-off");
+        if (dohOff) dohOff.addEventListener("click", function () {
+            dohOff.disabled = true;
+            dohOff.textContent = "Выключаю…";
+            send("browser.doh.disable");
+        });
+
+        var sysOn = document.getElementById("btn-sysdns-on");
+        if (sysOn) sysOn.addEventListener("click", function () {
+            // Переключение DNS системы — не мгновенное и требует админа,
+            // поэтому спрашиваем о ПОСЛЕДСТВИИ, а не «вы уверены?».
+            if (!window.confirm(
+                "DNS всех программ будет переключён на 127.0.0.1 (наш резолвер с DoH).\n\n" +
+                "Нужны права администратора. Прежние серверы запомнятся,\n" +
+                "вернуть можно кнопкой «Вернуть DNS».")) return;
+
+            sysOn.disabled = true;
+            sysOn.textContent = "Включаю…";
+            send("sysdns.enable");
         });
 
         var sysOff = document.getElementById("btn-sysdns-off");
@@ -3094,6 +3146,10 @@
                 renderStrategies(strategyItems);
                 break;
 
+            case "engine.result":
+                renderEngineResult(msg);
+                break;
+
             case "diag.probe":
                 renderProbeResult(msg);
                 break;
@@ -3350,6 +3406,7 @@
     function boot() {
         initNav();
         bindDanger();
+        initDns();
         initSettings();
         initDiag();
         initLists();
@@ -3395,6 +3452,9 @@
         // окно опасного подтверждения — для проверки глазами и для тестов:
         // без этого его нельзя вызвать вручную, не нажимая настоящую кнопку
         dangerConfirm: dangerConfirm,
+        // список стратегий: проверяется «не слетел ли выбор при перестройке»
+        renderStrategies: renderStrategies,
+        renderState: renderState,
         missingKeys: function () {
             // какие русские строки в разметке остались без перевода
             if (!i18nDict) return [];

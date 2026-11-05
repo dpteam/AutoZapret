@@ -98,6 +98,7 @@
             </select>
           </div>
         </div>
+        <div class="row-hint" id="engine-result" style="margin-top:6px"></div>
 
         <div class="row">
           <div>
@@ -139,6 +140,57 @@
           </div>
           <span class="tag" id="proxy-state">—</span>
         </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">DNS</div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Зашифрованный DNS в браузерах</div>
+            <div class="row-hint">
+              Провайдер подменяет DNS — браузер приходит на заглушку, и сайт не открывается
+              даже при рабочем обходе. Включает Secure DNS (DoH) в Chrome, Edge, Яндекс,
+              Firefox и родственных. Обратимо
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn primary" id="btn-browser-doh-on">Включить</button>
+            <button class="btn" id="btn-browser-doh-off">Выключить</button>
+          </div>
+        </div>
+        <div class="diag-list" id="browser-doh-list" style="margin-top:10px"></div>
+        <div class="row-hint" id="browser-doh-status"></div>
+
+        <div class="row" style="margin-top:16px">
+          <div>
+            <div class="row-label">DNS для всех программ</div>
+            <div class="row-hint">
+              Discord, игры и Telegram ходят мимо браузера, поэтому Secure DNS в Chrome
+              им не помогает. Включаем локальный резолвер на 127.0.0.1, который ходит
+              в DoH, и переключаем на него адаптер — заглушка 198.18.x перестаёт
+              ловить всё подряд. Обратимо: «Вернуть DNS» восстанавливает прежние серверы
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn primary" id="btn-sysdns-on">Включить</button>
+            <button class="btn" id="btn-sysdns-off">Вернуть DNS</button>
+          </div>
+        </div>
+        <div class="row-hint" id="sysdns-status"></div>
+
+        <div class="row" style="margin-top:14px">
+          <div>
+            <div class="row-label">Сбросить кэш DNS</div>
+            <div class="row-hint">
+              Windows держит ответы в кэше: после правки hosts или смены DNS старые
+              адреса продолжают работать. Сбрасывается автоматически при записи
+              hosts и при включении DNS — эта кнопка на всякий случай
+            </div>
+          </div>
+          <button class="btn" id="btn-dns-flush">Сбросить кэш</button>
+        </div>
+        <div class="row-hint" id="dns-flush-status"></div>
       </div>
 
       <div class="card">
@@ -190,57 +242,12 @@
           <button class="btn primary diag-run-btn" id="btn-diag-sys">Проверить всё</button>
         </div>
         <div id="diag-sys-result" class="diag-list" style="margin-top:12px;display:none"></div>
+      </div>
 
-        <div class="row" style="margin-top:14px">
+      <div class="card">
+        <div class="card-title">Архив для поддержки</div>
+        <div class="row">
           <div>
-            <div class="row-label">Зашифрованный DNS в браузерах</div>
-            <div class="row-hint">
-              Провайдер подменяет DNS — браузер приходит на заглушку, и сайт не открывается
-              даже при рабочем обходе. Включает Secure DNS (DoH) в Chrome, Edge, Яндекс,
-              Firefox и родственных. Обратимо
-            </div>
-          </div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <button class="btn primary" id="btn-browser-doh-on">Включить</button>
-            <button class="btn" id="btn-browser-doh-off">Выключить</button>
-          </div>
-        </div>
-        <div class="diag-list" id="browser-doh-list" style="margin-top:10px"></div>
-        <div class="row-hint" id="browser-doh-status"></div>
-
-        <div class="row" style="margin-top:16px">
-          <div>
-            <div class="row-label">Системный DNS через DoH (все программы)</div>
-            <div class="row-hint">
-              В Windows 10 своего DoH нет. Включаем локальный резолвер на 127.0.0.1,
-              который ходит в DoH, и переключаем на него адаптер с интернетом —
-              так Discord, игры и Telegram перестают попадать на заглушку 198.18.x.
-              Обратимо: «Вернуть» восстанавливает прежние серверы
-            </div>
-          </div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <button class="btn primary" id="btn-sysdns-on">Включить</button>
-            <button class="btn" id="btn-sysdns-off">Вернуть DNS</button>
-          </div>
-        </div>
-        <div class="row-hint" id="sysdns-status"></div>
-
-        <div class="row" style="margin-top:14px">
-          <div>
-            <div class="row-label">Сбросить кэш DNS</div>
-            <div class="row-hint">
-              Windows держит ответы в кэше: после правки hosts или смены DNS старые
-              адреса продолжают работать. Сбрасывается автоматически при записи
-              hosts и при включении системного DNS — эта кнопка на всякий случай
-            </div>
-          </div>
-          <button class="btn" id="btn-dns-flush">Сбросить кэш</button>
-        </div>
-        <div class="row-hint" id="dns-flush-status"></div>
-
-        <div class="row" style="margin-top:14px">
-          <div>
-            <div class="row-label">Архив для поддержки</div>
             <div class="row-hint">
               Логи, настройки, версии и проверки в одном ZIP. Секрет прокси вырезан <span class="dim">· ~2 s</span>
             </div>
@@ -870,16 +877,6 @@
 
       <div class="card">
         <div class="card-title">Обход</div>
-
-        <div class="row">
-          <div>
-            <div class="row-label">Движок и стратегия</div>
-            <div class="row-hint">
-              Выбираются на главном экране — там же, где кнопка включения
-              <span class="dim" id="set-strategy-scan"></span>
-            </div>
-          </div>
-        </div>
 
         <div class="row">
           <div>
