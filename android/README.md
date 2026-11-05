@@ -59,6 +59,14 @@ adb install -r android\AutoZapret.Android\bin\Debug\net9.0-android\ru.autozapret
   **hev-socks5-tunnel** (MIT) превращает его в TCP/UDP и ведёт в наш SOCKS5,
   где и делается обход. Архитектура как у ByeByeDPI, но без JNI: hev вызывается
   из C# через P/Invoke (`Engine/HevTunnel.cs`).
+* **Выбор приложений** (`AppSelection.cs` + карточка в интерфейсе): весь телефон,
+  «только выбранные», «все, кроме выбранных». Список — только приложения из
+  лончера (`ACTION_MAIN` + `CATEGORY_LAUNCHER`), без системной мелочи.
+  Зачем: банки и госуслуги ругаются на активный VPN, а заворачивать нужно не всё.
+* **UDP в SOCKS5** (`UDP ASSOCIATE`, RFC 1928). Без него в VPN-режиме не было ни
+  DNS, ни голоса: hev отдаёт сюда всё, что не TCP. На каждый ответ мы возвращаем
+  заголовок с адресом отправителя, поэтому голос (много собеседников сразу)
+  работает через один сокет.
 * Telegram: `Настройки → Прокси → Добавить → SOCKS5`, сервер `127.0.0.1`,
   порт из приложения. В VPN-режиме то же самое, но для всех приложений.
 
@@ -97,6 +105,9 @@ android\build-hev.cmd
 | `SecurityException` при старте FGS | targetSdk 35 требует `FOREGROUND_SERVICE_SYSTEM_EXEMPTED` **и** одно из exact-alarm разрешений. У ByeByeDPI targetSdk 34, поэтому им хватает одного |
 | SIGSEGV в `hev_task_new` | `hev_socks5_tunnel_init` нельзя звать без `hev_task_system_init` + `lwip_init`. Правильная точка входа одна — `hev_socks5_tunnel_main_from_str` |
 | SOCKS: `host unreachable` по имени, по IP работает | `TcpClient.BeginConnect(host, …)` шёл в IPv6 первым и висел до таймаута ОС. Теперь имя разбираем сами: IPv4 первым, 6 с на адрес |
+| В VPN-режиме «сайты не открываются», хотя соединения есть | В SOCKS5 не было `UDP ASSOCIATE`: DNS-запросы (это UDP) получали отказ, и браузер не мог разрезолвить имя. Голос в Discord — по той же причине |
+| `PackageInfoFlags.MainActivity` не компилируется | Такого значения в биндинге нет. Список приложений берём через `QueryIntentActivities` с `Intent.ActionMain` + `CategoryLauncher` |
+| Список приложений почти пустой (Android 11+) | Ограничение видимости пакетов. Нужен `QUERY_ALL_PACKAGES` в манифесте — он не спрашивается у человека, просто объявляется |
 
 ## Чего здесь не будет
 

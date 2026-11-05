@@ -246,11 +246,46 @@ namespace AutoZapret.Android
                             // Настройки применяются к новому запуску: менять
                             // разрез на ходу — значит мешать уже открытым
                             // соединениям.
-                            if (changed && _proxy != null && _proxy.IsRunning)
+                            if (changed && ZapretVpnService.IsRunning)
+                                PushLog("настройки сохранены: перезапустите VPN, чтобы применить");
+                            else if (changed && _proxy != null && _proxy.IsRunning)
                                 PushLog("настройки сохранены: перезапустите обход, чтобы применить");
                             else if (changed)
                                 PushLog("настройки: порт " + _port + ", разрез по " + _split +
                                         (_delay > 0 ? ", пауза " + _delay + " мс" : ""));
+
+                            break;
+                        }
+
+                    case "apps.list":
+                        SendApps();
+                        break;
+
+                    case "apps.mode":
+                        {
+                            string mode = msg.OptString("mode", AppSelection.ModeAll);
+
+                            AppSelection.Save(this, mode, AppSelection.LoadApps(this));
+                            PushState();
+
+                            PushLog("режим приложений: " + ModeLabel(mode) +
+                                    (ZapretVpnService.IsRunning ? " — перезапустите VPN" : ""));
+
+                            break;
+                        }
+
+                    case "apps.toggle":
+                        {
+                            string package = msg.OptString("package", "");
+                            if (package.Length == 0) break;
+
+                            System.Collections.Generic.HashSet<string> selected = AppSelection.LoadApps(this);
+
+                            if (selected.Contains(package)) selected.Remove(package);
+                            else selected.Add(package);
+
+                            AppSelection.Save(this, AppSelection.LoadMode(this), selected);
+                            PushState();
 
                             break;
                         }
@@ -268,6 +303,37 @@ namespace AutoZapret.Android
 
         // -------------------------------------------------------- отправка в JS
 
+        /// <summary>Список установленных приложений плюс текущий выбор — для экрана.</summary>
+        private void SendApps()
+        {
+            Org.Json.JSONArray items = new Org.Json.JSONArray();
+            System.Collections.Generic.HashSet<string> selected = AppSelection.LoadApps(this);
+
+            foreach (AppEntry entry in AppSelection.Installed(this))
+            {
+                Org.Json.JSONObject item = new Org.Json.JSONObject();
+                item.Put("package", entry.Package);
+                item.Put("label", entry.Label);
+                item.Put("on", selected.Contains(entry.Package));
+
+                items.Put(item);
+            }
+
+            Org.Json.JSONObject msg = new Org.Json.JSONObject();
+            msg.Put("type", "apps");
+            msg.Put("mode", AppSelection.LoadMode(this));
+            msg.Put("items", items);
+
+            Deliver(msg.ToString());
+        }
+
+        private static string ModeLabel(string mode)
+        {
+            if (mode == AppSelection.ModeOnly) return "только выбранные";
+            if (mode == AppSelection.ModeExcept) return "все, кроме выбранных";
+            return "весь телефон";
+        }
+
         private void PushState()
         {
             Socks5Proxy active = _proxy != null && _proxy.IsRunning ? _proxy : ZapretVpnService.Running;
@@ -283,6 +349,7 @@ namespace AutoZapret.Android
             state.Put("port", _port);
             state.Put("split", _split);
             state.Put("delay", _delay);
+            state.Put("appMode", AppSelection.LoadMode(this));
 
             if (running)
             {

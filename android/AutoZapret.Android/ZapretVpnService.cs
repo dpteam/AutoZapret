@@ -107,6 +107,11 @@ namespace AutoZapret.Android
             _proxy = new Socks5Proxy();
             _proxy.Config.Port = port;
 
+            // Лог прокси — в тот же журнал, что видит человек. Раньше Say()
+            // уходил в пустоту (Log никто не выставил), и в logcat было видно
+            // только «VPN включён», а что происходит с соединениями — нет.
+            _proxy.Log = LogLine;
+
             string error = _proxy.Start();
 
             if (error != null)
@@ -123,9 +128,38 @@ namespace AutoZapret.Android
             builder.AddRoute("0.0.0.0", 0);
             builder.AddDnsServer("1.1.1.1");
 
-            // Себя из туннеля исключаем всегда: иначе SOCKS5-соединение к
-            // 127.0.0.1 пойдёт в туннель и получится петля.
-            try { builder.AddDisallowedApplication(PackageName); } catch { }
+            // ---- какие приложения пускать в туннель
+            string mode = AppSelection.LoadMode(this);
+            System.Collections.Generic.HashSet<string> selected = AppSelection.LoadApps(this);
+
+            if (mode == AppSelection.ModeOnly && selected.Count == 0)
+                mode = AppSelection.ModeAll;   // «только выбранные» без выбора = весь телефон
+
+            if (mode == AppSelection.ModeOnly)
+            {
+                // Белый список: разрешаем ровно выбранные. Себя не добавляем —
+                // иначе SOCKS-соединение к 127.0.0.1 уйдёт в собственный туннель.
+                foreach (string package in selected)
+                {
+                    try { builder.AddAllowedApplication(package); }
+                    catch { }
+                }
+            }
+            else
+            {
+                // Весь телефон или чёрный список: себя исключаем всегда, чтобы
+                // не поймать петлю.
+                try { builder.AddDisallowedApplication(PackageName); } catch { }
+
+                if (mode == AppSelection.ModeExcept)
+                {
+                    foreach (string package in selected)
+                    {
+                        try { builder.AddDisallowedApplication(package); }
+                        catch { }
+                    }
+                }
+            }
 
             if (Build.VERSION.SdkInt >= BuildVersionCodes.Q)
                 builder.SetMetered(false);
@@ -154,7 +188,7 @@ namespace AutoZapret.Android
 
             _thread.Start();
 
-            LogLine("VPN включён: tun → SOCKS5 127.0.0.1:" + port);
+            LogLine("VPN включён: tun → SOCKS5 127.0.0.1:" + port + ", режим приложений: " + mode);
         }
 
         private void TunnelLoop(int fd, string config)

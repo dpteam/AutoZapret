@@ -1,10 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          xmlns:tools="http://schemas.android.com/tools">
   <application android:allowBackup="true" android:icon="@mipmap/appicon" android:label="@string/app_name" android:roundIcon="@mipmap/appicon_round" android:supportsRtl="true">
   </application>
   <uses-permission android:name="android.permission.INTERNET" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+  <!--
+    Список приложений для раздельного туннеля. Начиная с Android 11 (API 30)
+    видимость пакетов ограничена, и без этого разрешения QueryIntentActivities
+    отдаст только «свои» приложения и пару системных: список в UI будет
+    выглядеть пустым. Разрешение не запрашивается у человека — оно
+    объявляется в манифесте.
+  -->
+  <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
 
   <!--
     foregroundServiceType="systemExempted" (VPN-сервис) на targetSdk 35 требует

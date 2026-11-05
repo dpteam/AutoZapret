@@ -146,6 +146,28 @@
 
   .mono { font-family: "Cascadia Mono", Consolas, monospace; }
   .note { color: var(--muted); font-size: 11.5px; margin-top: 8px; }
+
+  .apps {
+    margin: 10px 0 4px;
+    max-height: 260px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--input);
+  }
+
+  .app {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+
+  .app:last-child { border-bottom: none; }
+  .app input { width: 18px; height: 18px; }
+  .app .pkg { color: var(--dim); font-size: 10.5px; }
 </style>
 </head>
 <body>
@@ -190,6 +212,22 @@
       </div>
       <input type="number" id="delay" min="0" max="1000" value="0">
     </div>
+  </div>
+
+  <div class="card">
+    <div class="label" style="margin-bottom:8px">Какие приложения через обход</div>
+
+    <select id="app-mode" style="width:100%;padding:11px;background:var(--input);color:var(--text);border:1px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit">
+      <option value="all">Весь телефон</option>
+      <option value="except">Все, кроме выбранных</option>
+      <option value="only">Только выбранные</option>
+    </select>
+
+    <div class="apps" id="apps">
+      <div class="hint">Загружаю список приложений…</div>
+    </div>
+
+    <div class="hint">Список применяется при следующем включении VPN.</div>
   </div>
 
   <div class="card">
@@ -282,9 +320,57 @@
     var msg;
     try { msg = JSON.parse(json); } catch (e) { return; }
 
-    if (msg.type === "state") render(msg);
+    if (msg.type === "state") {
+      render(msg);
+      var mode = document.getElementById("app-mode");
+      if (mode && msg.appMode && mode.value !== msg.appMode) mode.value = msg.appMode;
+    }
     else if (msg.type === "log") appendLog(msg.line || "");
+    else if (msg.type === "apps") renderApps(msg);
   };
+
+  function renderApps(msg) {
+    var box = document.getElementById("apps");
+    if (!box) return;
+
+    var mode = document.getElementById("app-mode");
+    if (mode && msg.mode) mode.value = msg.mode;
+
+    box.innerHTML = "";
+
+    var items = msg.items || [];
+
+    if (items.length === 0) {
+      box.innerHTML = '<div class="hint">Список пуст: система не отдала приложения</div>';
+      return;
+    }
+
+    items.forEach(function (item) {
+      var row = document.createElement("label");
+      row.className = "app";
+
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = !!item.on;
+      cb.addEventListener("change", function () {
+        send("apps.toggle", { package: item.package });
+      });
+
+      var text = document.createElement("div");
+      var name = document.createElement("div");
+      name.textContent = item.label;
+      var pkg = document.createElement("div");
+      pkg.className = "pkg";
+      pkg.textContent = item.package;
+
+      text.appendChild(name);
+      text.appendChild(pkg);
+
+      row.appendChild(cb);
+      row.appendChild(text);
+      box.appendChild(row);
+    });
+  }
 
   document.getElementById("power").addEventListener("click", function () {
     if (busy) return;
@@ -308,7 +394,12 @@
   document.getElementById("split").addEventListener("change", save);
   document.getElementById("delay").addEventListener("change", save);
 
+  document.getElementById("app-mode").addEventListener("change", function () {
+    send("apps.mode", { mode: document.getElementById("app-mode").value });
+  });
+
   send("ready");
+  send("apps.list");
 })();
 </script>
 </body>
