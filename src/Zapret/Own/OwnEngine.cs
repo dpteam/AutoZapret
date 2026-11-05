@@ -91,14 +91,15 @@ namespace AutoZapret.Zapret.Own
             if (!WinDivertInterop.IsAvailable())
                 return "WinDivert.dll не найден в " + Paths.EngineBinDir;
 
-            // udplen работает с UDP/443 (QUIC), остальные техники — с TCP/443.
-            // Фильтр разный: у UDP нет payload-заголовков TCP, и WinDivert
-            // не поймёт `tcp.PayloadLength` для UDP-пакета.
-            bool udpMode = _options.Technique != null && _options.Technique.Kind == Technique.UdpLen;
+            // Фильтр WinDivert — не оптимизация, а условие работы: пакет,
+            // который ядро не отдало, мы не увидим никогда. Поэтому порты
+            // собираются со ВСЕХ профилей, а не только с основного 443:
+            // у discord это 2053/2083/2087/2096/8443, и профиль молча не
+            // сработал бы, если бы фильтр остался на 443.
+            string filter = BuildFilter();
 
-            string filter = udpMode
-                ? "outbound and udp.DstPort == " + _options.Port + " and udp.PayloadLength > 20"
-                : "outbound and tcp.DstPort == " + _options.Port + " and tcp.PayloadLength > 40";
+            if (filter.Length == 0)
+                return "нет ни одного порта для перехвата: проверьте профили";
 
             IntPtr handle;
 
@@ -121,7 +122,10 @@ namespace AutoZapret.Zapret.Own
                     : "WinDivert не открылся (код " + error + "): драйвер занят другим перехватчиком";
             }
 
-            Log.Info("OWN", "движок запущен: " + _options.Technique.Describe() +
+            Log.Info("OWN", "движок запущен: " +
+                            (_options.Profiles != null && _options.Profiles.Count > 0
+                                ? "профили: " + _options.Profiles.Describe()
+                                : _options.Technique.Describe()) +
                             (_options.DryRun ? " (только показ)" : "") + ", фильтр: " + filter);
 
             ManualResetEvent stop = new ManualResetEvent(false);
@@ -337,6 +341,35 @@ namespace AutoZapret.Zapret.Own
 
             // Оригинал НЕ отправляем: он уже отправлен частями или после фейка.
             return true;
+        }
+
+        /// <summary>
+        /// Фильтр WinDivert по всем портам, которые кто-то собирается ловить.
+        ///
+        /// Пустая строка — ловить нечего. Это лучше, чем открыть перехват
+        /// «на всё»: движок без целей, который трогает весь трафик, — это не
+        /// обход, а поломка интернета.
+        /// </summary>
+        private string BuildFilter()
+        {
+            string inner;
+
+            if (_options.Profiles != null && _options.Profiles.Count > 0)
+            {
+                inner = _options.Profiles.FilterExpression();
+            }
+            else
+            {
+                bool udpMode = _options.Technique != null && _options.Technique.Kind == Technique.UdpLen;
+
+                inner = udpMode
+                    ? "udp.DstPort == " + _options.Port + " and udp.PayloadLength > 20"
+                    : "tcp.DstPort == " + _options.Port + " and tcp.PayloadLength > 40";
+            }
+
+            if (inner.Length == 0) return "";
+
+            return "outbound and (" + inner + ")";
         }
 
         /// <summary>

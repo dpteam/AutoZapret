@@ -74,6 +74,75 @@ namespace AutoZapret.Zapret.Own
         public int Count { get { return _profiles.Count; } }
         public List<OwnProfile> All { get { return _profiles; } }
 
+        /// <summary>
+        /// Все TCP-порты, которые ловит хоть один профиль. Нужны для фильтра
+        /// WinDivert: ядро не отдаст пакет, который не попал в фильтр.
+        /// </summary>
+        public List<int> AllTcpPorts()
+        {
+            List<int> ports = new List<int>();
+
+            foreach (OwnProfile profile in _profiles)
+            {
+                if (profile.TcpPorts == null) continue;
+
+                foreach (int port in profile.TcpPorts)
+                    if (!ports.Contains(port)) ports.Add(port);
+            }
+
+            return ports;
+        }
+
+        /// <summary>То же для UDP (QUIC).</summary>
+        public List<int> AllUdpPorts()
+        {
+            List<int> ports = new List<int>();
+
+            foreach (OwnProfile profile in _profiles)
+            {
+                if (profile.UdpPorts == null) continue;
+
+                foreach (int port in profile.UdpPorts)
+                    if (!ports.Contains(port)) ports.Add(port);
+            }
+
+            return ports;
+        }
+
+        /// <summary>
+        /// Выражение WinDivert по портам всех профилей (без `outbound`).
+        ///
+        /// Живёт здесь, а не в движке, потому что это свойство НАБОРА профилей:
+        /// какие порты мы вообще собираемся ловить. Ошибка тут не видна в
+        /// логах — ядро просто не отдаёт пакеты, и движок «работает», ничего
+        /// не делая.
+        /// </summary>
+        public string FilterExpression()
+        {
+            List<string> parts = new List<string>();
+
+            string tcp = PortExpression("tcp", AllTcpPorts());
+            if (tcp.Length > 0) parts.Add("(" + tcp + ") and tcp.PayloadLength > 40");
+
+            string udp = PortExpression("udp", AllUdpPorts());
+            if (udp.Length > 0) parts.Add("(" + udp + ") and udp.PayloadLength > 20");
+
+            return string.Join(" or ", parts.ToArray());
+        }
+
+        /// <summary>`tcp.DstPort == 443 or tcp.DstPort == 2053` без повторов.</summary>
+        private static string PortExpression(string protocol, List<int> ports)
+        {
+            if (ports == null || ports.Count == 0) return "";
+
+            List<string> parts = new List<string>();
+
+            foreach (int port in ports)
+                parts.Add(protocol + ".DstPort == " + port);
+
+            return string.Join(" or ", parts.ToArray());
+        }
+
         /// <summary>Есть ли хоть один профиль, который трогает UDP (QUIC).</summary>
         public bool HasUdp
         {

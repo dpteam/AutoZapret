@@ -4460,6 +4460,26 @@ namespace AutoZapret.App
             Check("профили: UDP не трогаем",
                 !set.HasUdp && set.MatchUdp(443, googleIp) == null, "udp");
 
+            // фильтр WinDivert обязан включать ВСЕ порты профилей: пакет,
+            // который ядро не отдало, движок не увидит никогда
+            string expr = set.FilterExpression();
+
+            Check("профили: фильтр ловит порты discord",
+                expr.IndexOf("tcp.DstPort == 2053", StringComparison.Ordinal) >= 0 &&
+                expr.IndexOf("tcp.DstPort == 8443", StringComparison.Ordinal) >= 0,
+                expr);
+
+            Check("профили: фильтр без повторов",
+                expr.Split(new[] { "tcp.DstPort == 443" }, StringSplitOptions.None).Length == 2,
+                expr);
+
+            // Приоритет операторов: `a or b and c` в WinDivert читается как
+            // `a or (b and c)`, и условие payload приклеилось бы только к
+            // последнему порту. Группируем скобками явно.
+            Check("профили: скобки вокруг портов",
+                expr.IndexOf(") and tcp.PayloadLength > 40", StringComparison.Ordinal) >= 0,
+                expr);
+
             try { System.IO.Directory.Delete(dir, true); } catch { }
         }
 
