@@ -227,6 +227,26 @@ if ($engineReady -and -not $SkipEngine) {
     Record 'selftest (строгий)' $true 'skip: движок не установлен'
 }
 
+# ------------------------------------------------- аргументы всех стратегий
+#
+# Не «прочитать список флагов», а прогнать каждую стратегию через настоящий
+# движок с --dry-run: он проверяет имена опций, значения, файлы и форматы.
+# Именно так ловится «стратегия есть, а winws её не примет».
+if ($engineReady -and -not $SkipEngine) {
+    Section 'аргументы стратегий (dry-run движка)'
+    Push-Location $root
+    try {
+        $audit = & node 'tools\audit-strategies.js' 2>&1
+        $code = $LASTEXITCODE
+    } finally { Pop-Location }
+
+    $audit | Out-File -FilePath $log -Append -Encoding utf8
+    $audit | Select-Object -Last 6 | ForEach-Object { Write-Host ("  " + $_) }
+    Record 'стратегии: аргументы' ($code -eq 0) ''
+} else {
+    Record 'стратегии: аргументы' $true 'skip: движок не установлен'
+}
+
 # --------------------------------------------------------------------- отчёт
 
 Section 'расширенный отчёт'

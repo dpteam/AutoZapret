@@ -4497,6 +4497,34 @@ namespace AutoZapret.App
             Check("UDP: TLS не считается DTLS",
                 !AutoZapret.Zapret.Own.OwnEngine.IsDtls(tlsHello, 0, tlsHello.Length), "0x16 0x03");
 
+            // Начало рукопожатия против остального потока: фейк нужен только
+            // на ClientHello/Binding Request, иначе он льётся в медиа.
+            byte[] dtlsHello = new byte[64];
+            dtlsHello[0] = 0x16;
+            dtlsHello[1] = 0xFE;
+            dtlsHello[2] = 0xFD;
+            dtlsHello[13] = 0x01;   // ClientHello
+
+            Check("UDP: DTLS ClientHello узнан",
+                AutoZapret.Zapret.Own.OwnEngine.IsDtlsClientHello(dtlsHello, 0, dtlsHello.Length), "0x01");
+
+            dtlsHello[13] = 0x02;   // ServerHello
+
+            Check("UDP: DTLS ServerHello — не ClientHello",
+                !AutoZapret.Zapret.Own.OwnEngine.IsDtlsClientHello(dtlsHello, 0, dtlsHello.Length), "0x02");
+
+            byte[] stunRequest = AutoZapret.Zapret.Own.Desync.StunBindingRequest();
+
+            Check("UDP: STUN Binding Request узнан",
+                AutoZapret.Zapret.Own.OwnEngine.IsStunRequest(stunRequest, 0, stunRequest.Length), "0x0001");
+
+            byte[] stunResponse = (byte[])stunRequest.Clone();
+            stunResponse[0] = 0x01;
+            stunResponse[1] = 0x01;   // Binding Success Response
+
+            Check("UDP: STUN-ответ не считается запросом",
+                !AutoZapret.Zapret.Own.OwnEngine.IsStunRequest(stunResponse, 0, stunResponse.Length), "0x0101");
+
             // ---- не UDP пакет не считается нашим
             Check("UDP: TCP не считается UDP",
                 AutoZapret.Zapret.Own.UdpPacket.Parse(SynthTlsPacket(100, 1), 140) == null, "ok");

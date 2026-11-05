@@ -411,32 +411,52 @@ namespace AutoZapret.Zapret.Own
             return "outbound and (" + inner + ")";
         }
 
-        // ------------------------------------------------- первы пакет UDP-потока
+        // ------------------------------------------------- фейки в UDP-потоке
 
         private readonly object _flowGate = new object();
-        private readonly Dictionary<string, DateTime> _udpFlows = new Dictionary<string, DateTime>();
+
+        private sealed class UdpFlowState
+        {
+            public DateTime Last;
+            public int Fakes;
+        }
+
+        private readonly Dictionary<string, UdpFlowState> _udpFlows =
+            new Dictionary<string, UdpFlowState>();
 
         /// <summary>Сколько помним поток, прежде чем снова считать его новым.</summary>
         private const int UdpFlowSeconds = 30;
 
         /// <summary>
-        /// Первый ли это пакет UDP-потока (пятикортеж за последние 30 секунд).
+        /// Сколько фейков максимум на один поток за окно.
         ///
-        /// Зачем: у TCP технику применяют к ClientHello — он один на соединение.
-        /// У UDP якоря нет, и без этого ограничения фейк уходил к каждому пакету
-        /// голосового потока: трафик учетверялся, а сервер получал поддельные
-        /// STUN между кадрами. Внешне это «RTC не подключается».
+        /// Не «один», как было раньше. Discord пересогласовывает DTLS прямо
+        /// во время звонка (переинициализация, смена ключей, ICE restart), и
+        /// каждый такой ClientHello — новый пакет, который DPI тоже проверяет.
+        /// Старое правило «фейк только первому пакету типа» оставляло все
+        /// последующие рукопожатия без обхода: звук начинал рваться, а показ
+        /// экрана пропадал посреди сеанса.
         ///
-        /// 30 секунд, а не «навсегда»: поток может замолчать и продолжиться,
-        /// и новый сеанс с тем же портом должен снова получить обход.
-        ///
-        /// `kind` — тип первого пакета (stun / dtls / quic). Он входит в ключ,
-        /// потому что у одного и того же пятикортежа их может быть несколько:
-        /// голос начинается со STUN, а показ экрана с того же порта — с DTLS.
-        /// Без этого второй тип считался «поток уже трогали» и оставался без
-        /// фейка — ровно то, почему экран не работал при работающем голосе.
+        /// 6 за окно — с большим запасом: за 30 секунд реальных рукопожатий
+        /// бывает два-три, а случайный мусор не превращается в поток фейков.
         /// </summary>
-        private bool FirstUdpPacket(UdpPacket udp, string kind)
+        private const int MaxUdpFakesPerFlow = 6;
+
+        /// <summary>
+        /// Можно ли отправить фейк перед этим пакетом.
+        ///
+        /// `repeatable` — пакет сам по себе является началом рукопожатия
+        /// (DTLS ClientHello, STUN Binding Request). Такие повторяются в
+        /// течение звонка, и каждый должен получить обход.
+        ///
+        /// Для QUIC и прочего — по-прежнему только первый пакет потока:
+        /// угадать «ещё одно рукопожатие» там нельзя, а фейк в середине
+        /// медиапотока ломает соединение.
+        ///
+        /// `kind` входит в ключ, потому что у одного пятикортежа типов бывает
+        /// несколько: голос начинается со STUN, показ экрана — с DTLS.
+        /// </summary>
+        private bool AllowUdpFake(UdpPacket udp, string kind, bool repeatable)
         {
             string key = udp.SrcPort + ">" + udp.DstPort + "@" +
                          (UdpDestination(udp) == null ? "?" : UdpDestination(udp).ToString()) +
@@ -446,32 +466,43 @@ namespace AutoZapret.Zapret.Own
 
             lock (_flowGate)
             {
-                DateTime seen;
+                UdpFlowState state;
 
-                if (_udpFlows.TryGetValue(key, out seen) &&
-                    (now - seen).TotalSeconds < UdpFlowSeconds)
+                if (!_udpFlows.TryGetValue(key, out state) ||
+                    (now - state.Last).TotalSeconds >= UdpFlowSeconds)
                 {
-                    return false;
+                    state = new UdpFlowState { Last = now, Fakes = 0 };
+                    _udpFlows[key] = state;
                 }
 
-                // чистим редко и помногу: словарь не должен расти без предела
-                if (_udpFlows.Count > 4096)
-                {
-                    List<string> dead = new List<string>();
+                state.Last = now;
 
-                    foreach (KeyValuePair<string, DateTime> pair in _udpFlows)
-                        if ((now - pair.Value).TotalSeconds >= UdpFlowSeconds) dead.Add(pair.Key);
+                if (!repeatable && state.Fakes > 0) return false;
+                if (state.Fakes >= MaxUdpFakesPerFlow) return false;
 
-                    foreach (string old in dead) _udpFlows.Remove(old);
-
-                    // всё ещё много — значит потоки текут быстрее, чем стареют:
-                    // тогда просто начинаем с чистого листа, это не состояние,
-                    // а подсказка «уже трогали»
-                    if (_udpFlows.Count > 8192) _udpFlows.Clear();
-                }
-
-                _udpFlows[key] = now;
+                state.Fakes++;
                 return true;
+            }
+        }
+
+        /// <summary>Подчистить старые потоки, чтобы словарь не рос без предела.</summary>
+        private void PruneUdpFlows(DateTime now)
+        {
+            lock (_flowGate)
+            {
+                if (_udpFlows.Count <= 4096) return;
+
+                List<string> dead = new List<string>();
+
+                foreach (KeyValuePair<string, UdpFlowState> pair in _udpFlows)
+                    if ((now - pair.Value.Last).TotalSeconds >= UdpFlowSeconds) dead.Add(pair.Key);
+
+                foreach (string old in dead) _udpFlows.Remove(old);
+
+                // всё ещё много — значит потоки текут быстрее, чем стареют:
+                // тогда просто начинаем с чистого листа, это не состояние,
+                // а подсказка «уже трогали»
+                if (_udpFlows.Count > 8192) _udpFlows.Clear();
             }
         }
 
@@ -538,6 +569,36 @@ namespace AutoZapret.Zapret.Own
         }
 
         /// <summary>
+        /// DTLS ClientHello: запись рукопожатия и тип 0x01 в первом байте
+        /// handshake-сообщения (он идёт сразу за 13-байтовым заголовком записи).
+        ///
+        /// Только ClientHello, а не любая DTLS-запись: ChangeCipherSpec и
+        /// Finished идут уже внутри защищённого канала, фейк перед ними ничего
+        /// не даёт и только добавляет мусор в поток.
+        /// </summary>
+        internal static bool IsDtlsClientHello(byte[] packet, int offset, int payloadLength)
+        {
+            if (payloadLength < 14) return false;
+            if (offset < 0 || offset + 14 > packet.Length) return false;
+
+            return packet[offset] == 0x16 &&
+                   packet[offset + 1] == 0xFE &&
+                   packet[offset + 13] == 0x01;
+        }
+
+        /// <summary>
+        /// STUN Binding Request (тип 0x0001) — единственный запрос, на который
+        /// имеет смысл подсовывать фейк. Ответы и прочие типы (allocate,
+        /// refresh) идут после и к обходу отношения не имеют.
+        /// </summary>
+        internal static bool IsStunRequest(byte[] packet, int offset, int payloadLength)
+        {
+            if (!IsStun(packet, offset, payloadLength)) return false;
+
+            return packet[offset] == 0x00 && packet[offset + 1] == 0x01;
+        }
+
+        /// <summary>
         /// UDP-ветка: `udplen` (QUIC) и `fake` (STUN/DTLS/QUIC/игры).
         ///
         /// Проверка «наше ли это» проще, чем у TLS, но не «любой UDP»:
@@ -564,6 +625,16 @@ namespace AutoZapret.Zapret.Own
             bool dtls = IsDtls(packet, udp.PayloadOffset, udp.PayloadLength);
 
             if (!quic && !stun && !dtls) return false;
+
+            // Отличаем НАЧАЛО рукопожатия от всего остального.
+            //
+            // Именно на этих двух типах DPI проверяет соединение, и именно они
+            // повторяются в течение звонка (пересогласование DTLS, ICE restart).
+            // Раньше фейк отправлялся только первому пакету типа за 30 секунд —
+            // и повторное рукопожатие проходило без обхода: звук рвался, показ
+            // экрана пропадал на середине сеанса.
+            bool dtlsHello = dtls && IsDtlsClientHello(packet, udp.PayloadOffset, udp.PayloadLength);
+            bool stunRequest = stun && IsStunRequest(packet, udp.PayloadOffset, udp.PayloadLength);
 
             _stats.ClientHellos++;    // для UDP это первый пакет соединения
 
@@ -605,19 +676,27 @@ namespace AutoZapret.Zapret.Own
             if (technique == null) return false;
             if (technique.Kind != Technique.UdpLen && technique.Kind != Technique.Fake) return false;
 
-            // Только ПЕРВЫЙ пакет потока.
+            // Только осмысленные пакеты и не чаще бюджета.
             //
             // У TCP рамки задаёт ClientHello: он один на соединение, и техника
-            // применяется к нему. У UDP такого якоря нет, и без ограничения
-            // движок подсовывал фейки к КАЖДОМУ пакету медиапотока: голос шёл
-            // вчетверо толще, а сервер получал мусор между кадрами. Это и есть
-            // вторая причина, по которой RTC не поднимался.
+            // применяется к нему. У UDP якоря нет, поэтому:
+            //   * DTLS ClientHello и STUN Binding Request — всегда (это начало
+            //     рукопожатия, их за звонок бывает несколько);
+            //   * всё остальное (QUIC, прочий STUN) — только первый пакет
+            //     потока, иначе фейк уходил бы между кадрами и ломал медиа.
             //
             // zapret решает то же самое через учёт соединений и cutoff; у нас
-            // достаточно «первый пакет пятикортежа за последние 30 секунд».
-            string kind = dtls ? "dtls" : (stun ? "stun" : "quic");
+            // бюджет на поток, чтобы случайный мусор не превратился в поток
+            // фейков.
+            string kind = dtlsHello ? "dtls-hello"
+                        : dtls ? "dtls"
+                        : stunRequest ? "stun-req"
+                        : stun ? "stun"
+                        : "quic";
 
-            if (!FirstUdpPacket(udp, kind)) return false;
+            PruneUdpFlows(DateTime.UtcNow);
+
+            if (!AllowUdpFake(udp, kind, dtlsHello || stunRequest)) return false;
 
             // `fake` для UDP — это поддельный payload, а не «сдвиг seq»:
             // в UDP его нет. `udplen` — игра с полем длины.
