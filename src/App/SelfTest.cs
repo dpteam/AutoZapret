@@ -4230,6 +4230,31 @@ namespace AutoZapret.App
                 Check("udplen: у IPv6 сумма посчитана", sum != 0, sum.ToString());
             }
 
+            // ---- распознавание протоколов, на которых ломался голос
+            //
+            // RTP (голос) начинается с 0x80: версия 2, без расширений.
+            // Раньше этого хватало, чтобы считать пакет QUIC Initial, и движок
+            // подсовывал в медиапоток STUN-фейки. Теперь 0x80 — не QUIC.
+            byte[] rtp = new byte[64];
+            rtp[0] = 0x80;
+
+            Check("UDP: RTP не считается QUIC",
+                !AutoZapret.Zapret.Own.OwnEngine.LooksLikeQuic(rtp, 0, rtp.Length), "0x80");
+
+            byte[] quicInitial = new byte[64];
+            quicInitial[0] = 0xC0;
+
+            Check("UDP: QUIC Initial распознан",
+                AutoZapret.Zapret.Own.OwnEngine.LooksLikeQuic(quicInitial, 0, quicInitial.Length), "0xC0");
+
+            byte[] stunProbe = AutoZapret.Zapret.Own.Desync.StunBindingRequest();
+
+            Check("UDP: STUN распознан",
+                AutoZapret.Zapret.Own.OwnEngine.LooksLikeStun(stunProbe, 0, stunProbe.Length), "STUN");
+
+            Check("UDP: RTP не считается STUN",
+                !AutoZapret.Zapret.Own.OwnEngine.LooksLikeStun(rtp, 0, rtp.Length), "0x80");
+
             // ---- не UDP пакет не считается нашим
             Check("UDP: TCP не считается UDP",
                 AutoZapret.Zapret.Own.UdpPacket.Parse(SynthTlsPacket(100, 1), 140) == null, "ok");

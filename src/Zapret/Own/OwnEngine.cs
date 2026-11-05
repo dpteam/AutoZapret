@@ -393,13 +393,95 @@ namespace AutoZapret.Zapret.Own
                 bool udpMode = _options.Technique != null && _options.Technique.Kind == Technique.UdpLen;
 
                 inner = udpMode
-                    ? "udp.DstPort == " + _options.Port + " and udp.PayloadLength > 20"
+                    ? "udp.DstPort == " + _options.Port + " and udp.PayloadLength >= 20"
                     : "tcp.DstPort == " + _options.Port + " and tcp.PayloadLength > 40";
             }
 
             if (inner.Length == 0) return "";
 
             return "outbound and (" + inner + ")";
+        }
+
+        // ------------------------------------------------- первы пакет UDP-потока
+
+        private readonly object _flowGate = new object();
+        private readonly Dictionary<string, DateTime> _udpFlows = new Dictionary<string, DateTime>();
+
+        /// <summary>Сколько помним поток, прежде чем снова считать его новым.</summary>
+        private const int UdpFlowSeconds = 30;
+
+        /// <summary>
+        /// Первый ли это пакет UDP-потока (пятикортеж за последние 30 секунд).
+        ///
+        /// Зачем: у TCP технику применяют к ClientHello — он один на соединение.
+        /// У UDP якоря нет, и без этого ограничения фейк уходил к каждому пакету
+        /// голосового потока: трафик учетверялся, а сервер получал поддельные
+        /// STUN между кадрами. Внешне это «RTC не подключается».
+        ///
+        /// 30 секунд, а не «навсегда»: поток может замолчать и продолжиться,
+        /// и новый сеанс с тем же портом должен снова получить обход.
+        /// </summary>
+        private bool FirstUdpPacket(UdpPacket udp)
+        {
+            string key = udp.SrcPort + ">" + udp.DstPort + "@" +
+                         (UdpDestination(udp) == null ? "?" : UdpDestination(udp).ToString());
+
+            DateTime now = DateTime.UtcNow;
+
+            lock (_flowGate)
+            {
+                DateTime seen;
+
+                if (_udpFlows.TryGetValue(key, out seen) &&
+                    (now - seen).TotalSeconds < UdpFlowSeconds)
+                {
+                    return false;
+                }
+
+                // чистим редко и помногу: словарь не должен расти без предела
+                if (_udpFlows.Count > 4096)
+                {
+                    List<string> dead = new List<string>();
+
+                    foreach (KeyValuePair<string, DateTime> pair in _udpFlows)
+                        if ((now - pair.Value).TotalSeconds >= UdpFlowSeconds) dead.Add(pair.Key);
+
+                    foreach (string old in dead) _udpFlows.Remove(old);
+
+                    // всё ещё много — значит потоки текут быстрее, чем стареют:
+                    // тогда просто начинаем с чистого листа, это не состояние,
+                    // а подсказка «уже трогали»
+                    if (_udpFlows.Count > 8192) _udpFlows.Clear();
+                }
+
+                _udpFlows[key] = now;
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Похоже ли на QUIC Initial.
+        ///
+        /// Старшие ДВА бита первого байта равны 11 (long header form), а тип —
+        /// 00 (Initial). Именно 0xC0, а не 0x80: с 0x80 проходил любой RTP,
+        /// у которого первый байт 0x80 (версия 2). Из-за этого движок принимал
+        /// медиапоток Discord за QUIC и подсовывал в него STUN-фейки — голос
+        /// от этого и не поднимался.
+        /// </summary>
+        public static bool LooksLikeQuic(byte[] packet, int offset, int length)
+        {
+            if (packet == null || length < 20) return false;
+            if (offset < 0 || offset + 20 > packet.Length) return false;
+
+            byte first = packet[offset];
+
+            return (first & 0xC0) == 0xC0 && (first & 0x30) == 0;
+        }
+
+        /// <summary>Похоже ли на STUN (RFC 5389).</summary>
+        public static bool LooksLikeStun(byte[] packet, int offset, int length)
+        {
+            return IsStun(packet, offset, length);
         }
 
         private static bool IsStun(byte[] packet, int offset, int payloadLength)
@@ -421,7 +503,7 @@ namespace AutoZapret.Zapret.Own
         /// UDP-ветка: `udplen` (QUIC) и `fake` (STUN/QUIC/игры).
         ///
         /// Проверка «наше ли это» проще, чем у TLS, но не «любой UDP»:
-        ///   * QUIC Initial — старшие биты первого байта 0b11 и тип 0;
+        ///   * QUIC Initial — long header form (старшие два бита 11) и тип 0;
         ///   * STUN — magic cookie 0x2112A442 в байтах 4..7, тип 0x0000..0x0004.
         /// Голосовой Discord идёт именно STUN-ом, и без этой проверки он не
         /// обходился бы вовсе: профиль есть, техника выбрана, а пакет не узнан.
@@ -431,13 +513,11 @@ namespace AutoZapret.Zapret.Own
             UdpPacket udp = UdpPacket.Parse(packet, length);
 
             if (udp == null || !udp.HasPayload) return false;
-            if (udp.PayloadLength < 12) return false;
+            if (udp.PayloadLength < 20) return false;
 
-            byte first = packet[udp.PayloadOffset];
-
-            bool quic = udp.PayloadLength >= 20 &&
-                        (first & 0x80) != 0 &&        // long header form
-                        (first & 0x30) == 0;          // тип Initial
+            // QUIC long header: старшие ДВА бита 11, тип 00 (Initial).
+            // Подробности — в LooksLikeQuic: именно здесь ломался голос.
+            bool quic = LooksLikeQuic(packet, udp.PayloadOffset, udp.PayloadLength);
 
             bool stun = IsStun(packet, udp.PayloadOffset, udp.PayloadLength);
 
@@ -483,6 +563,18 @@ namespace AutoZapret.Zapret.Own
             if (technique == null) return false;
             if (technique.Kind != Technique.UdpLen && technique.Kind != Technique.Fake) return false;
 
+            // Только ПЕРВЫЙ пакет потока.
+            //
+            // У TCP рамки задаёт ClientHello: он один на соединение, и техника
+            // применяется к нему. У UDP такого якоря нет, и без ограничения
+            // движок подсовывал фейки к КАЖДОМУ пакету медиапотока: голос шёл
+            // вчетверо толще, а сервер получал мусор между кадрами. Это и есть
+            // вторая причина, по которой RTC не поднимался.
+            //
+            // zapret решает то же самое через учёт соединений и cutoff; у нас
+            // достаточно «первый пакет пятикортежа за последние 30 секунд».
+            if (!FirstUdpPacket(udp)) return false;
+
             // `fake` для UDP — это поддельный payload, а не «сдвиг seq»:
             // в UDP его нет. `udplen` — игра с полем длины.
             string error;
@@ -527,7 +619,8 @@ namespace AutoZapret.Zapret.Own
 
             if (_stats.Applied <= 20 || _stats.Applied % 100 == 0)
             {
-                Log.Info("OWN", "udplen " + udp.SrcPort + "->" + udp.DstPort + ": " +
+                Log.Info("OWN", technique.Describe() + " udp " +
+                                udp.SrcPort + "->" + udp.DstPort + ": " +
                                 udp.PayloadLength + " байт → " + sent + " пакет(ов)");
             }
 

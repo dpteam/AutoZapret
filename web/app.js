@@ -945,25 +945,35 @@
             state.className = "tag " + (msg.running ? "diag-ok" : (msg.installed ? "diag-warn" : ""));
         }
 
-        // Кнопки по состоянию: нельзя запустить неустановленную службу и
-        // нельзя установить уже установленную — иначе человек жмёт и получает
-        // отказ, который выглядит как поломка.
+        // Все четыре кнопки видны ВСЕГДА — их и просили четыре.
+        //
+        // Раньше неуместные прятались, и карточка выглядела по-разному в
+        // зависимости от состояния: то две кнопки, то три. Человек, который
+        // просил «Установить, Удалить, Запустить, Остановить», видел не то,
+        // что просил. Недоступное действие теперь просто неактивно — на месте
+        // и с объяснением, а не исчезает.
         var install = document.getElementById("btn-service-install");
-        if (install) install.style.display = msg.installed ? "none" : "";
+        if (install) {
+            install.style.display = "";
+            install.disabled = !!msg.installed;
+        }
 
         var uninstall = document.getElementById("btn-service-uninstall");
-        if (uninstall) uninstall.style.display = msg.installed ? "" : "none";
+        if (uninstall) {
+            uninstall.style.display = "";
+            uninstall.disabled = !msg.installed;
+        }
 
         var start = document.getElementById("btn-service-start");
         if (start) {
-            start.style.display = msg.installed ? "" : "none";
-            start.disabled = !!msg.running || !!msg.pending;
+            start.style.display = "";
+            start.disabled = !msg.installed || !!msg.running || !!msg.pending;
         }
 
         var stop = document.getElementById("btn-service-stop");
         if (stop) {
-            stop.style.display = msg.installed ? "" : "none";
-            stop.disabled = !msg.running || !!msg.pending;
+            stop.style.display = "";
+            stop.disabled = !msg.installed || !msg.running || !!msg.pending;
         }
 
         var note = document.getElementById("service-note");
@@ -3480,6 +3490,8 @@
         // карточка DNS: проверяется, что опасное состояние видно и кнопки
         // возвращаются из «Включаю…»
         renderSystemDns: renderSystemDns,
+        // карточка службы: проверяется, что все четыре кнопки на месте
+        renderService: renderService,
         missingKeys: function () {
             // какие русские строки в разметке остались без перевода
             if (!i18nDict) return [];

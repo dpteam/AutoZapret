@@ -125,7 +125,7 @@ namespace AutoZapret.Zapret.Own
             if (tcp.Length > 0) parts.Add("(" + tcp + ") and tcp.PayloadLength > 40");
 
             string udp = PortExpression("udp", AllUdpPorts());
-            if (udp.Length > 0) parts.Add("(" + udp + ") and udp.PayloadLength > 20");
+            if (udp.Length > 0) parts.Add("(" + udp + ") and udp.PayloadLength >= 20");
 
             return string.Join(" or ", parts.ToArray());
         }
