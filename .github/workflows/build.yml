@@ -162,6 +162,30 @@ jobs:
             if ($p.ExitCode -ne 0) { throw "strict selftest failed with $($p.ExitCode)" }
           } finally { Pop-Location }
 
+      # Режим службы: тело не должно зависать.
+      #
+      # SCM убивает службу, если она не вызовет StartServiceCtrlDispatcher за
+      # 30 секунд (ошибка 1053). Проверяем, что `--service` без действия
+      # быстро отвечает «это тело службы» (код 5), а не висит.
+      - name: Verify service mode
+        shell: pwsh
+        run: |
+          Push-Location bin
+          try {
+            $watch = [System.Diagnostics.Stopwatch]::StartNew()
+            $p = Start-Process -FilePath ./AutoZapret.exe -ArgumentList '--service' -Wait -PassThru -NoNewWindow
+            $watch.Stop()
+
+            Write-Host "service body exit: $($p.ExitCode), $([int]$watch.Elapsed.TotalSeconds) s"
+
+            if ($p.ExitCode -ne 5) { throw "service body should exit with 5 (not started by SCM), got $($p.ExitCode)" }
+            if ($watch.Elapsed.TotalSeconds -ge 10) { throw "service body took too long - SCM would kill it with 1053" }
+
+            $s = Start-Process -FilePath ./AutoZapret.exe -ArgumentList '--service','status' -Wait -PassThru -NoNewWindow
+            if ($s.ExitCode -ne 0) { throw "service status failed with $($s.ExitCode)" }
+          } finally { Pop-Location }
+
+      # Служба не должна зависеть от данных: те же проверки, что и у обычного режима.
       - name: Upload selftest report
         if: always()
         uses: actions/upload-artifact@v4

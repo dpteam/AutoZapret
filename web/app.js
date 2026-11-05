@@ -173,6 +173,9 @@
             send("sysdns.get");
             send("own.state");
         }
+        if (name === "settings") {
+            send("service.get");
+        }
 
         // скорость сети нужна только на главной: опрос раз в секунду
         // на других экранах — лишний трафик моста впустую
@@ -350,10 +353,13 @@
 
         // главная
         var protection = normalizeProtection(s.protection);
-        text("status-text", t(PROTECTION_LABEL[protection] || protection));
+        var byService = !!s.serviceRunning;
+
+        text("status-text", t(byService ? "Обход включён службой" : (PROTECTION_LABEL[protection] || protection)));
 
         var detail;
         if (!s.engineReady) detail = s.engineProblem || t("Движок не установлен");
+        else if (byService) detail = t("Работает без окна: остановить можно только в «Настройках» → «Служба»");
         else if (protection === "running") detail = tf("Стратегия: {0} · {1}", s.activeStrategy || "—", fmtUptime(s.uptimeSec));
         else if (protection === "error") detail = s.protectionError || t("Ошибка");
         else detail = tf("Движок {0} готов", s.engineVersion || "?");
@@ -386,16 +392,22 @@
 
         var power = document.getElementById("power");
         if (power) {
-            power.classList.toggle("on", protection === "running");
+            var running = protection === "running" || byService;
+
+            power.classList.toggle("on", running);
             power.classList.toggle("busy", protection === "starting" || protection === "stopping");
             power.classList.toggle("error", protection === "error");
-            power.disabled = !s.engineReady;
+
+            // Служба держит обход — наша кнопка не имеет права ничего запускать
+            power.disabled = !s.engineReady || byService;
+            power.classList.toggle("service", byService);
 
             // Подпись внутри кнопки и подсветка всей шапки: состояние видно и без
             // чтения строки статуса. Класс на .hero нужен, чтобы светился и текст.
             var caption = document.getElementById("power-caption");
             if (caption) {
                 caption.textContent =
+                    byService ? "СЛУЖБА" :
                     protection === "running" ? "ВКЛ" :
                     protection === "starting" ? "СТАРТ" :
                     protection === "stopping" ? "СТОП" :
@@ -403,14 +415,14 @@
             }
 
             var hero = document.querySelector(".hero");
-            if (hero) hero.classList.toggle("on", protection === "running");
+            if (hero) hero.classList.toggle("on", running);
 
             // для скринридеров: кнопка сообщает состояние, а не только вид
-            power.setAttribute("aria-pressed", protection === "running" ? "true" : "false");
+            power.setAttribute("aria-pressed", running ? "true" : "false");
 
             var svg = power.querySelector("svg");
             if (svg) {
-                svg.innerHTML = protection === "running"
+                svg.innerHTML = running
                     ? '<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none"/>'
                     : '<path d="M12 3.5v8" /><path d="M6.2 6.9a8 8 0 1 0 11.6 0" />';
             }
@@ -617,7 +629,115 @@
 
     var strategyItems = [];
 
+    // ------------------------------------------------------------ служба
+
+    function bindService() {
+        var install = document.getElementById("btn-service-install");
+        if (install) install.addEventListener("click", function () {
+            if (!window.confirm(
+                "Установить службу AutoZapret?\n\n" +
+                "Она будет запускать обход при загрузке системы — до входа в Windows,\n" +
+                "и продолжит работать после выхода из сессии.\n\n" +
+                "Нужны права администратора. Удалить можно кнопкой «Удалить».")) return;
+
+            setServiceBusy(true);
+            send("service.install", { auto: true });
+        });
+
+        var uninstall = document.getElementById("btn-service-uninstall");
+        if (uninstall) uninstall.addEventListener("click", function () {
+            if (!window.confirm(
+                "Удалить службу AutoZapret?\n\n" +
+                "Обход перестанет работать до входа в систему и после выхода из неё.\n" +
+                "Обычный режим (кнопка на главной) останется как был.")) return;
+
+            setServiceBusy(true);
+            send("service.uninstall");
+        });
+
+        var start = document.getElementById("btn-service-start");
+        if (start) start.addEventListener("click", function () {
+            setServiceBusy(true);
+            send("service.start");
+        });
+
+        var stop = document.getElementById("btn-service-stop");
+        if (stop) stop.addEventListener("click", function () {
+            setServiceBusy(true);
+            send("service.stop");
+        });
+    }
+
+    /// Пока операция идёт, кнопки не нажимаются: sc start/stop занимают
+    /// секунды, и повторное нажатие запускает вторую операцию поверх первой.
+    function setServiceBusy(busy) {
+        ["btn-service-install", "btn-service-start", "btn-service-stop", "btn-service-uninstall"]
+            .forEach(function (id) {
+                var b = document.getElementById(id);
+                if (b) b.disabled = busy;
+            });
+    }
+
+    // Состояния службы приходят из C# строками. Переводим известные,
+    // остальное показываем как есть: там бывает «остановлена (проблема: …)»,
+    // и подставлять перевод в такой текст нельзя.
+    var SERVICE_STATES = {
+        "не установлена": "не установлена",
+        "работает": "работает",
+        "остановлена": "остановлена",
+        "запускается…": "запускается…",
+        "останавливается…": "останавливается…"
+    };
+
+    function renderService(msg) {
+        setServiceBusy(false);
+
+        var state = document.getElementById("service-state");
+        if (state) {
+            var raw = msg.state || "—";
+            state.textContent = SERVICE_STATES[raw] ? t(SERVICE_STATES[raw]) : raw;
+            state.className = "tag " + (msg.running ? "diag-ok" : (msg.installed ? "diag-warn" : ""));
+        }
+
+        // Кнопки по состоянию: нельзя запустить неустановленную службу и
+        // нельзя установить уже установленную — иначе человек жмёт и получает
+        // отказ, который выглядит как поломка.
+        var install = document.getElementById("btn-service-install");
+        if (install) install.style.display = msg.installed ? "none" : "";
+
+        var uninstall = document.getElementById("btn-service-uninstall");
+        if (uninstall) uninstall.style.display = msg.installed ? "" : "none";
+
+        var start = document.getElementById("btn-service-start");
+        if (start) {
+            start.style.display = msg.installed ? "" : "none";
+            start.disabled = !!msg.running || !!msg.pending;
+        }
+
+        var stop = document.getElementById("btn-service-stop");
+        if (stop) {
+            stop.style.display = msg.installed ? "" : "none";
+            stop.disabled = !msg.running || !!msg.pending;
+        }
+
+        var note = document.getElementById("service-note");
+        if (note && msg.problem) {
+            note.textContent = msg.problem;
+            note.className = "row-hint diag-warn";
+        }
+    }
+
+    function renderServiceResult(msg) {
+        var note = document.getElementById("service-note");
+        if (note) {
+            note.textContent = msg.message || "";
+            note.className = "row-hint " + (msg.ok ? "diag-ok" : "diag-bad");
+        }
+    }
+
     function initSettings() {
+        bindService();
+
         var gf = document.getElementById("set-game-filter");
         if (gf) gf.addEventListener("change", function () { queueSave({ gameFilter: gf.value }); });
 
@@ -874,7 +994,6 @@
         if (ownFilter) ownFilter.addEventListener("click", function () {
             ownFilter.classList.toggle("on");
         });
-
         var ownCompare = document.getElementById("btn-own-compare");
         if (ownCompare) ownCompare.addEventListener("click", function () {
             ownCompare.disabled = true;
@@ -2733,6 +2852,14 @@
 
             case "own.compare":
                 renderCompare(msg);
+                break;
+
+            case "service":
+                renderService(msg);
+                break;
+
+            case "service.result":
+                renderServiceResult(msg);
                 break;
 
             case "dns.flushed":

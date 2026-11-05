@@ -392,6 +392,61 @@ namespace AutoZapret.App
             // месте нельзя — одновременно они не работают (оба держат WinDivert).
             bridge.Register("own.state", msg => SendOwnState());
 
+            // ---- служба Windows (P14)
+            //
+            // Четыре операции, каждая требует прав администратора. Состояние
+            // читаем всегда: даже без прав надо видеть, работает ли служба —
+            // иначе непонятно, почему кнопка питания заблокирована.
+            bridge.Register("service.get", msg => SendServiceState());
+
+            bridge.Register("service.install", msg =>
+            {
+                if (!EnsureElevation()) return;
+
+                RunInBackground("svc-install", () =>
+                {
+                    ServiceResult result = ServiceManager.Install(Json.GetBool(msg, "auto", true));
+                    SendServiceResult("install", result);
+                });
+            });
+
+            bridge.Register("service.uninstall", msg =>
+            {
+                if (!EnsureElevation()) return;
+
+                RunInBackground("svc-uninstall", () =>
+                {
+                    ServiceResult result = ServiceManager.Uninstall();
+                    SendServiceResult("uninstall", result);
+                });
+            });
+
+            bridge.Register("service.start", msg =>
+            {
+                if (!EnsureElevation()) return;
+
+                RunInBackground("svc-start", () =>
+                {
+                    // Пока служба поднимает движок, наш собственный должен быть
+                    // погашен: иначе два перехватчика подерутся за WinDivert
+                    // и служба не запустится с внятной причиной.
+                    StopEngineForService();
+
+                    ServiceResult result = ServiceManager.Start();
+                    SendServiceResult("start", result);
+                });
+            });
+
+            bridge.Register("service.stop", msg =>
+            {
+                if (!EnsureElevation()) return;
+
+                RunInBackground("svc-stop", () =>
+                {
+                    ServiceResult result = ServiceManager.Stop();
+                    SendServiceResult("stop", result);
+                });
+            });
             bridge.Register("own.start", msg =>
             {
                 if (!EnsureElevation()) return;
@@ -2352,6 +2407,54 @@ namespace AutoZapret.App
                 "cancelled", token.IsCancellationRequested));
         }
 
+        /// <summary>Состояние службы для интерфейса.</summary>
+        private void SendServiceState()
+        {
+            ServiceStatus status = ServiceManager.Query();
+
+            _form.Bridge.Send(WebBridge.Msg("service",
+                "installed", status.Installed,
+                "running", status.Running,
+                "pending", status.StartPending || status.StopPending,
+                "state", status.Text(),
+                "path", status.Path ?? "",
+                "problem", status.Problem ?? ""));
+        }
+
+        private void SendServiceResult(string action, ServiceResult result)
+        {
+            if (result.Ok)
+                Log.Info("SVC", action + ": " + result.Message);
+            else
+                Log.Warn("SVC", action + ": " + result.Message);
+
+            _form.Bridge.Send(WebBridge.Msg("service.result",
+                "action", action,
+                "ok", result.Ok,
+                "message", result.Message ?? ""));
+
+            SendServiceState();
+        }
+
+        /// <summary>
+        /// Погасить свой движок перед запуском службы.
+        ///
+        /// Не «на всякий случай», а обязательно: winws один на машину. Если
+        /// оставить свой запущенным, служба стартует и упадёт на занятом
+        /// драйвере, а человек увидит «служба не запустилась» без причины.
+        /// </summary>
+        private void StopEngineForService()
+        {
+            if (_zapret.State == ProtectionState.Running || _zapret.State == ProtectionState.Starting)
+            {
+                Log.Info("SVC", "выключаю обход из приложения: его подхватит служба");
+
+                try { _zapret.Stop(); } catch (Exception ex) { Log.Exception("SVC", "остановка", ex); }
+
+                Thread.Sleep(1200);
+            }
+        }
+
         private void SendOwnState()
         {
             Zapret.Own.OwnEngineStats stats;
@@ -3690,9 +3793,46 @@ namespace AutoZapret.App
             PushStrategies();
         }
 
+        /// <summary>
+        /// Работает ли служба. Кэш на 2 секунды: PushState вызывается часто,
+        /// а каждый Query() — это запуск cmd.exe, и без кэша интерфейс начнёт
+        /// тормозить на ровном месте.
+        /// </summary>
+        private bool ServiceRunningCached()
+        {
+            lock (_serviceGate)
+            {
+                if (DateTime.UtcNow - _serviceCheckedAt < TimeSpan.FromSeconds(2))
+                    return _serviceRunning;
+
+                _serviceCheckedAt = DateTime.UtcNow;
+
+                try
+                {
+                    _serviceRunning = ServiceManager.Query().Running;
+                }
+                catch
+                {
+                    _serviceRunning = false;
+                }
+
+                return _serviceRunning;
+            }
+        }
+
+        private readonly object _serviceGate = new object();
+        private DateTime _serviceCheckedAt = DateTime.MinValue;
+        private bool _serviceRunning;
+
         private void PushState()
         {
             ProtectionState protection = _zapret.State;
+
+            // Служба работает? Тогда обход уже включён — и не нами. Кнопка
+            // питания должна быть заблокирована, иначе человек нажмёт её,
+            // получит «уже запущено» и решит, что программа сломалась.
+            bool serviceRunning = ServiceRunningCached();
+
             string protectionText;
             switch (protection)
             {
@@ -3752,7 +3892,9 @@ namespace AutoZapret.App
                 "autoStartProtect", _settings.AutoStart,
                 "reconnectOnStrategy", _settings.ReconnectOnStrategy,
                 "processPresets", _settings.ProcessPresets,
-                "logFile", Log.CurrentFile ?? "");
+                "logFile", Log.CurrentFile ?? "",
+                // служба держит обход: наша кнопка питания должна это знать
+                "serviceRunning", serviceRunning);
 
             _form.Bridge.Send(state);
         }

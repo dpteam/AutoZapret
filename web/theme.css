@@ -314,6 +314,20 @@ h1 {
 
 .power:disabled:not(.on) { opacity: .45; }
 
+/* Кнопка заблокирована службой: обход работает, но не через неё.
+   Синяя рамка вместо зелёной заливки — видно, что это «не наша» работа. */
+.power.service {
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
+    background: radial-gradient(circle at 50% 40%, #141a2e, #0B0E18);
+    box-shadow: 0 0 0 5px rgba(85, 170, 255, .10), 0 0 22px rgba(85, 170, 255, .22);
+    opacity: 1;
+    animation: none;
+}
+
+.power.service::before,
+.power.service::after { display: none; }
+
 @keyframes pulse {
     0%, 100% { opacity: 1; }
     50%      { opacity: .45; }

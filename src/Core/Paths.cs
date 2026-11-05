@@ -79,6 +79,37 @@ namespace AutoZapret.Core
             lock (Gate) { _resolved = false; }
         }
 
+        /// <summary>
+        /// Заставить службу работать в portable-режиме: данные рядом с exe.
+        ///
+        /// Зачем: служба стартует от LocalSystem, и её %LocalAppData% — это
+        /// C:\Windows\System32\config\systemprofile\AppData\Local. Если оставить
+        /// обычное определение, служба читала бы ДРУГОЙ settings.json, чем
+        /// интерфейс пользователя: человек выбрал стратегию у себя, а служба
+        /// запускает стратегию по умолчанию. Выглядит как «служба игнорирует
+        /// настройки».
+        ///
+        /// Portable-режим у нас и так основной способ поставки (zip рядом с exe),
+        /// поэтому для службы он не исключение, а правило.
+        /// </summary>
+        public static void ForcePortable()
+        {
+            lock (Gate)
+            {
+                _baseDir = EnsureTrailingSlash(AppDomain.CurrentDomain.BaseDirectory);
+                _portable = true;
+                _dataDir = Path.Combine(_baseDir, "data");
+                _resolved = true;
+            }
+        }
+
+        /// <summary>Можно ли писать в каталог программы (нужно службе).</summary>
+        public static bool BaseDirWritable()
+        {
+            try { return IsWritable(EnsureTrailingSlash(AppDomain.CurrentDomain.BaseDirectory)); }
+            catch { return false; }
+        }
+
         private static void Resolve()
         {
             lock (Gate)

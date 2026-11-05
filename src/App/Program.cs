@@ -26,6 +26,27 @@ namespace AutoZapret.App
             Log.Info("APP", AppInfo.Summary());
 
             bool minimized = HasFlag(args, "--minimized");
+
+            // ---- режим службы: ОБЯЗАТЕЛЬНО до всего остального
+            //
+            // SCM требует, чтобы StartServiceCtrlDispatcher был вызван в течение
+            // 30 секунд после старта процесса, иначе ошибка 1053. Плюс в службе
+            // нельзя создавать окна вообще (session 0 isolation) — поэтому эта
+            // ветка стоит выше EnableVisualStyles, SingleInstance и AppHost.
+            if (HasFlag(args, "--service"))
+            {
+                // Служба стартует от LocalSystem: её %LocalAppData% — это профиль
+                // SYSTEM, а не человека. Без этого служба читала бы ЧУЖОЙ
+                // settings.json и запускала стратегию по умолчанию.
+                Paths.ForcePortable();
+
+                if (!Paths.BaseDirWritable())
+                    Log.Error("SVC", "каталог программы недоступен для записи: " + Paths.BaseDir +
+                                     " — служба не сможет писать логи и состояние");
+
+                return ServiceManager.RunCli(args);
+            }
+
             if (HasFlag(args, "--version"))
             {
                 Console.WriteLine(AppInfo.Name + " " + AppInfo.Version);

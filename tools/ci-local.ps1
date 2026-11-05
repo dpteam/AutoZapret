@@ -148,6 +148,33 @@ if (Test-Path $selftestFile) {
 }
 Record 'selftest' ($code -eq 0) ''
 
+# Режим службы: тело не должно зависать. Если `--service` (без действия) не
+# выйдет за пару секунд, SCM убьёт службу с ошибкой 1053 — и человек увидит
+# «служба не запустилась» без причины. Проверяем здесь, а не на живой машине.
+Section 'режим службы'
+$svcCode = -1
+$svcWatch = [System.Diagnostics.Stopwatch]::StartNew()
+
+Push-Location (Join-Path $root 'bin')
+try {
+    & $exe '--service' | Out-Null
+    $svcCode = $LASTEXITCODE
+} finally { Pop-Location }
+
+$svcWatch.Stop()
+
+# 5 = «это тело службы, запускайте через SCM» — штатный ответ при ручном запуске
+$svcOk = ($svcCode -eq 5) -and ($svcWatch.Elapsed.TotalSeconds -lt 10)
+Record 'режим службы' $svcOk ("код $svcCode, $([int]$svcWatch.Elapsed.TotalSeconds) с")
+
+Push-Location (Join-Path $root 'bin')
+try {
+    & $exe '--service' 'status' | Out-Null
+    $svcStatus = $LASTEXITCODE
+} finally { Pop-Location }
+
+Record 'служба: состояние' ($svcStatus -eq 0) ''
+
 if ($engineReady -and -not $SkipEngine) {
     Section 'selftest (строгий, с движком)'
     Push-Location (Join-Path $root 'bin')

@@ -893,6 +893,34 @@
         </div>
       </div>
 
+      <div class="card">
+        <div class="card-title">Служба Windows</div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Режим службы</div>
+            <div class="row-hint">
+              Обход работает без окна: до входа в систему, после выхода из неё,
+              на машине без монитора. Пока служба работает, кнопка включения на
+              главной заблокирована — два перехватчика не делят драйвер
+            </div>
+          </div>
+          <span class="tag" id="service-state">—</span>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+          <button class="btn primary" id="btn-service-install">Установить</button>
+          <button class="btn" id="btn-service-start">Запустить</button>
+          <button class="btn" id="btn-service-stop">Остановить</button>
+          <button class="btn danger" id="btn-service-uninstall">Удалить</button>
+        </div>
+
+        <div class="row-hint" id="service-note" style="margin-top:10px">
+          Установка требует прав администратора. Служба ставится в автозапуск
+          и перезапускается сама при падении
+        </div>
+      </div>
+
       <div class="card" data-advanced>
         <div class="card-title">Пресеты по процессам</div>
 

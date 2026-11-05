@@ -127,6 +127,9 @@ namespace AutoZapret.App
                 Section("фильтр своего движка");
                 TestOwnFilter();
 
+                Section("служба");
+                TestServiceManager();
+
                 Section("Secure DNS в браузерах");
                 TestBrowserDoh();
 
@@ -4284,6 +4287,62 @@ namespace AutoZapret.App
             byIp.LoadHosts(hosts, false);
 
             try { System.IO.Directory.Delete(dir, true); } catch { }
+        }
+
+        /// <summary>
+        /// Служба: только то, что можно проверить без прав администратора.
+        ///
+        /// Установку в selftest НЕ делаем: тест не должен ставить службу на
+        /// машину человека. Проверяем то, на чём обычно и ломается:
+        ///   * состояние читается и не бросает;
+        ///   * без прав операция отказывает ВНЯТНО, а не молча;
+        ///   * путь к собственному exe определяется.
+        /// </summary>
+        private static void TestServiceManager()
+        {
+            try
+            {
+                AutoZapret.App.ServiceStatus status = AutoZapret.App.ServiceManager.Query();
+
+                Check("служба: состояние прочитано",
+                    status != null && status.State.Length > 0,
+                    status == null ? "null" : status.State);
+
+                Check("служба: состояние согласовано",
+                    !status.Running || status.Installed,
+                    "running=" + status.Running + ", installed=" + status.Installed);
+
+                string exe = AutoZapret.App.ServiceManager.ExePath;
+
+                Check("служба: свой exe найден",
+                    !string.IsNullOrEmpty(exe) && System.IO.File.Exists(exe),
+                    exe ?? "пусто");
+
+                // без прав все четыре операции обязаны отказать с причиной
+                if (!AutoZapret.App.Elevation.IsElevated)
+                {
+                    AutoZapret.App.ServiceResult install = AutoZapret.App.ServiceManager.Install(false);
+
+                    Check("служба: установка без прав отказана",
+                        !install.Ok && install.Message.Length > 0,
+                        install.Message);
+
+                    AutoZapret.App.ServiceResult stop = AutoZapret.App.ServiceManager.Stop();
+
+                    Check("служба: остановка без прав отказана",
+                        !stop.Ok && stop.Message.Length > 0,
+                        stop.Message);
+                }
+                else
+                {
+                    // под админом проверяем только чтение: ставить службу в тесте нельзя
+                    Check("служба: под админом чтение работает", true, "ok");
+                }
+            }
+            catch (Exception ex)
+            {
+                Check("служба", false, ex.Message);
+            }
         }
 
         private static void TestSniffResult()
