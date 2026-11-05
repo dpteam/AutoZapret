@@ -362,10 +362,11 @@
             send("logs.get");
         }
         if (name === "home") {
-            // DNS теперь на главной: карточка должна открываться с настоящим
-            // состоянием, а не с «—» до первого захода в настройки
+            // DNS и служба теперь на главной: карточки должны открываться
+            // с настоящим состоянием, а не с «—» до первого захода
             send("browser.doh.get");
             send("sysdns.get");
+            send("service.get");
         }
         if (name === "diag") {
             // идёт ли уже проверка: экран должен открываться с этим знанием,
@@ -373,9 +374,6 @@
             send("diag.state");
             send("own.state");
             send("own.compat");
-        }
-        if (name === "settings") {
-            send("service.get");
         }
 
         // скорость сети нужна только на главной: опрос раз в секунду
@@ -1006,8 +1004,6 @@
     }
 
     function initSettings() {
-        bindService();
-
         var gf = document.getElementById("set-game-filter");
         if (gf) gf.addEventListener("change", function () { queueSave({ gameFilter: gf.value }); });
 
@@ -3432,6 +3428,7 @@
         initNav();
         bindDanger();
         initDns();
+        bindService();
         initSettings();
         initDiag();
         initLists();

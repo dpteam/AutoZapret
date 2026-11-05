@@ -291,8 +291,6 @@
   "Только свои цели": "Own targets only",
   "Брать списки движка (домены и подсети), как winws. Без этого движок трогает весь TCP/443 — включая банки. Для постоянной работы включайте": "Use the engine lists (domains and subnets) like winws. Without it the engine touches all of TCP/443 - banks included. Keep it on for permanent use",
   "Служба Windows": "Windows service",
-  "Режим службы": "Service mode",
-  "Обход работает без окна: до входа в систему, после выхода из неё, на машине без монитора. Пока служба работает, кнопка включения на главной заблокирована — два перехватчика не делят драйвер": "The bypass runs without a window: before sign-in, after sign-out, on a machine without a monitor. While the service runs, the power button on the home screen is disabled - two interceptors cannot share the driver",
   "Установить": "Install",
   "Удалить": "Uninstall",
   "Установка требует прав администратора. Служба ставится в автозапуск и перезапускается сама при падении": "Installing needs administrator rights. The service is set to start automatically and restarts itself if it crashes",
@@ -332,5 +330,7 @@
   "Останется только 127.0.0.1 localhost. Все остальные записи пропадут.": "Only 127.0.0.1 localhost will remain. All other entries will be lost.",
   "DNS для всех программ": "DNS for all programs",
   "Discord, игры и Telegram ходят мимо браузера, поэтому Secure DNS в Chrome им не помогает. Включаем локальный резолвер на 127.0.0.1, который ходит в DoH, и переключаем на него адаптер — заглушка 198.18.x перестаёт ловить всё подряд. Обратимо: «Вернуть DNS» восстанавливает прежние серверы": "Discord, games and Telegram do not go through the browser, so Secure DNS in Chrome does not help them. We start a local resolver on 127.0.0.1 that speaks DoH and point the adapter at it - the 198.18.x placeholder stops catching everything. Reversible: \"Restore DNS\" brings the previous servers back",
-  "Windows держит ответы в кэше: после правки hosts или смены DNS старые адреса продолжают работать. Сбрасывается автоматически при записи hosts и при включении DNS — эта кнопка на всякий случай": "Windows keeps answers cached: after editing hosts or changing DNS the old addresses keep working. It is flushed automatically when hosts is written and when DNS is enabled - this button is just in case"
+  "Windows держит ответы в кэше: после правки hosts или смены DNS старые адреса продолжают работать. Сбрасывается автоматически при записи hosts и при включении DNS — эта кнопка на всякий случай": "Windows keeps answers cached: after editing hosts or changing DNS the old addresses keep working. It is flushed automatically when hosts is written and when DNS is enabled - this button is just in case",
+  "Обход без окна": "Bypass without a window",
+  "Служба держит обход до входа в систему и после выхода из неё. Пока она работает, кнопка включения выше заблокирована — два перехватчика не делят драйвер": "The service keeps the bypass running before sign-in and after sign-out. While it runs, the power button above is disabled - two interceptors cannot share the driver"
 }

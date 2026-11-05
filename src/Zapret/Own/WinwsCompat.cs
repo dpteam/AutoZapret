@@ -210,7 +210,7 @@ namespace AutoZapret.Zapret.Own
 
             bool anyProtocol = false;
             bool udpProfile = false;
-            string fakeTls = "", fakeQuic = "", fakeHttp = "", fakeStun = "";
+            string fakeTls = "", fakeQuic = "", fakeHttp = "", fakeStun = "", fakeDiscord = "";
 
             foreach (string raw in source.Args)
             {
@@ -327,11 +327,17 @@ namespace AutoZapret.Zapret.Own
                         fakeStun = value;
                         break;
 
+                    // Discord-голос: у Flowseal это отдельная опция, но payload
+                    // тот же STUN-совместимый. Игнорировать её значит потерять
+                    // именно тот файл, которым обходится голос.
+                    case "--dpi-desync-fake-discord":
+                        fakeDiscord = value;
+                        break;
+
                     case "--dpi-desync-fake-tls-mod":
                     case "--dpi-desync-hostfakesplit-mod":
                     case "--dpi-desync-split-seqovl-pattern":
                     case "--dpi-desync-fakedsplit-pattern":
-                    case "--dpi-desync-fake-discord":
                     case "--dpi-desync-fake-unknown":
                     case "--ip-id":
                         Note(result, name);
@@ -365,9 +371,24 @@ namespace AutoZapret.Zapret.Own
 
             profile.Technique.AnyProtocol = anyProtocol;
 
-            // Файл фейка: у TCP — tls, у UDP — quic. Остальные (http/stun)
-            // наш движок пока не различает по протоколу.
-            string fakeFile = udpProfile ? fakeQuic : fakeTls;
+            // UDP: «fake» здесь — самостоятельная техника, а не префикс
+            // к TCP-разрезанию. В TCP-разборе `fake` идёт перед основной
+            // техникой, и парсер ставит Kind=Off + префикс. Для UDP основной
+            // техники нет вовсе, значит было бы «ничего не делать».
+            if (udpProfile &&
+                profile.Technique.Kind == Technique.Off &&
+                profile.Technique.Prefix != null &&
+                profile.Technique.Prefix.Contains(Technique.Fake))
+            {
+                profile.Technique.Kind = Technique.Fake;
+                profile.Technique.Prefix.Clear();
+            }
+
+            // Файл фейка. У UDP приоритет у того, что относится к голосу:
+            // STUN и discord — это и есть RTC, ради которого всё делается.
+            string fakeFile = udpProfile
+                ? FirstFake(fakeStun, fakeDiscord, fakeQuic)
+                : fakeTls;
 
             if (fakeFile.Length == 0) fakeFile = udpProfile ? "" : fakeHttp;
             if (fakeFile.Length == 0 && fakeStun.Length > 0) fakeFile = fakeStun;
@@ -396,16 +417,56 @@ namespace AutoZapret.Zapret.Own
             {
                 profile.Filter = filter;
             }
+            else if (IsPortOnlyUdp(profile))
+            {
+                // Профиль по UDP-портам без списков — это норма, а не ошибка.
+                //
+                // Голосовой Discord/STUN у Flowseal задан именно так:
+                // `--filter-udp=19294-19344,50000-50100` и `--filter-l7=...`.
+                // Списков доменов там нет и быть не может: у STUN нет SNI,
+                // а цели определяются портами. Если такой профиль выбрасывать,
+                // голос не обходится вообще — что и наблюдалось.
+                //
+                // Безопасность сохраняется: порты взяты из конфига стратегии,
+                // а не «весь UDP».
+            }
             else
             {
-                // Без списков профиль трогал бы весь трафик на своих портах.
-                // Для профиля UDP 443 это «весь QUIC», для TCP 443 — «весь
-                // интернет». Не то, чего ждёт человек, включивший стратегию.
+                // Без списков TCP-профиль трогал бы весь трафик на своих
+                // портах, то есть весь интернет. Не то, чего ждёт человек,
+                // включивший стратегию.
                 reason = "нет списков целей — работал бы на весь трафик";
                 return null;
             }
 
             return profile;
+        }
+
+        /// <summary>
+        /// UDP-профиль, у которого нет TCP-портов, а техника работает по UDP.
+        ///
+        /// Только такие профили можно оставить без списков целей: их границы —
+        /// это порты из конфига. Всё остальное без списков трогало бы лишнее.
+        /// </summary>
+        private static bool IsPortOnlyUdp(OwnProfile profile)
+        {
+            if (profile == null) return false;
+            if (profile.TcpPorts != null && profile.TcpPorts.Count > 0) return false;
+            if (profile.UdpPorts == null || profile.UdpPorts.Count == 0) return false;
+
+            TechniqueOptions technique = profile.Technique;
+
+            return technique != null &&
+                   (technique.Kind == Technique.Fake || technique.Kind == Technique.UdpLen);
+        }
+
+        /// <summary>Первый непустой путь — приоритет у STUN/Discord.</summary>
+        private static string FirstFake(params string[] candidates)
+        {
+            foreach (string value in candidates)
+                if (!string.IsNullOrEmpty(value)) return value;
+
+            return "";
         }
 
         // ------------------------------------------------------------------ desync
@@ -501,6 +562,25 @@ namespace AutoZapret.Zapret.Own
         }
 
         // ------------------------------------------------------------------ helpers
+
+        /// <summary>
+        /// Разобрать только строку `--dpi-desync=...` в набор техник.
+        ///
+        /// Отдельный вход для тестов: цепочки вида `fake,multisplit` — это
+        /// свойство парсера, а не конкретной стратегии из assets. Проверять их
+        /// на живом наборе значит зависеть от того, что сегодня лежит в данных.
+        /// </summary>
+        public static TechniqueOptions ParseTechnique(string desync, out List<string> unsupported)
+        {
+            CompatResult scratch = new CompatResult();
+            TechniqueOptions options = new TechniqueOptions();
+
+            if (!string.IsNullOrEmpty(desync)) ParseDesync(desync, options, scratch);
+
+            unsupported = scratch.Unsupported;
+
+            return options;
+        }
 
         private static void AddPorts(List<int> ports, string value, CompatResult result, string option)
         {

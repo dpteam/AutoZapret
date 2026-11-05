@@ -402,28 +402,48 @@ namespace AutoZapret.Zapret.Own
             return "outbound and (" + inner + ")";
         }
 
+        private static bool IsStun(byte[] packet, int offset, int payloadLength)
+        {
+            if (payloadLength < 20) return false;
+            if (offset < 0 || offset + 20 > packet.Length) return false;
+
+            // старшие два бита типа всегда 0, младшие — один из запросов
+            if ((packet[offset] & 0xC0) != 0) return false;
+            if (packet[offset + 1] > 0x04) return false;
+
+            return packet[offset + 4] == 0x21 &&
+                   packet[offset + 5] == 0x12 &&
+                   packet[offset + 6] == 0xA4 &&
+                   packet[offset + 7] == 0x42;
+        }
+
         /// <summary>
-        /// UDP-ветка: сейчас только `udplen` (QUIC).
+        /// UDP-ветка: `udplen` (QUIC) и `fake` (STUN/QUIC/игры).
         ///
-        /// Проверка «наше ли это» проще, чем у TLS: QUIC Initial начинается с
-        /// длинного заголовка, где первый байт имеет старшие биты 0b11 (long
-        /// header form) и тип 0 (Initial). Проверять только порт мало — на 443
-        /// по UDP ходит и QUIC, и всякий мусор вроде игр.
+        /// Проверка «наше ли это» проще, чем у TLS, но не «любой UDP»:
+        ///   * QUIC Initial — старшие биты первого байта 0b11 и тип 0;
+        ///   * STUN — magic cookie 0x2112A442 в байтах 4..7, тип 0x0000..0x0004.
+        /// Голосовой Discord идёт именно STUN-ом, и без этой проверки он не
+        /// обходился бы вовсе: профиль есть, техника выбрана, а пакет не узнан.
         /// </summary>
         private bool HandleUdp(IntPtr handle, IntPtr addressPtr, byte[] packet, int length)
         {
             UdpPacket udp = UdpPacket.Parse(packet, length);
 
             if (udp == null || !udp.HasPayload) return false;
-            if (udp.PayloadLength < 20) return false;
+            if (udp.PayloadLength < 12) return false;
 
-            // long header form: 0b11xxxxxx, тип Initial = 0b1100xxxx
             byte first = packet[udp.PayloadOffset];
 
-            if ((first & 0x80) == 0) return false;        // short header (1-RTT), не Initial
-            if ((first & 0x30) != 0) return false;        // не Initial
+            bool quic = udp.PayloadLength >= 20 &&
+                        (first & 0x80) != 0 &&        // long header form
+                        (first & 0x30) == 0;          // тип Initial
 
-            _stats.ClientHellos++;    // для UDP это QUIC Initial, счётчик общий
+            bool stun = IsStun(packet, udp.PayloadOffset, udp.PayloadLength);
+
+            if (!quic && !stun) return false;
+
+            _stats.ClientHellos++;    // для UDP это первый пакет соединения
 
             // Какую технику применять — решает профиль (если он есть).
             // У QUIC SNI зашифрован, поэтому профиль выбирается по порту и
@@ -459,16 +479,19 @@ namespace AutoZapret.Zapret.Own
                 }
             }
 
-            // Профиль может быть TCP-only: тогда QUIC трогать нечем.
-            if (technique == null || technique.Kind != Technique.UdpLen) return false;
+            // Профиль может быть TCP-only: тогда UDP трогать нечем.
+            if (technique == null) return false;
+            if (technique.Kind != Technique.UdpLen && technique.Kind != Technique.Fake) return false;
 
+            // `fake` для UDP — это поддельный payload, а не «сдвиг seq»:
+            // в UDP его нет. `udplen` — игра с полем длины.
             string error;
             List<Desync.Outgoing> outgoing = Desync.BuildUdp(udp, technique, out error);
 
             if (outgoing.Count == 0)
             {
                 if (error.Length > 0 && _stats.Errors < 5)
-                    Log.Warn("OWN", "udplen не применился (" + error + "), пакет уходит как есть");
+                    Log.Warn("OWN", "UDP-техника не применилась (" + error + "), пакет уходит как есть");
 
                 return false;
             }

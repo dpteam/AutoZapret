@@ -4233,6 +4233,74 @@ namespace AutoZapret.App
             // ---- не UDP пакет не считается нашим
             Check("UDP: TCP не считается UDP",
                 AutoZapret.Zapret.Own.UdpPacket.Parse(SynthTlsPacket(100, 1), 140) == null, "ok");
+
+            // ---- fake для UDP: поддельный STUN перед настоящим
+            //
+            // Это голосовой Discord и WebRTC: seq в UDP нет, поэтому техника —
+            // подмена payload, а не сдвиг. Проверяем, что настоящий пакет
+            // остаётся целым и последним, а суммы пересчитаны.
+            AutoZapret.Zapret.Own.TechniqueOptions udpFake =
+                new AutoZapret.Zapret.Own.TechniqueOptions
+                {
+                    Kind = AutoZapret.Zapret.Own.Technique.Fake,
+                    Repeats = 3
+                };
+
+            string udpError;
+            System.Collections.Generic.List<AutoZapret.Zapret.Own.Desync.Outgoing> stunFakes =
+                AutoZapret.Zapret.Own.Desync.BuildUdp(udp, udpFake, out udpError);
+
+            Check("UDP fake: три фейка и настоящий", stunFakes.Count == 4, stunFakes.Count + " шт.");
+
+            if (stunFakes.Count == 4)
+            {
+                AutoZapret.Zapret.Own.UdpPacket fakeOne =
+                    AutoZapret.Zapret.Own.UdpPacket.Parse(stunFakes[0].Data, stunFakes[0].Length);
+
+                Check("UDP fake: фейк разобран как UDP",
+                    fakeOne != null && fakeOne.DstPort == udp.DstPort,
+                    fakeOne == null ? "не разобран" : fakeOne.DstPort.ToString());
+
+                Check("UDP fake: поддельный payload отличается",
+                    fakeOne != null && fakeOne.PayloadLength != udp.PayloadLength,
+                    fakeOne == null ? "?" : fakeOne.PayloadLength + " vs " + udp.PayloadLength);
+
+                // STUN: тип 0x0001 и magic cookie 0x2112A442 — именно по этой
+                // сигнатуре DPI узнаёт голос
+                byte[] stunPayload = AutoZapret.Zapret.Own.Desync.StunBindingRequest();
+
+                Check("UDP fake: STUN-сигнатура на месте",
+                    stunPayload.Length == 20 &&
+                    stunPayload[0] == 0x00 && stunPayload[1] == 0x01 &&
+                    stunPayload[4] == 0x21 && stunPayload[5] == 0x12 &&
+                    stunPayload[6] == 0xA4 && stunPayload[7] == 0x42,
+                    "20 байт");
+
+                AutoZapret.Zapret.Own.UdpPacket realOne =
+                    AutoZapret.Zapret.Own.UdpPacket.Parse(stunFakes[3].Data, stunFakes[3].Length);
+
+                Check("UDP fake: настоящий идёт последним и целым",
+                    realOne != null && realOne.PayloadLength == udp.PayloadLength,
+                    realOne == null ? "?" : realOne.PayloadLength.ToString());
+
+                // Сверяем сам payload, а не только длину: подмена и восстановление
+                // могут «сойтись по размеру» и разойтись по содержимому.
+                bool samePayload = false;
+
+                if (realOne != null)
+                {
+                    byte[] original = udp.PayloadCopy();
+                    byte[] restored = realOne.PayloadCopy();
+
+                    samePayload = original.Length == restored.Length;
+
+                    if (samePayload)
+                        for (int i = 0; i < original.Length; i++)
+                            if (original[i] != restored[i]) { samePayload = false; break; }
+                }
+
+                Check("UDP fake: payload настоящего не испорчен", samePayload, "ok");
+            }
         }
 
         /// <summary>Синтетический UDP-пакет с QUIC-подобным payload.</summary>
@@ -4693,21 +4761,65 @@ namespace AutoZapret.App
                     discord.Filter == null ? "фильтра нет" : discord.Filter.Describe());
             }
 
-            // цепочка `fake,multisplit` обязана стать префиксом, а не потеряться
-            bool chain = false;
+            // цепочка `fake,multisplit` — свойство ПАРСЕРА, поэтому проверяем его
+            // на строке, а не на живом наборе: в general такой цепочки может
+            // не оказаться, и тест начнёт падать на смене данных, а не кода.
+            List<string> chainUnsupported;
+            AutoZapret.Zapret.Own.TechniqueOptions chain =
+                AutoZapret.Zapret.Own.WinwsCompat.ParseTechnique("fake,multisplit", out chainUnsupported);
+
+            Check("совместимость: цепочка fake+X разобрана",
+                chain.Prefix.Contains(AutoZapret.Zapret.Own.Technique.Fake) &&
+                chain.Kind == AutoZapret.Zapret.Own.Technique.MultiSplit,
+                chain.Describe());
+
+            // одиночный fake без основной техники — это «только фейк»
+            List<string> fakeOnlyUnsupported;
+            AutoZapret.Zapret.Own.TechniqueOptions fakeOnly =
+                AutoZapret.Zapret.Own.WinwsCompat.ParseTechnique("fake", out fakeOnlyUnsupported);
+
+            Check("совместимость: одиночный fake разобран",
+                fakeOnly.Prefix.Contains(AutoZapret.Zapret.Own.Technique.Fake),
+                fakeOnly.Describe());
+
+            // `--dpi-desync-any-protocol` есть в конфигах — обязан доехать до модели
             bool anyProtocol = false;
 
             foreach (AutoZapret.Zapret.Own.OwnProfile p in compat.Profiles.All)
-            {
-                if (p.Technique == null) continue;
-                if (p.Technique.Prefix != null && p.Technique.Prefix.Count > 0) chain = true;
-                if (p.Technique.AnyProtocol) anyProtocol = true;
-            }
+                if (p.Technique != null && p.Technique.AnyProtocol) anyProtocol = true;
 
-            Check("совместимость: цепочка fake+X разобрана", chain, "префикс есть");
-
-            // `--dpi-desync-any-protocol` есть в конфигах — обязан доехать до модели
             Check("совместимость: any-protocol разобран", anyProtocol, "ok");
+
+            // ---- голосовой Discord: профиль по UDP-портам без списков целей
+            //
+            // Регресс с живой проверки: голос не работал, потому что профиль
+            // `L7 discord,stun` выбрасывался как «нет списков целей». У STUN
+            // списков доменов нет и быть не может — цели заданы портами.
+            AutoZapret.Zapret.Own.OwnProfile voice = null;
+
+            foreach (AutoZapret.Zapret.Own.OwnProfile p in compat.Profiles.All)
+                if (p.UdpPorts != null && p.UdpPorts.Contains(50000)) { voice = p; break; }
+
+            Check("совместимость: профиль голосового Discord найден", voice != null,
+                voice == null ? "нет" : voice.Name);
+
+            if (voice != null)
+            {
+                Check("совместимость: голос — fake по UDP",
+                    voice.Technique != null &&
+                    voice.Technique.Kind == AutoZapret.Zapret.Own.Technique.Fake,
+                    voice.Technique == null ? "?" : voice.Technique.Describe());
+
+                Check("совместимость: у голоса есть fake-payload",
+                    !string.IsNullOrEmpty(voice.Technique.FakeFile),
+                    voice.Technique.FakeFile.Length > 0
+                        ? System.IO.Path.GetFileName(voice.Technique.FakeFile)
+                        : "нет (сгенерируем STUN)");
+
+                Check("совместимость: голос не выброшен",
+                    !compat.Dropped.Exists(d => d.IndexOf("stun", StringComparison.OrdinalIgnoreCase) >= 0),
+                    compat.Dropped.Count + " выброшено");
+            }
 
             // L7-фильтр: единственное, что мы честно не умеем. Профиль без
             // списков целей выбрасывается — и это должно быть ВИДНО в отчёте.

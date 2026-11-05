@@ -410,8 +410,12 @@ namespace AutoZapret.Zapret.Own
             error = "";
 
             if (udp == null || options == null) { error = "нет пакета"; return result; }
-            if (options.Kind != Technique.UdpLen) { error = "техника не для UDP"; return result; }
             if (!udp.HasPayload) { error = "нет данных"; return result; }
+
+            if (options.Kind == Technique.Fake)
+                return BuildUdpFake(udp, options, out error);
+
+            if (options.Kind != Technique.UdpLen) { error = "техника не для UDP"; return result; }
 
             int length;
 
@@ -440,6 +444,123 @@ namespace AutoZapret.Zapret.Own
             if (result.Count == 0) error = "техника ничего не дала";
 
             return result;
+        }
+
+        /// <summary>
+        /// `fake` для UDP: поддельный пакет перед настоящим.
+        ///
+        /// Так работает голосовой Discord и половина игр: DPI смотрит на
+        /// содержимое UDP (STUN, QUIC, игровой протокол) и по нему решает,
+        /// пропускать или гасить. Подсунув поддельный STUN-запрос с тем же
+        /// 5-tuple, мы заставляем его разбирать не то, а настоящий пакет идёт
+        /// следом.
+        ///
+        /// В отличие от TCP, здесь нельзя «сдвинуть seq»: в UDP его нет.
+        /// Поэтому фейк — это именно ПОДМЕНА payload, а не копия с другим seq.
+        /// Получатель фейк либо проигнорирует (чужой transaction ID у STUN),
+        /// либо ответит ошибкой, которую клиент выбросит.
+        /// </summary>
+        private static List<Outgoing> BuildUdpFake(UdpPacket udp, TechniqueOptions options, out string error)
+        {
+            List<Outgoing> result = new List<Outgoing>();
+            error = "";
+
+            string source;
+            byte[] payload = FakeUdpPayload(options, out source);
+
+            if (payload == null || payload.Length == 0)
+            {
+                error = "нет поддельного payload для UDP";
+                return result;
+            }
+
+            int repeats = Math.Max(1, Math.Min(16, options.Repeats));
+
+            for (int i = 0; i < repeats; i++)
+            {
+                int length;
+                byte[] fake = udp.BuildWithPayload(payload, out length);
+
+                result.Add(new Outgoing
+                {
+                    Data = fake,
+                    Length = length,
+                    Note = "фейк " + (i + 1) + "/" + repeats + " (" + source + ")"
+                });
+            }
+
+            // настоящий уходит последним и целым
+            int realLength;
+            byte[] restored = udp.BuildWithPayload(udp.PayloadCopy(), out realLength);
+
+            result.Add(new Outgoing { Data = restored, Length = realLength, Note = "настоящий" });
+
+            return result;
+        }
+
+        /// <summary>
+        /// Поддельный UDP-payload: из файла, а если его нет — генерируем STUN.
+        ///
+        /// STUN — самый безопасный выбор «по умолчанию»: 20 байт, валидная
+        /// сигнатура, никакого влияния на чужой трафик. QUIC сгенерировать
+        /// без ключей нельзя, а мусор DPI отбросит как «не протокол» и
+        /// продолжит смотреть дальше — то есть фейк не сработает.
+        /// </summary>
+        private static byte[] FakeUdpPayload(TechniqueOptions options, out string source)
+        {
+            source = "";
+
+            if (options != null && !string.IsNullOrEmpty(options.FakeFile))
+            {
+                try
+                {
+                    if (System.IO.File.Exists(options.FakeFile))
+                    {
+                        byte[] fromFile = System.IO.File.ReadAllBytes(options.FakeFile);
+
+                        if (fromFile.Length >= 12)
+                        {
+                            source = "файл " + System.IO.Path.GetFileName(options.FakeFile);
+                            return fromFile;
+                        }
+
+                        Log.Warn("OWN", "UDP-фейк из файла слишком короткий: " + fromFile.Length + " байт");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn("OWN", "UDP-фейк из файла: " + ex.Message);
+                }
+            }
+
+            source = "сгенерирован (STUN)";
+            return StunBindingRequest();
+        }
+
+        /// <summary>
+        /// Минимальный STUN Binding Request: 20 байт, RFC 5389.
+        ///
+        /// type=0x0001, length=0, magic cookie 0x2112A442, transaction ID из
+        /// счётчика (не Random: нужен воспроизводимый результат в тестах).
+        /// </summary>
+        public static byte[] StunBindingRequest()
+        {
+            byte[] packet = new byte[20];
+
+            packet[0] = 0x00;
+            packet[1] = 0x01;      // Binding Request
+            packet[2] = 0x00;
+            packet[3] = 0x00;      // длина атрибутов 0
+
+            packet[4] = 0x21;      // magic cookie
+            packet[5] = 0x12;
+            packet[6] = 0xA4;
+            packet[7] = 0x42;
+
+            // transaction ID: 12 байт, детерминированные
+            for (int i = 0; i < 12; i++) packet[8 + i] = (byte)(0x10 + i);
+
+            return packet;
         }
 
         private static bool HasPrefix(TechniqueOptions options, Technique kind)

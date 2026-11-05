@@ -105,6 +105,49 @@ namespace AutoZapret.Zapret.Own
         }
 
         /// <summary>
+        /// Пакет с ПОДМЕНЁННЫМ payload — то, чем делается `fake` для UDP.
+        ///
+        /// Зачем: голосовой Discord и игры идут по UDP, и DPI их разбирает по
+        /// содержимому (STUN имеет свою сигнатуру, QUIC — свою). Подсунуть
+        /// поддельный STUN-запрос перед настоящим пакетом — единственный способ
+        /// заставить DPI ошибиться, потому что seq в UDP нет и «сдвинуть»
+        /// пакет некуда.
+        ///
+        /// Длины и суммы пересчитываются честно: заголовки IP и UDP обязаны
+        /// совпасть с новым размером, иначе пакет отбросят на полпути.
+        /// </summary>
+        public byte[] BuildWithPayload(byte[] payload, out int outLength)
+        {
+            byte[] data = payload ?? new byte[0];
+            int size = PayloadOffset + data.Length;
+
+            byte[] result = new byte[size];
+            Array.Copy(_packet, 0, result, 0, PayloadOffset);
+
+            if (data.Length > 0) Array.Copy(data, 0, result, PayloadOffset, data.Length);
+
+            int udpLength = 8 + data.Length;
+            result[UdpOffset + 4] = (byte)(udpLength >> 8);
+            result[UdpOffset + 5] = (byte)(udpLength & 0xFF);
+
+            if (IsIPv6)
+            {
+                result[4] = (byte)(udpLength >> 8);
+                result[5] = (byte)(udpLength & 0xFF);
+            }
+            else
+            {
+                result[2] = (byte)(size >> 8);
+                result[3] = (byte)(size & 0xFF);
+            }
+
+            RecomputeChecksums(result, size);
+
+            outLength = size;
+            return result;
+        }
+
+        /// <summary>
         /// Пакет с тем же payload, но с другим полем длины UDP в заголовке.
         ///
         /// Это техника `udplen`: DPI, который определяет протокол по длине
