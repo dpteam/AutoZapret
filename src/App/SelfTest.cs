@@ -3145,6 +3145,74 @@ namespace AutoZapret.App
 
             Check("пакет: UDP не считается TCP",
                 AutoZapret.Zapret.Own.TcpPacket.Parse(udp, udp.Length) == null, "ok");
+
+            // ---- IPv6: Discord и YouTube нередко уходят в него.
+            //
+            // Пока TCP был IPv4-only, такие ClientHello проходили БЕЗ обхода:
+            // в логе «пульс» считал пакеты, а применений было ноль. Симптом
+            // со стороны: WebRTC (UDP) работает, а сайт и клиент Discord нет.
+            byte[] v6tcp = SynthTcp6Packet(120);
+
+            AutoZapret.Zapret.Own.TcpPacket tcp6 =
+                AutoZapret.Zapret.Own.TcpPacket.Parse(v6tcp, v6tcp.Length);
+
+            Check("TCP: IPv6 разобран", tcp6 != null && tcp6.IsIPv6,
+                tcp6 == null ? "null" : tcp6.IsIPv6.ToString());
+
+            if (tcp6 != null)
+            {
+                Check("TCP: IPv6 порт 443", tcp6.DstPort == 443, tcp6.DstPort.ToString());
+                Check("TCP: IPv6 payload на месте", tcp6.PayloadLength == 120, tcp6.PayloadLength.ToString());
+                Check("TCP: IPv6 адрес назначения",
+                    tcp6.DestinationAddress().AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6,
+                    tcp6.DestinationAddress().ToString());
+
+                int outLength;
+                byte[] segment = tcp6.BuildSegment(0, 10, 0, out outLength);
+
+                Check("TCP: IPv6 сегмент собирается", outLength == tcp6.PayloadOffset + 10,
+                    outLength + " vs " + (tcp6.PayloadOffset + 10));
+
+                Check("TCP: IPv6 сумма сходится",
+                    AutoZapret.Zapret.Own.TcpPacket.VerifyTcpChecksum(
+                        segment, tcp6.TcpOffset, outLength - tcp6.TcpOffset), "ok");
+
+                int declared = (segment[4] << 8) | segment[5];
+
+                Check("TCP: IPv6 длина в заголовке",
+                    declared == outLength - 40, declared + " vs " + (outLength - 40));
+            }
+        }
+
+        /// <summary>Синтетический IPv6+TCP+ClientHello: 40 байт IP, 20 байт TCP.</summary>
+        private static byte[] SynthTcp6Packet(int payloadLength)
+        {
+            int total = 60 + payloadLength;
+            byte[] p = new byte[total];
+
+            p[0] = 0x60;                         // IPv6
+            p[4] = (byte)((total - 40) >> 8);    // payload length
+            p[5] = (byte)((total - 40) & 0xFF);
+            p[6] = 6;                            // next header = TCP
+            p[7] = 64;                           // hop limit
+
+            p[8] = 0x2A; p[9] = 0x02; p[10] = 0x6E; p[11] = 0xA0; p[23] = 0x01;
+            p[24] = 0x2A; p[25] = 0x02; p[26] = 0x6E; p[27] = 0xA0; p[39] = 0x02;
+
+            int t = 40;
+            p[t] = 0xC0; p[t + 1] = 0x00;        // sport 49152
+            p[t + 2] = 0x01; p[t + 3] = 0xBB;    // dport 443
+            p[t + 4] = 0x3A;                     // seq
+            p[t + 12] = 0x50;                    // data offset = 5
+            p[t + 13] = 0x18;                    // PSH+ACK
+
+            p[60] = 0x16; p[61] = 0x03; p[62] = 0x01;
+
+            for (int i = 63; i < total; i++) p[i] = (byte)(i * 5);
+
+            AutoZapret.Zapret.Own.TcpPacket.RecomputeChecksums(p, total, 40, 40, total - 40);
+
+            return p;
         }
 
         /// <summary>Синтетический IPv4+TCP+ClientHello: 20 байт IP, 20 байт TCP, 100 байт payload.</summary>

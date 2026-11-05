@@ -3,7 +3,7 @@ using System;
 namespace AutoZapret.Zapret.Own
 {
     /// <summary>
-    /// Работа с IPv4/TCP-пакетом на уровне байтов: где заголовки, как пересчитать
+    /// Работа с IPv4/IPv6 + TCP на уровне байтов: где заголовки, как пересчитать
     /// суммы, как отрезать кусок payload и собрать новый пакет.
     ///
     /// Зачем свои суммы, а не WinDivertHelperCalcChecksums: хелпер есть не во всех
@@ -12,8 +12,11 @@ namespace AutoZapret.Zapret.Own
     /// (в selftest сумма проверяется инвариантом: с посчитанной суммой сумма
     /// всех слов равна 0xFFFF).
     ///
-    /// Только IPv4: IPv6 в desync нужен редко, а ошибиться в нём легко. Для
-    /// IPv6 пакет считается «не нашим» и проходит без изменений.
+    /// IPv6 поддерживается с 2026-11-05: Discord и YouTube нередко уходят в v6,
+    /// и пока мы считали такие пакеты «не нашими», обход для них не работал
+    /// вовсе — при том что UDP-ветка IPv6 уже понимала. Расширения IPv6
+    /// (hop-by-hop, fragment) не разбираем: если next header не 6, пакет
+    /// просто проходит без изменений.
     /// </summary>
     public sealed class TcpPacket
     {
@@ -27,8 +30,16 @@ namespace AutoZapret.Zapret.Own
         public int PayloadOffset;
         public int PayloadLength;
 
+        /// <summary>IPv4-адреса. Для IPv6 не используются (см. SrcAddr/DstAddr).</summary>
         public uint SrcIp;
         public uint DstIp;
+
+        /// <summary>Адреса как байты: 4 для IPv4, 16 для IPv6.</summary>
+        public byte[] SrcAddr;
+        public byte[] DstAddr;
+
+        public bool IsIPv6;
+
         public int SrcPort;
         public int DstPort;
         public uint Seq;
@@ -45,7 +56,7 @@ namespace AutoZapret.Zapret.Own
             _length = length;
         }
 
-        /// <summary>Разобрать пакет. null — если это не IPv4+TCP или он битый.</summary>
+        /// <summary>Разобрать пакет. null — если это не IPv4/IPv6 + TCP или он битый.</summary>
         public static TcpPacket Parse(byte[] packet, int length)
         {
             if (packet == null || length < 40) return null;
@@ -54,6 +65,9 @@ namespace AutoZapret.Zapret.Own
             p.IpOffset = 0;
 
             int version = packet[0] >> 4;
+
+            if (version == 6) return ParseIPv6(p, packet, length);
+
             int ihl = (packet[0] & 0x0F) * 4;
 
             if (version != 4 || ihl < 20 || length < ihl + 20) return null;
@@ -63,24 +77,81 @@ namespace AutoZapret.Zapret.Own
             p.SrcIp = ReadU32(packet, 12);
             p.DstIp = ReadU32(packet, 16);
 
+            p.SrcAddr = new byte[4];
+            p.DstAddr = new byte[4];
+            Array.Copy(packet, 12, p.SrcAddr, 0, 4);
+            Array.Copy(packet, 16, p.DstAddr, 0, 4);
+
             int totalLength = (packet[2] << 8) | packet[3];
             if (totalLength < ihl + 20 || totalLength > length) totalLength = length;
 
-            p.TcpOffset = ihl;
-            int dataOffset = (packet[ihl + 12] >> 4) * 4;
+            return Finish(p, packet, totalLength, ihl, ihl + 20);
+        }
 
-            if (dataOffset < 20 || ihl + dataOffset > totalLength) return null;
+        private static TcpPacket ParseIPv6(TcpPacket p, byte[] packet, int length)
+        {
+            if (length < 60) return null;          // 40 IPv6 + 20 TCP
+            if (packet[6] != 6) return null;       // next header должен быть TCP
+
+            int payloadLength = (packet[4] << 8) | packet[5];
+            int totalLength = 40 + payloadLength;
+
+            if (totalLength < 60 || totalLength > length) totalLength = length;
+
+            p.IsIPv6 = true;
+            p.IpHeaderLength = 40;
+
+            p.SrcAddr = new byte[16];
+            p.DstAddr = new byte[16];
+            Array.Copy(packet, 8, p.SrcAddr, 0, 16);
+            Array.Copy(packet, 24, p.DstAddr, 0, 16);
+
+            return Finish(p, packet, totalLength, 40, 60);
+        }
+
+        /// <summary>Общая часть разбора TCP для обоих семейств.</summary>
+        private static TcpPacket Finish(TcpPacket p, byte[] packet, int totalLength, int tcpOffset,
+                                        int minTcpEnd)
+        {
+            if (totalLength < minTcpEnd) return null;
+
+            p.TcpOffset = tcpOffset;
+
+            int dataOffset = (packet[tcpOffset + 12] >> 4) * 4;
+            if (dataOffset < 20 || tcpOffset + dataOffset > totalLength) return null;
 
             p.TcpHeaderLength = dataOffset;
-            p.SrcPort = (packet[ihl] << 8) | packet[ihl + 1];
-            p.DstPort = (packet[ihl + 2] << 8) | packet[ihl + 3];
-            p.Seq = ReadU32(packet, ihl + 4);
-            p.Ack = ReadU32(packet, ihl + 8);
-            p.Flags = packet[ihl + 13];
-            p.PayloadOffset = ihl + dataOffset;
+            p.SrcPort = (packet[tcpOffset] << 8) | packet[tcpOffset + 1];
+            p.DstPort = (packet[tcpOffset + 2] << 8) | packet[tcpOffset + 3];
+            p.Seq = ReadU32(packet, tcpOffset + 4);
+            p.Ack = ReadU32(packet, tcpOffset + 8);
+            p.Flags = packet[tcpOffset + 13];
+            p.PayloadOffset = tcpOffset + dataOffset;
             p.PayloadLength = totalLength - p.PayloadOffset;
 
             return p;
+        }
+
+        /// <summary>
+        /// Записать длину пакета туда, где её ждёт протокол.
+        ///
+        /// IPv4: total length в байтах 2-3. IPv6: payload length (без 40-байтового
+        /// заголовка) в байтах 4-5. Перепутать — значит отправить пакет, который
+        /// получатель молча отбросит.
+        /// </summary>
+        private void SetWireLength(byte[] packet, int size)
+        {
+            if (IsIPv6)
+            {
+                int payload = size - IpHeaderLength;
+                packet[4] = (byte)(payload >> 8);
+                packet[5] = (byte)(payload & 0xFF);
+            }
+            else
+            {
+                packet[2] = (byte)(size >> 8);
+                packet[3] = (byte)(size & 0xFF);
+            }
         }
 
         /// <summary>Собрать копию пакета с куском payload [from, to) и сдвигом seq.</summary>
@@ -93,8 +164,7 @@ namespace AutoZapret.Zapret.Own
             Array.Copy(_packet, PayloadOffset + from, result, PayloadOffset, to - from);
 
             // длины: IP total length и TCP data offset не меняются (заголовки те же)
-            result[2] = (byte)(size >> 8);
-            result[3] = (byte)(size & 0xFF);
+            SetWireLength(result, size);
 
             WriteU32(result, TcpOffset + 4, unchecked(Seq + (uint)seqAdjust));
 
@@ -128,8 +198,7 @@ namespace AutoZapret.Zapret.Own
             if (payloadSize > 0)
                 Array.Copy(payload, 0, result, PayloadOffset, payloadSize);
 
-            result[2] = (byte)(size >> 8);
-            result[3] = (byte)(size & 0xFF);
+            SetWireLength(result, size);
 
             WriteU32(result, TcpOffset + 4, unchecked(Seq + (uint)seqAdjust));
 
@@ -221,8 +290,7 @@ namespace AutoZapret.Zapret.Own
             if (payloadSize > 0)
                 Array.Copy(payload, 0, result, payloadStart, payloadSize);
 
-            result[2] = (byte)(size >> 8);
-            result[3] = (byte)(size & 0xFF);
+            SetWireLength(result, size);
 
             WriteU32(result, tcpStart + 4, unchecked(Seq + (uint)seqAdjust));
 
@@ -268,8 +336,7 @@ namespace AutoZapret.Zapret.Own
             if (payloadSize > 0)
                 Array.Copy(payload, 0, result, PayloadOffset, payloadSize);
 
-            result[2] = (byte)(size >> 8);
-            result[3] = (byte)(size & 0xFF);
+            SetWireLength(result, size);
 
             // seq = ISN, ack = 0: это начало соединения, а не продолжение
             WriteU32(result, TcpOffset + 4, isn);
@@ -357,24 +424,43 @@ namespace AutoZapret.Zapret.Own
         public static void RecomputeChecksums(byte[] packet, int length, int ipHeaderLength,
                                               int tcpOffset, int tcpLength)
         {
-            // ---- IP
-            packet[10] = 0;
-            packet[11] = 0;
+            int version = packet[0] >> 4;
 
-            uint ipSum = Sum(packet, 0, ipHeaderLength, 0);
-            ushort ipChecksum = (ushort)~ipSum;
+            // ---- IP: у IPv6 заголовок суммы не имеет
+            if (version == 4 && ipHeaderLength >= 20 && length >= ipHeaderLength)
+            {
+                packet[10] = 0;
+                packet[11] = 0;
 
-            packet[10] = (byte)(ipChecksum >> 8);
-            packet[11] = (byte)(ipChecksum & 0xFF);
+                uint ipSum = Sum(packet, 0, ipHeaderLength, 0);
+                ushort ipChecksum = (ushort)~ipSum;
 
-            // ---- TCP: псевдозаголовок (src, dst, 0, proto, длина)
+                packet[10] = (byte)(ipChecksum >> 8);
+                packet[11] = (byte)(ipChecksum & 0xFF);
+            }
+
+            // ---- TCP: псевдозаголовок зависит от семейства
             uint pseudo = 0;
-            pseudo += ReadU32(packet, 12) & 0xFFFF;
-            pseudo += (ReadU32(packet, 12) >> 16) & 0xFFFF;
-            pseudo += ReadU32(packet, 16) & 0xFFFF;
-            pseudo += (ReadU32(packet, 16) >> 16) & 0xFFFF;
-            pseudo += 6;                       // protocol TCP
-            pseudo += (uint)tcpLength;
+
+            if (version == 6)
+            {
+                // 16-байтовые адреса (src 8..23, dst 24..39), длина, next header
+                for (int i = 8; i < 40; i += 2)
+                    pseudo += (uint)((packet[i] << 8) | packet[i + 1]);
+
+                pseudo += (uint)(tcpLength >> 16);
+                pseudo += (uint)(tcpLength & 0xFFFF);
+                pseudo += 6;                       // next header = TCP
+            }
+            else
+            {
+                pseudo += ReadU32(packet, 12) & 0xFFFF;
+                pseudo += (ReadU32(packet, 12) >> 16) & 0xFFFF;
+                pseudo += ReadU32(packet, 16) & 0xFFFF;
+                pseudo += (ReadU32(packet, 16) >> 16) & 0xFFFF;
+                pseudo += 6;                       // protocol TCP
+                pseudo += (uint)tcpLength;
+            }
 
             int checksumOffset = tcpOffset + 16;
             ushort saved = (ushort)((packet[checksumOffset] << 8) | packet[checksumOffset + 1]);
@@ -400,6 +486,9 @@ namespace AutoZapret.Zapret.Own
         /// </summary>
         public static bool VerifyIpChecksum(byte[] packet, int length)
         {
+            // у IPv6 заголовок суммы не имеет — проверять нечего
+            if ((packet[0] >> 4) == 6) return true;
+
             int ihl = (packet[0] & 0x0F) * 4;
             if (length < ihl) return false;
 
@@ -408,13 +497,28 @@ namespace AutoZapret.Zapret.Own
 
         public static bool VerifyTcpChecksum(byte[] packet, int offset, int tcpLength)
         {
+            int version = packet[0] >> 4;
+
             uint pseudo = 0;
-            pseudo += ReadU32(packet, 12) & 0xFFFF;
-            pseudo += (ReadU32(packet, 12) >> 16) & 0xFFFF;
-            pseudo += ReadU32(packet, 16) & 0xFFFF;
-            pseudo += (ReadU32(packet, 16) >> 16) & 0xFFFF;
-            pseudo += 6;
-            pseudo += (uint)tcpLength;
+
+            if (version == 6)
+            {
+                for (int i = 8; i < 40; i += 2)
+                    pseudo += (uint)((packet[i] << 8) | packet[i + 1]);
+
+                pseudo += (uint)(tcpLength >> 16);
+                pseudo += (uint)(tcpLength & 0xFFFF);
+                pseudo += 6;
+            }
+            else
+            {
+                pseudo += ReadU32(packet, 12) & 0xFFFF;
+                pseudo += (ReadU32(packet, 12) >> 16) & 0xFFFF;
+                pseudo += ReadU32(packet, 16) & 0xFFFF;
+                pseudo += (ReadU32(packet, 16) >> 16) & 0xFFFF;
+                pseudo += 6;
+                pseudo += (uint)tcpLength;
+            }
 
             return Sum(packet, offset, tcpLength, pseudo) == 0xFFFF;
         }
@@ -438,6 +542,9 @@ namespace AutoZapret.Zapret.Own
                                 /// <summary>Адрес назначения как IPAddress — для фильтра по подсетям.</summary>
         public System.Net.IPAddress DestinationAddress()
         {
+            if (IsIPv6 && DstAddr != null && DstAddr.Length == 16)
+                return new System.Net.IPAddress(DstAddr);
+
             byte[] bytes =
             {
                 (byte)(DstIp >> 24), (byte)(DstIp >> 16), (byte)(DstIp >> 8), (byte)DstIp

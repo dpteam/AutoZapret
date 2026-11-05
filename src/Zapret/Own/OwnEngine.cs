@@ -285,7 +285,6 @@ namespace AutoZapret.Zapret.Own
             if (protocol == 17) return udpWanted && HandleUdp(handle, addressPtr, packet, length);
 
             if (protocol != 6) return false;
-            if (version != 4) return false;
 
             TcpPacket tcp = TcpPacket.Parse(packet, length);
 
