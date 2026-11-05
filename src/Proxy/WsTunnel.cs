@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net.Security;
 using System.Net.Sockets;
+using System.Text;
 using System.Threading;
 using AutoZapret.Core;
 
@@ -27,6 +28,7 @@ namespace AutoZapret.Proxy
         private byte[] _pending = new byte[0];
         private int _pendingOffset;
         private bool _closed;
+        private bool _checkedFirst;
 
         private int _readTimeoutMs = Timeout.Infinite;
         private int _writeTimeoutMs = 15000;
@@ -36,8 +38,8 @@ namespace AutoZapret.Proxy
             _ws = ws;
         }
 
-        public override bool CanRead { get { return !_closed; } }
-        public override bool CanWrite { get { return !_closed; } }
+        public override bool CanRead { get { return true; } }
+        public override bool CanWrite { get { return true; } }
         public override bool CanSeek { get { return false; } }
         public override long Length { get { throw new NotSupportedException(); } }
 
@@ -84,6 +86,29 @@ namespace AutoZapret.Proxy
                 _pendingOffset = 0;
             }
 
+            // Первый байт от релея обязан быть 0x16 (TLS handshake).
+            //
+            // Старый воркер при ошибке соединения шлёт ТЕКСТ в тот же поток,
+            // где идёт TLS: клиент видит «HTTP/1.1 400 Bad Request» посреди
+            // рукопожатия и падает с невнятным «wrong version number». Ловим
+            // это на первом же чтении и сохраняем текст целиком — он и есть
+            // причина отказа, названная самим воркером.
+            if (!_checkedFirst)
+            {
+                _checkedFirst = true;
+
+                byte first = _pending[_pendingOffset];
+
+                if (first != 0x16 && first >= 0x20 && first <= 0x7E)
+                {
+                    int length = Math.Min(_pending.Length, 300);
+                    EarlyText = Encoding.UTF8.GetString(_pending, 0, length).Trim();
+
+                    _closed = true;
+                    throw new IOException("релей прислал текст вместо TLS");
+                }
+            }
+
             int n = Math.Min(count, _pending.Length - _pendingOffset);
 
             Buffer.BlockCopy(_pending, _pendingOffset, buffer, offset, n);
@@ -91,6 +116,11 @@ namespace AutoZapret.Proxy
 
             return n;
         }
+
+        /// <summary>
+        /// Текст, который релей прислал вместо TLS. null — данные нормальные.
+        /// </summary>
+        public string EarlyText { get; private set; }
 
         public override void Write(byte[] buffer, int offset, int count)
         {
@@ -183,6 +213,7 @@ namespace AutoZapret.Proxy
 
             TcpClient client = null;
             WsClient ws = null;
+            WsStream tunnelStream = null;
 
             try
             {
@@ -223,6 +254,7 @@ namespace AutoZapret.Proxy
                 }
 
                 Stream tunnel = new WsStream(ws);
+                tunnelStream = (WsStream)tunnel;
 
                 // Поверх туннеля — настоящий TLS к Telegram, с проверкой имени.
                 // Если релей подменяет соединение, сертификат не сойдётся и мы
@@ -236,6 +268,35 @@ namespace AutoZapret.Proxy
             catch (Exception ex)
             {
                 if (client != null) { try { client.Close(); } catch { } }
+
+                // Текст вместо TLS — это конкретный, узнаваемый отказ.
+                if (tunnelStream != null && !string.IsNullOrEmpty(tunnelStream.EarlyText))
+                {
+                    string text = tunnelStream.EarlyText;
+
+                    // HTTP-ответ в туннеле означает, что воркер открыл TCP не
+                    // на тот порт: на 443 пришёл бы TLS ServerHello, а HTTP
+                    // отдаёт сервер на 80. Это ошибка в коде воркера, а не
+                    // блокировка, и сообщение должно это называть.
+                    if (text.StartsWith("HTTP/", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Два реальных случая, и первый — самый частый:
+                        // воркер превращает бинарный кадр в строку и шлёт её
+                        // вместо TLS, сервер отвечает 400 в открытом виде.
+                        // Второй — воркер соединяется не на тот порт.
+                        error = "релей прислал HTTP-ответ вместо TLS (" + FirstLine(text) + "). " +
+                                "Обычно это значит, что воркер отправляет текст вместо байтов " +
+                                "(старый toBytes с instanceof ArrayBuffer) — обновите код воркера";
+                    }
+                    else
+                    {
+                        error = "релей прислал текст вместо TLS: " + text +
+                                " · на воркере, скорее всего, старый код — " +
+                                "Настройки → «Как сделать свой?» → Deploy";
+                    }
+
+                    return null;
+                }
 
                 error = uri.Host + ": " + Short(ex);
 
@@ -258,7 +319,7 @@ namespace AutoZapret.Proxy
         /// узнать, работает ли он, а не ждать, пока Telegram напишет
         /// «соединение…».
         /// </summary>
-        public static string Probe(string relay, string domain, int timeoutMs)
+        public static string Probe(string relay, string domain, int timeoutMs, int port = 443)
         {
             List<string> relays = SplitRelays(relay);
 
@@ -268,7 +329,7 @@ namespace AutoZapret.Proxy
 
             foreach (string item in relays)
             {
-                string error = ProbeOne(item, domain, timeoutMs);
+                string error = ProbeOne(item, domain, timeoutMs, port);
 
                 if (error == null) return null;
 
@@ -322,12 +383,12 @@ namespace AutoZapret.Proxy
             return result;
         }
 
-        private static string ProbeOne(string relay, string domain, int timeoutMs)
+        private static string ProbeOne(string relay, string domain, int timeoutMs, int port)
         {
             TcpClient tcp;
             string error;
 
-            SslStream telegram = Connect(relay, domain, 443, timeoutMs, out tcp, out error);
+            SslStream telegram = Connect(relay, domain, port, timeoutMs, out tcp, out error);
 
             if (telegram == null) return error ?? "релей не ответил";
 
@@ -418,6 +479,17 @@ namespace AutoZapret.Proxy
             while (inner.InnerException != null) inner = inner.InnerException;
 
             return inner.GetType().Name + ": " + inner.Message;
+        }
+
+        /// <summary>Первая строка текста (для HTTP-ответа в туннеле).</summary>
+        private static string FirstLine(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+
+            int cut = text.IndexOfAny(new char[] { '\r', '\n' });
+            string line = cut > 0 ? text.Substring(0, cut) : text;
+
+            return line.Length > 120 ? line.Substring(0, 120) : line;
         }
     }
 }

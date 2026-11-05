@@ -22,13 +22,28 @@ import { connect } from "cloudflare:sockets";
 // Cloudflare ограничивает размер сообщения WebSocket; 32 КБ — безопасно.
 const MAX_CHUNK = 32 * 1024;
 
+// Приведение кадра к байтам.
+//
+// Здесь была главная ловушка первой версии: `data instanceof ArrayBuffer`
+// в рантайме Workers может дать false (объект приходит из другого realm или
+// как Uint8Array/Blob), и тогда TextEncoder превращал БИНАРНЫЙ кадр в строку
+// "[object ArrayBuffer]". В Telegram уходил текст вместо TLS, Telegram отвечал
+// "400 Bad Request" от своего nginx, и со стороны это выглядело как «воркер
+// не работает», хотя TCP был открыт правильно.
+//
+// Поэтому проверяем тремя способами, а неизвестный тип честно считаем ошибкой.
 function toBytes(data) {
-  if (data instanceof ArrayBuffer) return new Uint8Array(data);
   if (typeof data === "string") return new TextEncoder().encode(data);
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+
+  // ArrayBuffer.isView работает и для чужих realm, и для любого TypedArray
+  if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+
   if (data && typeof data.arrayBuffer === "function") {
     return data.arrayBuffer().then((ab) => new Uint8Array(ab));
   }
-  return new Uint8Array();
+
+  return null;
 }
 
 export default {
@@ -111,11 +126,21 @@ export default {
     };
 
     server.addEventListener("message", (event) => {
+      const data = event.data;
+
       // Записи сериализуем: параллельный writer.write переставляет куски,
       // и TLS-поток на той стороне превращается в мусор.
       pending = pending
-        .then(() => toBytes(event.data))
-        .then((bytes) => (bytes.length ? writer.write(bytes) : undefined))
+        .then(() => toBytes(data))
+        .then((bytes) => {
+          if (bytes === null) {
+            // Неизвестный тип кадра. Отправить «что-нибудь» — значит испортить
+            // поток и получить невнятную ошибку на той стороне.
+            throw new Error("unexpected frame type: " + Object.prototype.toString.call(data));
+          }
+
+          return bytes.length ? writer.write(bytes) : undefined;
+        })
         .catch((e) => shutdown("write: " + (e && e.message ? e.message : e)));
     });
 

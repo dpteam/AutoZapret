@@ -1846,6 +1846,16 @@ and tcp.Payload[5] == 0x01`. Исключение — профили с `--dpi-d
 релея (Node, самоподписанный TLS) — `--relay-check ws://127.0.0.1:8770/`
 проходит за 90 мс.
 
+**Найдено на живом воркере (2026-11-05).** Туннель работает — это доказано
+двумя проверками: `--host github.com --port 22` возвращает баннер
+`SSH-2.0-...`, то есть порт и адрес передаются правильно. А на
+`kws2.web.telegram.org:443` в туннель приходит **`HTTP/1.1 400 Bad Request`
+от nginx** — значит, в Telegram ушёл текст вместо TLS-байтов. Причина ровно
+та, что записана в граблях: `event.data instanceof ArrayBuffer` в рантайме
+Workers даёт `false`, и `TextEncoder` превращает кадр в строку
+`[object ArrayBuffer]`. Исправлено в `web/relay/worker.js` (`ArrayBuffer.isView`
+вместо `instanceof`), проверка добавлена в selftest.
+
 **Ждёт:** на `cdn.dartpower.workers.dev` пока старый код — `?probe=` отвечает
 426 (старая версия проверяет Upgrade раньше probe). После деплоя нового кода
 из `web/relay/worker.js` — проверить и включить.

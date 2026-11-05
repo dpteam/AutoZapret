@@ -544,6 +544,12 @@ namespace AutoZapret.App
         Check("код релея вшит", relayCode.Length > 500, relayCode.Length + " символов");
         Check("код релея: cloudflare:sockets", relayCode.IndexOf("cloudflare:sockets", StringComparison.Ordinal) >= 0, "ok");
         Check("код релея: ждёт socket.opened", relayCode.IndexOf("await socket.opened", StringComparison.Ordinal) >= 0, "ok");
+
+        // `instanceof ArrayBuffer` в рантайме Workers может дать false —
+        // тогда текст вместо байтов уходит в Telegram, и он отвечает 400.
+        // Без этой проверки регресс вернётся молча.
+        Check("код релея: бинарные кадры не превращаются в текст",
+            relayCode.IndexOf("ArrayBuffer.isView", StringComparison.Ordinal) >= 0, "ok");
         }
 
         private static void TestWebView2()

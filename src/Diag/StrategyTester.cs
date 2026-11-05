@@ -981,6 +981,7 @@ namespace AutoZapret.Diag
         {
             string relay = null;
             string host = "kws2.web.telegram.org";
+            int port = 443;
 
             for (int i = 0; i < args.Length; i++)
             {
@@ -993,26 +994,35 @@ namespace AutoZapret.Diag
                     continue;
                 }
 
+                if (string.Equals(a, "--port", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    int.TryParse(args[i + 1], out port);
+                    i++;
+                    continue;
+                }
+
                 if (string.Equals(a, "--relay-check", StringComparison.OrdinalIgnoreCase)) continue;
                 if (a.StartsWith("--", StringComparison.Ordinal)) continue;
 
                 relay = a;
             }
 
+            if (port <= 0) port = 443;
+
             if (string.IsNullOrEmpty(relay))
             {
-                Console.WriteLine("использование: AutoZapret.exe --relay-check <wss://... | домен> [--host kws2.web.telegram.org]");
+                Console.WriteLine("использование: AutoZapret.exe --relay-check <wss://... | домен> [--host kws2.web.telegram.org] [--port 443]");
                 return 1;
             }
 
             Console.WriteLine("== проверка релея ==");
             Console.WriteLine("релей: " + AutoZapret.Proxy.WsTunnel.Describe(relay));
-            Console.WriteLine("цель:  " + host + ":443");
+            Console.WriteLine("цель:  " + host + ":" + port);
             Console.WriteLine();
 
             System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
 
-            string error = AutoZapret.Proxy.WsTunnel.Probe(relay, host, 15000);
+            string error = AutoZapret.Proxy.WsTunnel.Probe(relay, host, 15000, port);
 
             watch.Stop();
 
