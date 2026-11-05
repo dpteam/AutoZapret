@@ -15,6 +15,12 @@
   ],
   "bundled": [
     {
+      "id": "discord-voice",
+      "name": "Discord — голос (RTC)",
+      "file": "discord-voice.txt",
+      "note": "Если в голосовом канале висит «RTC connecting» и голос не идёт, хотя обычный обход работает: провайдер режет часть голосовых серверов Discord. Привязка имён finland*.discord.media к общему адресу discord.media проводит клиента через рабочий узел. Список сгенерирован tools/gen-discord-voice.js; если голос снова пропал — проверьте адрес через nslookup discord.media 1.1.1.1."
+    },
+    {
       "id": "optimized",
       "name": "Большой hosts (сервисы)",
       "file": "hosts-optimized.txt",

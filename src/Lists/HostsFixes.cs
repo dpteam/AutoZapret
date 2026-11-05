@@ -272,6 +272,29 @@ namespace AutoZapret.Lists
             return null;
         }
 
+        /// <summary>
+        /// Сколько записей в наборе сейчас. 0 — данных нет.
+        ///
+        /// Нужно интерфейсу: «Discord — голос (RTC), 200 записей» говорит
+        /// человеку, что он получит, до нажатия. Пустой набор выглядит как
+        /// сломанный, и это правильное впечатление.
+        /// </summary>
+        public static int CountEntries(HostsSource source)
+        {
+            string origin;
+            string text = Read(source, out origin);
+
+            if (text == null) return 0;
+
+            HostsReport report = new HostsReport();
+            List<HostsRow> rows = HostsEditor.Parse(text, report);
+
+            int count = 0;
+            foreach (HostsRow row in rows) count += row.Hosts.Count;
+
+            return count;
+        }
+
         /// <summary>Читает файл набора. null — нет файла или он пустой/битый.</summary>
         private static string ReadFile(string path)
         {

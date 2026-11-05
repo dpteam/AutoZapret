@@ -3354,6 +3354,39 @@ namespace AutoZapret.App
 
                 Check("источник: пустой URL не ломает загрузку",
                     AutoZapret.Lists.HostsFixes.Download(probe, out _) == null, "ok");
+
+                // ---- голос Discord: вшитый фикс обязан быть на месте
+                //
+                // У голоса в Discord висит «RTC connecting», когда провайдер
+                // режет голосовые серверы. Лечится привязкой имён к общему
+                // адресу discord.media. Набор вшит в поставку, чтобы работал
+                // без сети, — и он должен быть там всегда.
+                AutoZapret.Lists.HostsSource voice = null;
+
+                foreach (AutoZapret.Lists.HostsSource s in AutoZapret.Lists.HostsFixes.Bundled())
+                    if (s.Id == "discord-voice") voice = s;
+
+                Check("фиксы: «Discord — голос» в поставке", voice != null,
+                    voice == null ? "нет" : voice.Name);
+
+                if (voice != null)
+                {
+                    int count = AutoZapret.Lists.HostsFixes.CountEntries(voice);
+
+                    Check("фиксы: голос Discord — записи на месте", count >= 100,
+                        count + " записей");
+
+                    string origin;
+                    string text = AutoZapret.Lists.HostsFixes.Read(voice, out origin);
+
+                    Check("фиксы: голос Discord — это hosts, а не HTML",
+                        text != null && text.TrimStart().StartsWith("<") == false && origin.Length > 0,
+                        origin);
+
+                    Check("фиксы: голос Discord — имена finland*.discord.media",
+                        text != null && text.IndexOf("finland10000.discord.media", StringComparison.Ordinal) >= 0,
+                        "ok");
+                }
             }
             catch (Exception ex)
             {

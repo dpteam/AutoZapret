@@ -2913,6 +2913,11 @@
                 ? (f.state || "сеть")
                 : (kind === "bundled" ? (f.state || "поставка") : "фикс");
 
+            // Сколько записей даст набор — до нажатия. «200 записей» отличается
+            // от «0 записей» задолго до применения.
+            var count = "";
+            if (f.count > 0) count = '<span class="badge">' + f.count + " записей</span>";
+
             var row = document.createElement("label");
             row.className = "fix-row";
 
@@ -2924,6 +2929,7 @@
                     '<span class="fix-head">' +
                         '<span class="fix-name">' + f.name + '</span>' +
                         '<span class="badge">' + badge + '</span>' +
+                        count +
                         (f.careful ? '<span class="badge warn">блокировки</span>' : '') +
                     '</span>' +
                     (f.note ? '<span class="fix-note">' + f.note + '</span>' : '') +
@@ -3492,6 +3498,8 @@
         renderSystemDns: renderSystemDns,
         // карточка службы: проверяется, что все четыре кнопки на месте
         renderService: renderService,
+        // список фиксов hosts: проверяется, что наборы и счётчики видны
+        renderHostsFixes: renderHostsFixes,
         missingKeys: function () {
             // какие русские строки в разметке остались без перевода
             if (!i18nDict) return [];
