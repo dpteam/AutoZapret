@@ -1,12 +1,27 @@
 @echo off
-rem Strategy audit wrapper: one UAC for all strategies.
+rem Strategy audit: v1 + v2 + own against the real engine binaries.
 rem
-rem winws.exe/winws2.exe carry a requireAdministrator manifest, so every single
-rem launch from a non-elevated shell shows a UAC prompt - 44 of them for the
-rem full audit. audit-strategies.js re-executes itself elevated ONCE and then
-rem runs all launches as children of an elevated process (no prompts).
+rem The script tries the engine directly first. Only if the engine cannot start
+rem at all without elevation (exit code 2 from the script) does this wrapper ask
+rem for admin rights ONCE and run the whole audit elevated - instead of 44
+rem separate UAC prompts, one per strategy launch.
 rem
-rem Usage: tools\audit.cmd            (v1 + v2 + own)
+rem Usage: tools\audit.cmd            (all engines)
 rem        tools\audit.cmd v2         (only v2)
-rem Results are printed in this window and saved to artifacts\audit-strategies.txt.
+setlocal
+cd /d "%~dp0.."
+
+if /i "%~1"=="--elevated" goto run
+
 node "%~dp0audit-strategies.js" %*
+if not errorlevel 2 goto end
+
+echo.
+echo Asking for admin rights once...
+powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs -ArgumentList '--elevated' -Wait"
+if exist artifacts\audit-strategies.txt type artifacts\audit-strategies.txt
+goto end
+
+:run
+node "%~dp0audit-strategies.js"
+:end

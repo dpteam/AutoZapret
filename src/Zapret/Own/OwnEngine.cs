@@ -314,6 +314,15 @@ namespace AutoZapret.Zapret.Own
                 if (profile == null)
                 {
                     _stats.Skipped++;
+
+                    // Почему пропустили — в лог, но не бесконечно.
+                    //
+                    // «пропущено 67» без имён бесполезно: непонятно, это чужой
+                    // трафик (правильно пропустили) или наши цели, которых нет
+                    // ни в hostlist, ни в ipset (и тогда обхода для них нет
+                    // вовсе). Первые двадцать показывают, что именно.
+                    LogSkippedTcp(tcp.DstPort, sni, tcp.DestinationAddress());
+
                     return false;   // не наш трафик — уходит как есть
                 }
 
@@ -500,6 +509,23 @@ namespace AutoZapret.Zapret.Own
         }
 
         private int _unrecognizedUdp;
+
+        private int _skippedTcp;
+
+        /// <summary>Какие ClientHello остались без профиля (первые двадцать).</summary>
+        private void LogSkippedTcp(int port, string sni, System.Net.IPAddress address)
+        {
+            int n = System.Threading.Interlocked.Increment(ref _skippedTcp);
+
+            if (n > 20) return;
+
+            string target = string.IsNullOrEmpty(sni)
+                ? (address == null ? "?" : address.ToString())
+                : sni;
+
+            Log.Info("OWN", "пропущено (нет профиля): " + target + ":" + port +
+                            (n == 20 ? " (дальше молчу)" : ""));
+        }
 
         /// <summary>Можно ли применять технику к этому TCP-пакету.</summary>
         private bool AllowTcpDesync(TcpPacket tcp)

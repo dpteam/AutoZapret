@@ -9,12 +9,23 @@
 // ровно то, что проверяет при старте: имена опций, значения, файлы, форматы
 // портов и блобов. Это единственный честный аудит.
 const fs = require("fs");
-const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 
 const root = path.join(__dirname, "..");
 const engineDir = path.join(root, "engine");
+
+// Всё, что печатаем, дублируем в массив: обёртка tools\audit.cmd поднимает
+// UAC в отдельном окне, и оно закрывается вместе с выводом — отчёт должен
+// остаться в artifacts\audit-strategies.txt.
+const summaryLines = [];
+const printLine = console.log.bind(console);
+
+console.log = function () {
+  const line = Array.prototype.slice.call(arguments).join(" ");
+  summaryLines.push(line);
+  printLine(line);
+};
 
 if (!fs.existsSync(path.join(engineDir, "bin", "winws.exe"))) {
   console.log("[skip] нет engine/bin/winws.exe — аудит возможен только с движком");
@@ -23,66 +34,22 @@ if (!fs.existsSync(path.join(engineDir, "bin", "winws.exe"))) {
 
 // ------------------------------------------------------------- права
 //
-// winws.exe/winws2.exe собраны с манифестом requireAdministrator: КАЖДЫЙ
-// запуск без прав поднимает UAC. Сорок четыре стратегии — сорок четыре
-// запроса, и это невыносимо.
+// Раньше скрипт «на всякий случай» перезапускал себя через UAC. Это оказалось
+// хуже болезни: проверка прав ошибалась (net session отвечает 0 и без прав), а
+// в неинтерактивной сессии (CI) подтвердить UAC некому — аудит падал целиком.
 //
-// Поэтому: если мы не администратор, перезапускаем себя через один UAC
-// (Start-Process -Verb RunAs выполняет весь скрипт целиком), вывод пишем в
-// файл и печатаем после — иначе повышенная консоль закроется вместе с
-// результатом.
+// Теперь порядок простой: сначала пробуем запустить движок как есть. Если он
+// действительно не стартует без прав (код 740 / процесс не создан), скрипт
+// говорит об этом и просит запустить tools\audit.cmd — обёртка поднимет UAC
+// ОДИН раз. В обычном случае (и в CI) всё идёт без единого запроса.
 
-function isElevated() {
-  try {
-    const result = spawnSync("net", ["session"], { stdio: "ignore", windowsHide: true });
-    return result.status === 0;
-  } catch {
-    return false;
-  }
-}
+const elevationHint =
+  "движок не стартует без прав администратора. Запустите tools\\audit.cmd — " +
+  "он спросит UAC один раз на все стратегии";
 
-if (!isElevated() && !process.env.AUTOZAPRET_AUDIT_ELEVATED) {
-  const outDir = path.join(root, "artifacts");
-  fs.mkdirSync(outDir, { recursive: true });
-
-  const out = path.join(outDir, "audit-strategies.txt");
-  const marker = "1";
-  const args = process.argv.slice(2).join(" ");
-
-  const bat = path.join(os.tmpdir(), "autozapret-audit-" + Date.now() + ".cmd");
-
-  fs.writeFileSync(
-    bat,
-    "@echo off\r\n" +
-    "cd /d \"" + root + "\"\r\n" +
-    "set AUTOZAPRET_AUDIT_ELEVATED=" + marker + "\r\n" +
-    "node \"" + __filename + "\" " + args + " > \"" + out + "\" 2>&1\r\n",
-    "ascii"
-  );
-
-  console.log("нужны права администратора: winws.exe имеет манифест requireAdministrator.");
-  console.log("запрашиваю ОДИН раз — дальше все 44 запуска пройдут без UAC…");
-
-  spawnSync(
-    "powershell",
-    ["-NoProfile", "-Command", "Start-Process -FilePath '" + bat.replace(/'/g, "''") + "' -Verb RunAs -Wait"],
-    { windowsHide: true }
-  );
-
-  try { fs.unlinkSync(bat); } catch (e) { }
-
-  if (!fs.existsSync(out)) {
-    console.log("[FAIL] повышенный запуск не выполнился (UAC отклонён?)");
-    process.exit(2);
-  }
-
-  const report = fs.readFileSync(out, "utf8");
-  process.stdout.write(report);
-
-  // файл — единственный источник правды: консоль повышенного процесса
-  // закрылась, и статус пришёл только текстом
-  const failed = report.indexOf("ИТОГ: проблем нет") < 0;
-  process.exit(failed ? 1 : 0);
+if (!fs.existsSync(path.join(engineDir, "bin", "winws.exe"))) {
+  console.log("[skip] нет engine/bin/winws.exe — аудит возможен только с движком");
+  process.exit(0);
 }
 
 // Плейсхолдеры — те же, что подставляет программа (EngineLocator.BuildPlaceholders)
@@ -210,6 +177,14 @@ for (const [engine, exe] of targets) {
   }
 
   if (report.problems.length === 0) console.log("  все стратегии принимаются движком");
+
+  // Ни одна не запустилась и движок ничего не сказал — это не «аргументы
+  // плохие», это процесс не создан (обычно не хватает прав).
+  if (report.problems.length === report.total && report.total > 0) {
+    console.log("");
+    console.log("  " + elevationHint);
+    process.exit(2);
+  }
 }
 
 // ---- свой движок: не exe, а перевод стратегии в профили
@@ -258,5 +233,13 @@ if ((!want || want === "own") && fs.existsSync(path.join(root, "bin", "AutoZapre
 
 console.log("");
 console.log(failed === 0 ? "ИТОГ: проблем нет" : "ИТОГ: проблем — " + failed);
+
+// Итог всегда дублируем в файл: обёртка tools\audit.cmd поднимает UAC в
+// отдельном окне, а оно закрывается вместе с выводом.
+try {
+  const outDir = path.join(root, "artifacts");
+  fs.mkdirSync(outDir, { recursive: true });
+  fs.writeFileSync(path.join(outDir, "audit-strategies.txt"), summaryLines.join("\r\n"), "utf8");
+} catch (e) { }
 
 process.exit(failed === 0 ? 0 : 1);
