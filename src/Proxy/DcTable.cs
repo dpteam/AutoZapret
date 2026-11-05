@@ -47,6 +47,19 @@ namespace AutoZapret.Proxy
         /// <summary>
         /// Домены для WS-подключения. DC 203 ходит через WS-DC 2
         /// (это особенность Telegram, не наша ошибка).
+        ///
+        /// ВАЖНО: возвращаем ОБА варианта имени, а не один.
+        ///
+        /// Раньше для обычного (не медиа) подключения отдавался только
+        /// `kwsN.web.telegram.org` — то есть резервного варианта не было
+        /// ВООБЩЕ. В сети, где провайдер режет это имя, прокси умирал на
+        /// первом же домене: «таймаут TCP» и всё, пробовать больше нечего.
+        /// Именно это и было в логе с живой машины — семь одинаковых строк
+        /// подряд, потому что пробовать было нечего.
+        ///
+        /// Порядок задаёт только предпочтение: медиа сначала пробует `-1`
+        /// (у него другой узел), обычное — основной. Остальные идут следом
+        /// как резерв.
         /// </summary>
         public static List<string> WsDomains(int dc, bool isMedia)
         {
@@ -54,15 +67,20 @@ namespace AutoZapret.Proxy
 
             List<string> result = new List<string>(2);
 
-            if (!isMedia)
+            string main = "kws" + dc + ".web.telegram.org";
+            string alt = "kws" + dc + "-1.web.telegram.org";
+
+            if (isMedia)
             {
-                result.Add("kws" + dc + ".web.telegram.org");
-                return result;
+                result.Add(alt);
+                result.Add(main);
+            }
+            else
+            {
+                result.Add(main);
+                result.Add(alt);
             }
 
-            // медиа предпочитает «-1»-домен
-            result.Add("kws" + dc + "-1.web.telegram.org");
-            result.Add("kws" + dc + ".web.telegram.org");
             return result;
         }
 

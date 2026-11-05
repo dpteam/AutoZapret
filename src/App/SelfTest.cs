@@ -5621,6 +5621,34 @@ namespace AutoZapret.App
             Check("маршруты: пустой список",
                 AutoZapret.Proxy.UpstreamRoutes.Order(2, false, new List<string>()).Count == 0, "ok");
 
+            // ---- домены WS: у обычного подключения ОБЯЗАН быть резерв
+            //
+            // Регресс с живой машины: для не-медиа отдавался только один
+            // домен, и в сети, где провайдер режет это имя, прокси умирал
+            // на первом же — «таймаут TCP», пробовать больше нечего.
+            List<string> normal2 = AutoZapret.Proxy.DcTable.WsDomains(2, false);
+
+            Check("домены WS: у обычного есть резерв",
+                normal2.Count >= 2, string.Join(", ", normal2.ToArray()));
+
+            Check("домены WS: обычный начинает с основного",
+                normal2.Count >= 1 && normal2[0] == "kws2.web.telegram.org", normal2[0]);
+
+            Check("домены WS: резерв — вариант с -1",
+                normal2.Contains("kws2-1.web.telegram.org"), "kws2-1");
+
+            List<string> media2 = AutoZapret.Proxy.DcTable.WsDomains(2, true);
+
+            Check("домены WS: медиа начинает с -1",
+                media2.Count >= 1 && media2[0] == "kws2-1.web.telegram.org", media2[0]);
+
+            // DC 203 ходит через WS-DC 2 — это особенность Telegram
+            List<string> dc203 = AutoZapret.Proxy.DcTable.WsDomains(203, false);
+
+            Check("домены WS: DC 203 идёт через WS-DC 2",
+                dc203.Count > 0 && dc203[0].StartsWith("kws2", StringComparison.Ordinal),
+                string.Join(", ", dc203.ToArray()));
+
             AutoZapret.Proxy.UpstreamRoutes.Reset();
         }
 

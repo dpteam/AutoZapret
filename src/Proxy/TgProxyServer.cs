@@ -336,7 +336,7 @@ namespace AutoZapret.Proxy
                         }
                     }
 
-                    Log.Warn("PROXY", "handshake отклонён: " + hs.Error);
+                    WarnThrottled("handshake:" + hs.Reject, "handshake отклонён: " + hs.Error);
 
                     // Дренаж: не рвать сразу, иначе клиент получит RST и не покажет ошибку.
                     Drain(stream);
@@ -352,7 +352,7 @@ namespace AutoZapret.Proxy
                 ws = OpenUpstream(hs.Dc, hs.IsMedia, hs.IsTestDc, out upstreamTcp, out upstreamTls, out error);
                 if (ws == null)
                 {
-                    Log.Warn("PROXY", "не удалось подключиться к Telegram: " + error);
+                    WarnThrottled("upstream:" + hs.Dc, "не удалось подключиться к Telegram: " + error);
                     lock (_gate) Stats.Failed++;
                     return;
                 }
@@ -416,6 +416,12 @@ namespace AutoZapret.Proxy
 
             DateTime started = DateTime.UtcNow;
 
+            // Если ВСЕ домены отказали на TCP — это не «сеть моргнула»,
+            // а блокировка на уровне адреса. Сообщение должно это называть:
+            // иначе человек бесконечно жмёт «повторить», хотя повторять нечего.
+            bool allConnectFailed = true;
+            List<string> tried = new List<string>();
+
             foreach (string domain in domains)
             {
                 // Общий бюджет на перебор: без него «соединение…» в Telegram
@@ -430,6 +436,8 @@ namespace AutoZapret.Proxy
                 TcpClient candidate = null;
                 SslStream ssl = null;
                 bool connectStage = true;
+
+                tried.Add(domain);
 
                 try
                 {
@@ -447,6 +455,7 @@ namespace AutoZapret.Proxy
                     candidate.EndConnect(ar);
 
                     connectStage = false;
+                    allConnectFailed = false;      // до TLS дошли: адрес доступен
 
                     ssl = new SslStream(candidate.GetStream(), false, delegate { return true; });
                     ssl.AuthenticateAsClient(domain);
@@ -479,6 +488,21 @@ namespace AutoZapret.Proxy
                     if (ssl != null) { try { ssl.Dispose(); } catch { } }
                     if (candidate != null) { try { candidate.Close(); } catch { } }
                 }
+            }
+
+            // Ни один адрес не пустил даже TCP.
+            //
+            // Это принципиально другой отказ, чем «сертификат не тот» или
+            // «WS не поднялся»: тут блокировка на уровне IP, и повторять
+            // бессмысленно. Говорим прямо, что нужно, — иначе человек
+            // бесконечно жмёт «проверить» и делает вывод «прокси сломан».
+            if (allConnectFailed && tried.Count > 0)
+            {
+                error = "не отвечает ни один шлюз Telegram (" +
+                        string.Join(", ", tried.ToArray()) + "): " +
+                        "kws* блокируется на уровне адреса. " +
+                        "Нужен внешний релей: Cloudflare Worker или свой сервер — " +
+                        "прямое подключение из этой сети не пройдёт";
             }
 
             return null;
@@ -652,6 +676,44 @@ namespace AutoZapret.Proxy
 
             return null;
         }
+
+        /// <summary>
+        /// Лог с подавлением повторов.
+        ///
+        /// В живом логе было семь одинаковых «таймаут TCP» подряд за восемь
+        /// секунд: каждое соединение клиента повторяет ту же ошибку. В логе
+        /// это мусор, а в трее — семь уведомлений.
+        ///
+        /// Ключ — сама суть ошибки без цифр: одинаковые причины схлопываются,
+        /// разные (DC, домен, стадия) остаются отдельными строками.
+        /// </summary>
+        private void WarnThrottled(string key, string message, int seconds = 10)
+        {
+            int skipped;
+
+            lock (_gate)
+            {
+                DateTime last;
+
+                if (_warnAt.TryGetValue(key, out last) &&
+                    (DateTime.UtcNow - last).TotalSeconds < seconds)
+                {
+                    _warnSkipped.TryGetValue(key, out skipped);
+                    _warnSkipped[key] = skipped + 1;
+                    return;
+                }
+
+                _warnAt[key] = DateTime.UtcNow;
+
+                _warnSkipped.TryGetValue(key, out skipped);
+                _warnSkipped[key] = 0;
+            }
+
+            Log.Warn("PROXY", message + (skipped > 0 ? " (повторов подавлено: " + skipped + ")" : ""));
+        }
+
+        private readonly Dictionary<string, DateTime> _warnAt = new Dictionary<string, DateTime>();
+        private readonly Dictionary<string, int> _warnSkipped = new Dictionary<string, int>();
 
         public static byte[] ParseSecret(string hex)
         {
