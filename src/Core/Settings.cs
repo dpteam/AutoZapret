@@ -50,6 +50,16 @@ namespace AutoZapret.Core
         public string ProxySecret = "";            // 32 hex-символа, без префикса dd
         public bool ProxyCfProxy = true;
 
+        /// <summary>
+        /// Внешний релей для Telegram (Cloudflare Worker или свой сервер).
+        ///
+        /// Пусто — подключаемся к Telegram напрямую. Задано (например
+        /// `cdn.example.workers.dev`) — сначала пробуем туннель через релей,
+        /// потому что в сетях с блокировкой по адресу прямой путь не работает
+        /// вообще, а релей меняет адрес назначения.
+        /// </summary>
+        public string ProxyRelay = "";
+
         // ---- ui
         public string Theme = "dark";
         public bool SimpleMode = true;
@@ -209,6 +219,7 @@ namespace AutoZapret.Core
                 s.ProxyHost = Json.GetString(proxy, "host", s.ProxyHost);
                 s.ProxyPort = Json.GetInt(proxy, "port", s.ProxyPort);
                 s.ProxySecret = Json.GetString(proxy, "secret", s.ProxySecret);
+                s.ProxyRelay = Json.GetString(proxy, "relay", s.ProxyRelay);
                 s.ProxyCfProxy = Json.GetBool(proxy, "cfProxy", s.ProxyCfProxy);
             }
 
@@ -281,6 +292,7 @@ namespace AutoZapret.Core
                 "host", ProxyHost,
                 "port", (long)ProxyPort,
                 "secret", ProxySecret,
+                "relay", ProxyRelay,
                 "cfProxy", ProxyCfProxy);
 
             root["ui"] = Map(
@@ -329,6 +341,11 @@ namespace AutoZapret.Core
             if (ProxyPort < 1 || ProxyPort > 65535) ProxyPort = 1443;
             ProxySecret = NormalizeSecret(ProxySecret);
             if (ProxySecret.Length == 0) ProxySecret = NewSecret();
+
+            // Релей: убираем пробелы и переводы строк (человек копирует из
+            // панели Cloudflare, там адрес легко приезжает с хвостом), но
+            // сам формат не переписываем — разберёт WsTunnel и скажет, что не так.
+            ProxyRelay = (ProxyRelay ?? "").Trim();
 
             if (string.IsNullOrEmpty(EngineVersion)) EngineVersion = "";
         }

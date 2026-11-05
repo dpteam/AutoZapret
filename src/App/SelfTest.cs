@@ -104,6 +104,9 @@ namespace AutoZapret.App
                 Section("прокси: маршруты до Telegram");
                 TestProxyRoutes();
 
+                Section("прокси: внешний релей");
+                TestRelayTunnel();
+
                 Section("обновления");
                 TestUpdates();
 
@@ -331,6 +334,15 @@ namespace AutoZapret.App
             Settings oledBack = Settings.Load();
             Check("тема oled round-trip", oledBack.Theme == "oled", oledBack.Theme);
 
+            // релей: человек копирует адрес из панели Cloudflare, и он легко
+            // приезжает с пробелом или переводом строки на конце
+            probe.ProxyRelay = "  cdn.example.workers.dev \r\n";
+            probe.Save();
+
+            Settings relayBack = Settings.Load();
+            Check("релей round-trip без пробелов",
+                relayBack.ProxyRelay == "cdn.example.workers.dev", "[" + relayBack.ProxyRelay + "]");
+
             // выбор стратегии помнится отдельно для каждого движка: иначе при
             // переключении v1 <-> v2 выбор сгорал и человек искал его заново
             Check("стратегия v1 round-trip", back.StrategyIdV1 == "flowseal.general-alt12", back.StrategyIdV1);
@@ -515,6 +527,23 @@ namespace AutoZapret.App
                                               css.IndexOf("background: var(--log-bg)", StringComparison.Ordinal) >= 0, "ok");
         Check("html: выбор темы в настройках", html.IndexOf("id=\"set-theme\"", StringComparison.Ordinal) >= 0, "ok");
         Check("js: тема применяется", js.IndexOf("data-theme", StringComparison.Ordinal) >= 0, "ok");
+
+        // Внешний релей: поле и кнопка проверки. Без поля настройку некуда
+        // вписать, а без кнопки человек не узнает, работает ли его воркер.
+        Check("html: поле релея", html.IndexOf("id=\"set-proxy-relay\"", StringComparison.Ordinal) >= 0, "ok");
+        Check("html: кнопка проверки релея", html.IndexOf("id=\"btn-relay-test\"", StringComparison.Ordinal) >= 0, "ok");
+        Check("js: проверка релея", js.IndexOf("relay.test", StringComparison.Ordinal) >= 0, "ok");
+
+        // Инструкция «как сделать свой воркер»: код вшит в exe, копия в
+        // разметке разошлась бы с настоящей и человек скопировал бы старое.
+        Check("html: справка по релею", html.IndexOf("id=\"relay-help\"", StringComparison.Ordinal) >= 0, "ok");
+        Check("html: кнопка «как сделать свой»", html.IndexOf("id=\"btn-relay-help\"", StringComparison.Ordinal) >= 0, "ok");
+
+        string relayCode = Resources.Text(Resources.RelayWorker);
+
+        Check("код релея вшит", relayCode.Length > 500, relayCode.Length + " символов");
+        Check("код релея: cloudflare:sockets", relayCode.IndexOf("cloudflare:sockets", StringComparison.Ordinal) >= 0, "ok");
+        Check("код релея: ждёт socket.opened", relayCode.IndexOf("await socket.opened", StringComparison.Ordinal) >= 0, "ok");
         }
 
         private static void TestWebView2()
@@ -5698,6 +5727,74 @@ namespace AutoZapret.App
         /// сообщений. Проверяем правила, а не сеть: сеть в selftest бывает
         /// любой, а правила должны работать всегда.
         /// </summary>
+        /// <summary>
+        /// Внешний релей: сборка адреса.
+        ///
+        /// Сеть здесь не трогаем — проверяем ровно то, что ломается чаще
+        /// всего: человек вставляет домен из панели Cloudflare, а он приезжает
+        /// со схемой, слэшем или со своим query. Ошибка в сборке выглядит как
+        /// «воркер не работает», хотя воркер тут ни при чём.
+        /// </summary>
+        private static void TestRelayTunnel()
+        {
+            Uri uri;
+            string error;
+
+            bool ok = AutoZapret.Proxy.WsTunnel.BuildUri(
+                "cdn.example.workers.dev", "kws2.web.telegram.org", 443, out uri, out error);
+
+            Check("релей: голый домен получает wss",
+                ok && uri != null && uri.Scheme == "wss" && uri.Host == "cdn.example.workers.dev",
+                uri == null ? error : uri.ToString());
+
+            Check("релей: host и port в запросе",
+                uri != null &&
+                uri.Query.IndexOf("host=kws2.web.telegram.org", StringComparison.Ordinal) >= 0 &&
+                uri.Query.IndexOf("port=443", StringComparison.Ordinal) >= 0,
+                uri == null ? "" : uri.Query);
+
+            ok = AutoZapret.Proxy.WsTunnel.BuildUri(
+                "wss://cdn.example.workers.dev/", "kws2.web.telegram.org", 443, out uri, out error);
+
+            Check("релей: полный адрес не портится",
+                ok && uri != null && uri.Scheme == "wss" && uri.Host == "cdn.example.workers.dev",
+                uri == null ? error : uri.ToString());
+
+            // свой query (например ключ доступа) нельзя терять: иначе воркер
+            // с проверкой KEY отвергнет нас, а выглядеть это будет как «релей лёг»
+            ok = AutoZapret.Proxy.WsTunnel.BuildUri(
+                "wss://cdn.example.workers.dev/tunnel?key=abc", "kws2.web.telegram.org", 443, out uri, out error);
+
+            Check("релей: свой query сохраняется",
+                ok && uri != null &&
+                uri.Query.IndexOf("key=abc", StringComparison.Ordinal) >= 0 &&
+                uri.Query.IndexOf("&host=", StringComparison.Ordinal) >= 0,
+                uri == null ? error : uri.Query);
+
+            Check("релей: пустой адрес отклонён",
+                !AutoZapret.Proxy.WsTunnel.BuildUri("   ", "kws2.web.telegram.org", 443, out uri, out error),
+                error ?? "");
+
+            Check("релей: описание — только хост",
+                AutoZapret.Proxy.WsTunnel.Describe("wss://cdn.example.workers.dev/?x=1") == "cdn.example.workers.dev",
+                AutoZapret.Proxy.WsTunnel.Describe("wss://cdn.example.workers.dev/?x=1"));
+
+            // несколько релеев: человек вводит их через запятую, пробел или
+            // перевод строки — все варианты должны разбираться одинаково
+            List<string> many = AutoZapret.Proxy.WsTunnel.SplitRelays(
+                "a.workers.dev, wss://b.workers.dev/\n c.workers.dev;a.workers.dev");
+
+            Check("релеи: разобраны и без дублей",
+                many.Count == 3, string.Join(" | ", many.ToArray()));
+
+            Check("релеи: дубль со схемой не второй",
+                many.Count == 3 && many[0] == "a.workers.dev" && many[1] == "wss://b.workers.dev/",
+                many.Count == 3 ? many[0] + ", " + many[1] : "?");
+
+            Check("релеи: пустая строка — ноль",
+                AutoZapret.Proxy.WsTunnel.SplitRelays("  , ; ").Count == 0, "0");
+        }
+
         private static void TestProxyRoutes()
         {
             AutoZapret.Proxy.UpstreamRoutes.Reset();

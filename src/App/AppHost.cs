@@ -1376,6 +1376,71 @@ namespace AutoZapret.App
             });
             bridge.Register("proxy.test", msg => RunInBackground("proxy-test", RunProxyTestUi));
 
+            // Проверка внешнего релея отдельно от прокси. Человек вводит домен
+            // воркера и сразу видит, рабочий он или нет: иначе первая проверка
+            // — это «Telegram пишет соединение…», а причина спрятана внутри.
+            bridge.Register("relay.test", msg =>
+            {
+                string relay = Json.GetString(msg, "relay", _settings.ProxyRelay);
+                string domain = Json.GetString(msg, "domain", "");
+
+                RunInBackground("relay-test", () => RunRelayTestUi(relay, domain));
+            });
+
+            // ---- инструкция «как сделать свой воркер»
+            //
+            // Код вшит в exe (Resources.RelayWorker). Отдаём его странице,
+            // а не храним копию в разметке: две копии одного кода рано или
+            // поздно разойдутся, и человек скопирует устаревшую.
+            bridge.Register("relay.docs", msg =>
+            {
+                string code = Resources.Text(Resources.RelayWorker);
+
+                _form.Bridge.Send(WebBridge.Msg("relay.docs",
+                    "ok", code.Length > 0,
+                    "code", code,
+                    "detail", code.Length > 0 ? "" : "код воркера не вшит в сборку"));
+            });
+
+            // Копирование в буфер обмена делает хост: в WebView2 страница
+            // живёт на data-URL, и navigator.clipboard там может быть запрещён.
+            bridge.Register("clipboard.set", msg =>
+            {
+                string text = Json.GetString(msg, "text", "");
+
+                bool ok = false;
+                string error = null;
+
+                try
+                {
+                    if (text.Length > 0) { Clipboard.SetText(text); ok = true; }
+                    else error = "нечего копировать";
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                }
+
+                _form.Bridge.Send(WebBridge.Msg("clipboard.set", "ok", ok, "detail", error ?? ""));
+            });
+
+            // Открыть сайт в системном браузере. Только https: ссылка приходит
+            // из интерфейса, но проверять всё равно нужно — открытие
+            // произвольной схемы (file:, ms-msdt:) это уже запуск.
+            bridge.Register("open.url", msg =>
+            {
+                string url = Json.GetString(msg, "url", "");
+
+                if (!url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                {
+                    Log.Warn("APP", "открытие адреса отклонено: разрешён только https");
+                    return;
+                }
+
+                try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
+                catch (Exception ex) { Log.Warn("APP", "не удалось открыть адрес: " + ex.Message); }
+            });
+
             // ---- обновления
             bridge.Register("upd.engine.check", msg => RunInBackground("upd-engine", CheckEngineUi));
             bridge.Register("upd.engine.install", msg => RunInBackground("upd-install", InstallEngineUi));
@@ -1589,7 +1654,8 @@ namespace AutoZapret.App
 
         private void StartProxy()
         {
-            string error = _proxy.Start(_settings.ProxyHost, _settings.ProxyPort, _settings.ProxySecret);
+            string error = _proxy.Start(_settings.ProxyHost, _settings.ProxyPort,
+                _settings.ProxySecret, _settings.ProxyRelay);
             if (error != null)
             {
                 Log.Error("PROXY", "не удалось запустить: " + error);
@@ -1599,7 +1665,17 @@ namespace AutoZapret.App
 
             _settings.ProxyEnabled = true;
             _settings.Save();
+
+            if (!string.IsNullOrEmpty(_settings.ProxyRelay))
+                Log.Info("PROXY", "транспорт: через релей " + WsTunnelDescribe(_settings.ProxyRelay));
+
             _tray.Notify(AppInfo.Name, "Прокси запущен на порту " + _settings.ProxyPort, ToolTipIcon.Info);
+        }
+
+        /// <summary>Хост релея для лога: адрес и есть, но без query.</summary>
+        private static string WsTunnelDescribe(string relay)
+        {
+            return AutoZapret.Proxy.WsTunnel.Describe(relay);
         }
 
         private void StopProxy()
@@ -1664,6 +1740,55 @@ namespace AutoZapret.App
             }
 
             _form.Bridge.Send(WebBridge.Msg("proxy.test", "steps", items, "advice", advice));
+        }
+
+        /// <summary>
+        /// Проверка внешнего релея: туннель → TLS к Telegram → /apiws.
+        ///
+        /// Отдельно от proxy.test, потому что отвечает на другой вопрос:
+        /// «работает ли мой воркер», а не «работает ли прокси». Ошибка релея
+        /// не должна выглядеть как поломка прокси — лечатся они в разных местах.
+        /// </summary>
+        private void RunRelayTestUi(string relay, string domain)
+        {
+            string value = (relay ?? "").Trim();
+
+            if (value.Length == 0)
+            {
+                _form.Bridge.Send(WebBridge.Msg("relay.test",
+                    "ok", false,
+                    "detail", "Домен релея не задан"));
+                return;
+            }
+
+            if (string.IsNullOrEmpty(domain))
+            {
+                List<string> domains = DcTable.WsDomains(2, false);
+                domain = domains.Count > 0 ? domains[0] : "kws2.web.telegram.org";
+            }
+
+            DateTime started = DateTime.UtcNow;
+
+            string error = WsTunnel.Probe(value, domain, 12000);
+
+            long ms = (long)(DateTime.UtcNow - started).TotalMilliseconds;
+
+            if (error == null)
+            {
+                Log.Info("PROXY", "релей работает: " + WsTunnel.Describe(value) + " -> " + domain + " за " + ms + " мс");
+
+                _form.Bridge.Send(WebBridge.Msg("relay.test",
+                    "ok", true,
+                    "detail", "Релей работает: " + domain + " доступен через " + WsTunnel.Describe(value) +
+                              " (" + ms + " мс)"));
+                return;
+            }
+
+            Log.Warn("PROXY", "релей не прошёл проверку: " + error);
+
+            _form.Bridge.Send(WebBridge.Msg("relay.test",
+                "ok", false,
+                "detail", error));
         }
 
         // ---------------------------------------------------------------- fakes
@@ -4628,6 +4753,7 @@ namespace AutoZapret.App
                 "proxyHost", _settings.ProxyHost,
                 "proxyPort", (long)_settings.ProxyPort,
                 "proxySecret", _settings.ProxySecret,
+                "proxyRelay", _settings.ProxyRelay,
                 "proxyLink", _settings.BuildProxyLink(),
                 "theme", _settings.Theme,
                 "simpleMode", _settings.SimpleMode,
@@ -4691,6 +4817,7 @@ namespace AutoZapret.App
             _settings.ProxyEnabled = Json.GetBool(msg, "proxyEnabled", _settings.ProxyEnabled);
             _settings.ProxyPort = Json.GetInt(msg, "proxyPort", _settings.ProxyPort);
             _settings.Theme = Json.GetString(msg, "theme", _settings.Theme);
+            _settings.ProxyRelay = (Json.GetString(msg, "proxyRelay", _settings.ProxyRelay) ?? "").Trim();
             _settings.SimpleMode = Json.GetBool(msg, "simpleMode", _settings.SimpleMode);
             _settings.MinimizeToTray = Json.GetBool(msg, "minimizeToTray", _settings.MinimizeToTray);
             _settings.StartMinimized = Json.GetBool(msg, "startMinimized", _settings.StartMinimized);
@@ -4705,6 +4832,11 @@ namespace AutoZapret.App
                 _settings.UpdateChannel = "stable";
 
             _settings.Save();
+
+            // Настройки могли изменить транспорт на ходу: прокси читает релей
+            // на каждом соединении, поэтому перезапуск не нужен.
+            _proxy.UpdateRelay(_settings.ProxyRelay);
+
             Log.Info("APP", "настройки сохранены");
         }
 

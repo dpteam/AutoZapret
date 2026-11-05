@@ -716,6 +716,9 @@
         var portEl = document.getElementById("set-proxy-port");
         if (portEl && document.activeElement !== portEl) portEl.value = s.proxyPort;
         text("set-proxy-secret", s.proxySecret || "—");
+
+        var relayEl = document.getElementById("set-proxy-relay");
+        if (relayEl && document.activeElement !== relayEl) relayEl.value = s.proxyRelay || "";
         setSwitch("set-simple-mode", s.simpleMode);
         applySimpleMode(s.simpleMode);
         setSwitch("set-minimize-to-tray", s.minimizeToTray);
@@ -1111,6 +1114,37 @@
                 else port.value = state.proxyPort || 1443;
             });
         }
+
+        var relay = document.getElementById("set-proxy-relay");
+        if (relay) relay.addEventListener("change", function () {
+            // пробелы и переводы строк — почти всегда «скопировал с хвостом»
+            queueSave({ proxyRelay: relay.value.trim() });
+        });
+
+        var relayTest = document.getElementById("btn-relay-test");
+        if (relayTest) relayTest.addEventListener("click", function () {
+            var field = document.getElementById("set-proxy-relay");
+            var hint = document.getElementById("relay-test-state");
+            var value = field ? field.value.trim() : "";
+
+            if (!value) {
+                if (hint) {
+                    hint.textContent = "Сначала укажите домен релея";
+                    hint.className = "row-hint diag-bad";
+                }
+                return;
+            }
+
+            relayTest.disabled = true;
+            relayTest.textContent = "Проверяю…";
+
+            if (hint) {
+                hint.textContent = "проверяю туннель…";
+                hint.className = "row-hint";
+            }
+
+            send("relay.test", { relay: value });
+        });
 
         bindSwitch("set-simple-mode", "simpleMode");
 
@@ -3122,6 +3156,94 @@
         box.style.display = "";
     }
 
+    /// Проверка релея: одна строка результата и кнопка обратно в рабочее
+    /// состояние. Раньше такие проверки оставляли кнопку в «Проверяю…»,
+    /// если ответ не приходил — теперь любой ответ возвращает её.
+    function renderRelayTest(msg) {
+        var btn = document.getElementById("btn-relay-test");
+        if (btn) { btn.disabled = false; btn.textContent = t("Проверить"); }
+
+        var hint = document.getElementById("relay-test-state");
+        if (!hint) return;
+
+        hint.textContent = msg.detail || "";
+        hint.className = "row-hint " + (msg.ok ? "diag-ok" : "diag-bad");
+    }
+
+    // ------------------------------------------------------------ справка
+
+    var relayWorkerCode = "";
+
+    /// Инструкция «как сделать свой воркер». Код приходит от ядра (вшит в exe):
+    /// копия в разметке разошлась бы с настоящей, и человек скопировал бы
+    /// устаревший воркер.
+    function openRelayHelp() {
+        var overlay = document.getElementById("relay-help");
+        if (!overlay) return;
+
+        overlay.style.display = "flex";
+
+        var state = document.getElementById("relay-help-state");
+        if (state) { state.textContent = ""; state.className = "danger-hint"; }
+
+        send("relay.docs");
+    }
+
+    function closeRelayHelp() {
+        var overlay = document.getElementById("relay-help");
+        if (overlay) overlay.style.display = "none";
+    }
+
+    function renderRelayDocs(msg) {
+        relayWorkerCode = msg.code || "";
+
+        var pre = document.getElementById("relay-help-code");
+        if (pre) pre.textContent = relayWorkerCode || t("Код не вшит в сборку");
+
+        if (!msg.ok) {
+            var state = document.getElementById("relay-help-state");
+            if (state) {
+                state.textContent = msg.detail || "";
+                state.className = "danger-hint diag-bad";
+            }
+        }
+    }
+
+    function initRelayHelp() {
+        var open = document.getElementById("btn-relay-help");
+        if (open) open.addEventListener("click", openRelayHelp);
+
+        var close = document.getElementById("relay-help-close");
+        if (close) close.addEventListener("click", closeRelayHelp);
+
+        var overlay = document.getElementById("relay-help");
+        if (overlay) overlay.addEventListener("click", function (e) {
+            // клик по затемнению закрывает, клик по окну — нет
+            if (e.target === overlay) closeRelayHelp();
+        });
+
+        document.addEventListener("keydown", function (e) {
+            if (e.key === "Escape") closeRelayHelp();
+        });
+
+        var copy = document.getElementById("relay-help-copy");
+        if (copy) copy.addEventListener("click", function () {
+            if (!relayWorkerCode) return;
+
+            // Копирует хост: в WebView2 на data-URL navigator.clipboard
+            // может быть запрещён, а WinForms Clipboard работает всегда.
+            send("clipboard.set", { text: relayWorkerCode });
+
+            copy.textContent = "Скопировано";
+            window.setTimeout(function () { copy.textContent = t("Скопировать код"); }, 1500);
+        });
+
+        var openSite = document.getElementById("relay-help-open");
+        if (openSite) openSite.addEventListener("click", function () {
+            send("open.url", { url: "https://dash.cloudflare.com/?to=/:account/workers-and-pages" });
+        });
+    }
+
     function initUpdates() {
         bindAction("btn-upd-engine-check", "upd.engine.check", "Проверяю…");
         bindAction("btn-upd-app-check", "upd.app.check", "Проверяю…");
@@ -3339,6 +3461,18 @@
                 showDiagBusy(msg.message || "Уже идёт другая проверка");
                 break;
 
+            case "relay.test":
+                renderRelayTest(msg);
+                break;
+
+            case "relay.docs":
+                renderRelayDocs(msg);
+                break;
+
+            case "clipboard.set":
+                if (!msg.ok) console.warn("буфер обмена: " + (msg.detail || "ошибка"));
+                break;
+
             case "diag.test":
                 renderTestResult(msg);
                 break;
@@ -3517,6 +3651,7 @@
         initLists();
         initHosts();
         initProxy();
+        initRelayHelp();
         initUpdates();
         initButtons();
 
@@ -3569,6 +3704,9 @@
         renderHostsFixes: renderHostsFixes,
         // тема: проверяется «светлая и OLED включаются, тёмная снимает атрибут»
         applyTheme: applyTheme,
+        // справка по релею: открывается без моста, чтобы проверять вёрстку
+        openRelayHelp: openRelayHelp,
+        closeRelayHelp: closeRelayHelp,
         missingKeys: function () {
             // какие русские строки в разметке остались без перевода
             if (!i18nDict) return [];

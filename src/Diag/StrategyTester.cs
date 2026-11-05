@@ -970,6 +970,63 @@ namespace AutoZapret.Diag
         }
 
         /// <summary>
+        /// --relay-check [адрес] [--host kws2.web.telegram.org]: проверить внешний релей.
+        ///
+        /// Отвечает ровно на один вопрос: проходит ли цепочка
+        /// «релей → TCP → TLS к Telegram → /apiws». Нужно и человеку
+        /// (ввёл домен воркера — увидел причину), и для поддержки:
+        /// в логе прокси видно только «соединение закрыто», а здесь — почему.
+        /// </summary>
+        public static int RunRelayCheck(string[] args)
+        {
+            string relay = null;
+            string host = "kws2.web.telegram.org";
+
+            for (int i = 0; i < args.Length; i++)
+            {
+                string a = args[i];
+
+                if (string.Equals(a, "--host", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    host = args[i + 1];
+                    i++;
+                    continue;
+                }
+
+                if (string.Equals(a, "--relay-check", StringComparison.OrdinalIgnoreCase)) continue;
+                if (a.StartsWith("--", StringComparison.Ordinal)) continue;
+
+                relay = a;
+            }
+
+            if (string.IsNullOrEmpty(relay))
+            {
+                Console.WriteLine("использование: AutoZapret.exe --relay-check <wss://... | домен> [--host kws2.web.telegram.org]");
+                return 1;
+            }
+
+            Console.WriteLine("== проверка релея ==");
+            Console.WriteLine("релей: " + AutoZapret.Proxy.WsTunnel.Describe(relay));
+            Console.WriteLine("цель:  " + host + ":443");
+            Console.WriteLine();
+
+            System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+
+            string error = AutoZapret.Proxy.WsTunnel.Probe(relay, host, 15000);
+
+            watch.Stop();
+
+            if (error == null)
+            {
+                Console.WriteLine("ok: туннель есть, TLS и /apiws прошли (" + watch.ElapsedMilliseconds + " мс)");
+                return 0;
+            }
+
+            Console.WriteLine("FAIL: " + error + " (" + watch.ElapsedMilliseconds + " мс)");
+            return 2;
+        }
+
+        /// <summary>
         /// --flushdns: сбросить кэш DNS. Права не нужны.
         ///
         /// Отдельная команда, потому что это первое, что нужно после правки

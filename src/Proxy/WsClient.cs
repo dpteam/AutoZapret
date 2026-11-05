@@ -41,6 +41,16 @@ namespace AutoZapret.Proxy
         public bool IsClosed { get { return _closed; } }
 
         /// <summary>
+        /// Причина закрытия, если сервер прислал её в close-кадре.
+        ///
+        /// Зачем хранить: релей (Cloudflare Worker) закрывает соединение с
+        /// текстом ошибки — «connect ... -> cannot connect to the specified
+        /// address». Без этого человек видит только «сервер закрыл соединение»
+        /// и не понимает, что именно запретил релей.
+        /// </summary>
+        public string CloseReason { get; private set; }
+
+        /// <summary>
         /// Выполняет апгрейд. Возвращает клиент или null (с текстом ошибки).
         /// </summary>
         public static WsClient Connect(Stream stream, string host, string path, int timeoutMs, out string error)
@@ -139,6 +149,7 @@ namespace AutoZapret.Proxy
                 if (opcode == OpClose)
                 {
                     _closed = true;
+                    CloseReason = ParseCloseReason(frame);
                     try { SendFrame(OpClose, new byte[0], timeoutMs); } catch { }
                     return null;
                 }
@@ -335,6 +346,23 @@ namespace AutoZapret.Proxy
             catch
             {
                 return null;
+            }
+        }
+
+        private static string ParseCloseReason(byte[] payload)
+        {
+            if (payload == null || payload.Length < 2) return "";
+
+            try
+            {
+                int length = payload.Length - 2;
+                if (length > 512) length = 512;
+
+                return Encoding.UTF8.GetString(payload, 2, length).Trim();
+            }
+            catch
+            {
+                return "";
             }
         }
 

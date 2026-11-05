@@ -1022,6 +1022,19 @@
           </div>
           <button class="btn" id="btn-secret-regen">Новый</button>
         </div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Внешний релей</div>
+            <div class="row-hint">Cloudflare Worker вида cdn.имя.workers.dev. Пусто — подключаться к Telegram напрямую</div>
+            <div class="row-hint" id="relay-test-state"></div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="text" id="set-proxy-relay" placeholder="cdn.example.workers.dev" style="width:170px">
+            <button class="btn" id="btn-relay-test">Проверить</button>
+            <button class="btn" id="btn-relay-help" title="Пошаговая инструкция: свой Cloudflare Worker">Как сделать свой?</button>
+          </div>
+        </div>
       </div>
 
       <div class="card">
@@ -1206,6 +1219,53 @@
        * после согласия — ВТОРОЕ предупреждение, короткое и злое;
        * только потом действие.
      =================================================================== -->
+<!-- ===================================================================
+      Инструкция «как сделать свой воркер».
+      Не модальное окно опасного действия: это справка, её можно закрыть
+      в любой момент, без отсчёта и без второго предупреждения.
+      =================================================================== -->
+<div class="help-overlay" id="relay-help" style="display:none">
+  <div class="help-box" role="dialog" aria-modal="true" aria-labelledby="relay-help-title">
+
+    <div class="help-title" id="relay-help-title">Свой Cloudflare Worker за 5 минут</div>
+
+    <div class="help-body">
+      <div class="row-hint">
+        Бесплатного плана достаточно. Домен покупать не нужно — Cloudflare выдаёт адрес вида
+        cdn.имя.workers.dev бесплатно.
+      </div>
+
+      <ol class="help-steps">
+        <li>Откройте dash.cloudflare.com и зарегистрируйтесь (подтвердите почту).</li>
+        <li>Compute → Workers and Pages → Create → Start with Hello World → Deploy.</li>
+        <li>Нажмите Edit code и замените весь код на тот, что ниже (кнопка «Скопировать код»).</li>
+        <li>Нажмите Deploy и скопируйте адрес из поля справа — это и есть домен релея.</li>
+        <li>Вставьте его в поле «Внешний релей» и нажмите «Проверить»: должно появиться «Релей работает».</li>
+      </ol>
+
+      <div class="row-hint">
+        Проверить сам воркер можно в браузере: https://ваш-домен/?probe=kws2.web.telegram.org:443
+        — ответ OK значит, что Cloudflare пускает, FAIL покажет причину.
+      </div>
+
+      <div class="row-hint">
+        Необязательно, но полезно: Settings → Variables and Secrets → KEY со случайным значением.
+        Без него ваш воркер — открытый прокси для всего интернета.
+      </div>
+
+      <pre class="help-code" id="relay-help-code">Загружаю код…</pre>
+    </div>
+
+    <div class="help-buttons">
+      <button class="btn" id="relay-help-copy">Скопировать код</button>
+      <button class="btn" id="relay-help-open">Открыть Cloudflare</button>
+      <button class="btn primary" id="relay-help-close">Закрыть</button>
+    </div>
+
+    <div class="danger-hint" id="relay-help-state"></div>
+  </div>
+</div>
+
 <div class="danger-overlay" id="danger-overlay" style="display:none">
   <div class="danger-box" role="alertdialog" aria-modal="true" aria-labelledby="danger-title">
 

@@ -94,6 +94,7 @@ namespace AutoZapret.Proxy
         private byte[] _secret;
         private string _host;
         private int _port;
+        private volatile string _relay = "";
         private ProxyState _state = ProxyState.Stopped;
         private string _lastError;
 
@@ -109,7 +110,7 @@ namespace AutoZapret.Proxy
         // ------------------------------------------------------------------ start
 
         /// <summary>Запустить. Возвращает null при успехе, иначе текст ошибки.</summary>
-        public string Start(string host, int port, string secretHex)
+        public string Start(string host, int port, string secretHex, string relay = null)
         {
             lock (_gate)
             {
@@ -136,6 +137,7 @@ namespace AutoZapret.Proxy
                     _secret = secret;
                     _host = address.ToString();
                     _port = port;
+                    _relay = (relay ?? "").Trim();
                     _running = true;
                     Stats.StartedAt = DateTime.Now;
                     _listeners.Add(listener);
@@ -417,17 +419,79 @@ namespace AutoZapret.Proxy
             // с таймаутами: Telegram висит на «соединение…», а мы честно
             // тратим 25 секунд, зная заранее, что не выйдет. Пауза растёт
             // вдвое за каждую неудачу, но ручная проверка её сбрасывает.
+            //
+            // К релею пауза НЕ относится: это другой транспорт и другой адрес.
+            // Если релей настроен, сначала пробуем его, и только потом решаем,
+            // стоит ли вообще трогать прямой путь.
             string downReason;
             int downLeft;
 
+            List<string> domains = UpstreamRoutes.Order(dc, isMedia, DcTable.WsDomains(dc, isMedia));
+            string path = DcTable.PathFor(isTest);
+
+            // ---- сначала внешний релей, если он настроен
+            //
+            // В сетях, где `kws*.web.telegram.org` заблокирован по адресу,
+            // прямой путь не работает вообще: перебор доменов — это перебор
+            // имён, указывающих на тот же недоступный адрес. Релей меняет
+            // адрес назначения, поэтому он всегда первый, а прямой путь
+            // остаётся резервом (и работает там, где блокировки нет).
+            string relay = _relay;
+
+            if (!string.IsNullOrEmpty(relay) && domains.Count > 0)
+            {
+                string relayDomain = domains[0];
+                DateTime relayStarted = DateTime.UtcNow;
+
+                // Релеев может быть несколько (через запятую): один воркер
+                // удалили или заблокировали — идём к следующему. Порядок — как
+                // ввёл человек: он знает, какой у него основной.
+                foreach (string relayItem in WsTunnel.SplitRelays(relay))
+                {
+                    if ((DateTime.UtcNow - relayStarted).TotalSeconds > RoutesBudgetSec) break;
+
+                    TcpClient relayTcp = null;
+                    string relayError;
+
+                    SslStream telegram = WsTunnel.Connect(relayItem, relayDomain, 443,
+                        ConnectTimeoutMs * 2, out relayTcp, out relayError);
+
+                    if (telegram != null)
+                    {
+                        string wsError;
+                        WsClient relayWs = WsClient.Connect(telegram, relayDomain, path, ConnectTimeoutMs, out wsError);
+
+                        if (relayWs != null)
+                        {
+                            tcp = relayTcp;
+                            tls = null;      // закрывается вместе с туннелем
+
+                            UpstreamRoutes.Remember(dc, isMedia, relayDomain);
+
+                            Log.Debug("PROXY", "через релей " + WsTunnel.Describe(relayItem) +
+                                               " -> " + relayDomain + path);
+                            return relayWs;
+                        }
+
+                        try { telegram.Dispose(); } catch { }
+                        relayError = "апгрейд " + path + " не удался: " + wsError;
+                    }
+
+                    if (relayTcp != null) { try { relayTcp.Close(); } catch { } }
+
+                    // Не MarkDown: «релей не ответил» — это не «Telegram недоступен».
+                    // Прямой путь может работать, и запрещать его из-за релея нельзя.
+                    WarnThrottled("relay:" + WsTunnel.Describe(relayItem),
+                        "релей " + WsTunnel.Describe(relayItem) + " не сработал: " + relayError);
+                }
+            }
+
+            // ---- дальше обычный прямой путь (и его пауза)
             if (UpstreamRoutes.IsDown(out downReason, out downLeft))
             {
                 error = downReason + " — повтор через " + downLeft + " с";
                 return null;
             }
-
-            List<string> domains = UpstreamRoutes.Order(dc, isMedia, DcTable.WsDomains(dc, isMedia));
-            string path = DcTable.PathFor(isTest);
 
             DateTime started = DateTime.UtcNow;
 
@@ -697,6 +761,35 @@ namespace AutoZapret.Proxy
             Log.Info("PROXY", "секрет заменён на ходу: старые ссылки в Telegram больше не работают");
 
             return null;
+        }
+
+        /// <summary>
+        /// Сменить внешний релей на ходу.
+        ///
+        /// Читается на каждом новом соединении (как и секрет), поэтому уже
+        /// открытые сессии не рвутся — они работают через прежний транспорт.
+        /// </summary>
+        public void UpdateRelay(string relay)
+        {
+            string value = (relay ?? "").Trim();
+
+            lock (_gate)
+            {
+                if (_relay == value) return;
+
+                _relay = value;
+
+                if (_state != ProxyState.Running) return;
+            }
+
+            // Сменили транспорт — прежний «всё лежит» больше не актуален:
+            // следующее соединение обязано попробовать, а не ждать паузу,
+            // накопленную прямым путём.
+            UpstreamRoutes.Wake();
+
+            Log.Info("PROXY", value.Length == 0
+                ? "внешний релей отключён: подключаюсь к Telegram напрямую"
+                : "внешний релей: " + WsTunnel.Describe(value));
         }
 
         /// <summary>

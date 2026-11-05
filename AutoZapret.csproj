@@ -108,6 +108,13 @@
     <EmbeddedResource Include="web\i18n\en.json">
       <LogicalName>AutoZapret.Web.i18n.en.json</LogicalName>
     </EmbeddedResource>
+    <!--
+      Код внешнего релея. Лежит в exe, а не в папке: кнопка «Как сделать свой?»
+      должна работать без интернета и без распакованных файлов рядом.
+    -->
+    <EmbeddedResource Include="web\relay\worker.js">
+      <LogicalName>AutoZapret.Web.relay.worker.js</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
   <ItemGroup>

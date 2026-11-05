@@ -19,6 +19,12 @@ namespace AutoZapret.Core
         /// <summary>Словарь перевода. Русский не нужен: исходный текст и есть русский.</summary>
         public const string EnglishDict = "AutoZapret.Web.i18n.en.json";
 
+        /// <summary>
+        /// Код Cloudflare Worker для внешнего релея. Вшит, чтобы инструкция
+        /// «как сделать свой» работала без интернета и без файлов рядом.
+        /// </summary>
+        public const string RelayWorker = "AutoZapret.Web.relay.worker.js";
+
         /// <summary>Читает ресурс. При отсутствии возвращает пустую строку (не null).</summary>
         public static string Text(string logicalName)
         {

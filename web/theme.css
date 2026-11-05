@@ -906,6 +906,90 @@ textarea.list-input::placeholder { color: var(--text-dim); }
     animation: danger-fade .16s ease-out;
 }
 
+/* Справка: то же затемнение, но нейтральная рамка — это не «вы уверены»,
+   а «вот как это делается». Закрывается сразу и без отсчёта. */
+.help-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 8900;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(4, 6, 12, .78);
+    backdrop-filter: blur(3px);
+    animation: danger-fade .16s ease-out;
+}
+
+.help-box {
+    width: 100%;
+    max-width: 760px;
+    max-height: calc(100vh - 48px);
+    display: flex;
+    flex-direction: column;
+    padding: 22px 24px 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-light);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    animation: danger-pop .18s cubic-bezier(.2, .9, .3, 1.2);
+}
+
+.help-title {
+    font-size: 17px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--text-primary);
+}
+
+.help-body {
+    overflow-y: auto;
+    padding-right: 6px;
+}
+
+.help-steps {
+    margin: 12px 0;
+    padding-left: 20px;
+    font-size: 12.5px;
+    line-height: 1.7;
+    color: var(--text-primary);
+}
+
+.help-steps li { margin-bottom: 4px; }
+
+/* Подсказки в справке — не приглушённые до нечитаемости: их читают,
+   в отличие от мелких подписей под полями. */
+.help-body .row-hint {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin: 6px 0;
+}
+
+.help-code {
+    margin: 12px 0 4px;
+    padding: 12px 14px;
+    max-height: 300px;
+    overflow: auto;
+    background: var(--log-bg);
+    color: var(--log-text);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: pre;
+    user-select: text;
+    cursor: text;
+}
+
+.help-buttons {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 14px;
+    flex-wrap: wrap;
+}
+
 @keyframes danger-fade {
     from { opacity: 0; }
     to   { opacity: 1; }
