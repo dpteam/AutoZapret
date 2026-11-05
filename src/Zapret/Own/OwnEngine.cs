@@ -157,6 +157,25 @@ namespace AutoZapret.Zapret.Own
 
                 reader.Start();
 
+                // Пульс раз в 30 секунд.
+                //
+                // Без него «в логе тишина» неотличима от «движок перестал
+                // получать пакеты»: при нуле применений движок молчит по
+                // построению, и человек видит «не логируется» вместо ответа
+                // на вопрос «он вообще жив?». Теперь видно и число пакетов,
+                // и сколько из них применено.
+                Thread heartbeat = new Thread(delegate ()
+                {
+                    while (!stop.WaitOne(30000))
+                        Log.Info("OWN", "пульс: " + _stats.Summary());
+                })
+                {
+                    IsBackground = true,
+                    Name = "own-heartbeat"
+                };
+
+                heartbeat.Start();
+
                 if (_options.Seconds > 0)
                 {
                     WaitHandle.WaitAny(new[] { cancel.WaitHandle }, _options.Seconds * 1000);
@@ -198,7 +217,11 @@ namespace AutoZapret.Zapret.Own
                         int error = Marshal.GetLastWin32Error();
 
                         // 6 = хэндл закрыт нами по времени, 995 = прервано — штатно
-                        if (error == 6 || error == 995) break;
+                        if (error == 6 || error == 995)
+                        {
+                            Log.Info("OWN", "приём остановлен: хэндл закрыт (" + error + ")");
+                            break;
+                        }
                         if (error == WinDivertInterop.ErrorTimeout || error == WinDivertInterop.ErrorNoData)
                         {
                             Thread.Sleep(20);
@@ -441,6 +464,7 @@ namespace AutoZapret.Zapret.Own
         private sealed class UdpFlowState
         {
             public DateTime Last;
+            public DateTime WindowStart;
             public int Fakes;
         }
 
@@ -478,7 +502,7 @@ namespace AutoZapret.Zapret.Own
 
         private int _unrecognizedUdp;
 
-        /// <summary>Можно ли применять технику к этому TCP-пакету (не ретрансмиссия).</summary>
+        /// <summary>Можно ли применять технику к этому TCP-пакету.</summary>
         private bool AllowTcpDesync(TcpPacket tcp)
         {
             string key = tcp.SrcPort + ">" + tcp.DstPort + "@" + tcp.Seq;
@@ -487,33 +511,50 @@ namespace AutoZapret.Zapret.Own
 
             lock (_flowGate)
             {
-                DateTime seen;
+                TcpDesyncState state;
 
-                if (_tcpDesynced.TryGetValue(key, out seen) &&
-                    (now - seen).TotalSeconds < UdpFlowSeconds)
+                if (!_tcpDesynced.TryGetValue(key, out state) ||
+                    (now - state.Last).TotalSeconds >= UdpFlowSeconds)
                 {
-                    return false;
+                    state = new TcpDesyncState();
+                    _tcpDesynced[key] = state;
                 }
+
+                state.Last = now;
+
+                // Две попытки, а не «одна навсегда» и не «бесконечно».
+                //
+                // Одна попытка опасна: если разрезанные куски не дошли, любая
+                // ретрансмиссия уходила бы ЦЕЛЫМ ClientHello — ровно то, что
+                // DPI и ждёт. Бесконечно — тоже плохо: сервер получает всё
+                // новые копии с тем же seq. Две попытки закрывают оба случая.
+                if (state.Count >= 2) return false;
 
                 if (_tcpDesynced.Count > 4096)
                 {
                     List<string> dead = new List<string>();
 
-                    foreach (KeyValuePair<string, DateTime> pair in _tcpDesynced)
-                        if ((now - pair.Value).TotalSeconds >= UdpFlowSeconds) dead.Add(pair.Key);
+                    foreach (KeyValuePair<string, TcpDesyncState> pair in _tcpDesynced)
+                        if ((now - pair.Value.Last).TotalSeconds >= UdpFlowSeconds) dead.Add(pair.Key);
 
                     foreach (string old in dead) _tcpDesynced.Remove(old);
 
                     if (_tcpDesynced.Count > 8192) _tcpDesynced.Clear();
                 }
 
-                _tcpDesynced[key] = now;
+                state.Count++;
                 return true;
             }
         }
 
-        private readonly Dictionary<string, DateTime> _tcpDesynced =
-            new Dictionary<string, DateTime>();
+        private sealed class TcpDesyncState
+        {
+            public DateTime Last;
+            public int Count;
+        }
+
+        private readonly Dictionary<string, TcpDesyncState> _tcpDesynced =
+            new Dictionary<string, TcpDesyncState>();
 
         /// <summary>
         /// Сколько фейков максимум на один поток за окно.
@@ -559,19 +600,45 @@ namespace AutoZapret.Zapret.Own
                 if (!_udpFlows.TryGetValue(key, out state) ||
                     (now - state.Last).TotalSeconds >= UdpFlowSeconds)
                 {
-                    state = new UdpFlowState { Last = now, Fakes = 0 };
+                    state = new UdpFlowState { Last = now, WindowStart = now, Fakes = 0 };
                     _udpFlows[key] = state;
                 }
 
                 state.Last = now;
 
+                // Бюджет — скользящее окно от ПЕРВОГО фейка, а не от последнего
+                // пакета.
+                //
+                // Иначе при непрерывном медиапотоке (пакеты идут постоянно)
+                // счётчик не сбрасывался никогда: шесть фейков за звонок — и
+                // всё, дальнейшие DTLS ClientHello оставались без обхода,
+                // поэтому показ экрана отваливался через несколько минут.
+                if ((now - state.WindowStart).TotalSeconds >= UdpFlowSeconds)
+                {
+                    state.WindowStart = now;
+                    state.Fakes = 0;
+                }
+
                 if (!repeatable && state.Fakes > 0) return false;
-                if (state.Fakes >= MaxUdpFakesPerFlow) return false;
+
+                if (state.Fakes >= MaxUdpFakesPerFlow)
+                {
+                    int n = System.Threading.Interlocked.Increment(ref _budgetDenied);
+
+                    if (n <= 5)
+                        Log.Warn("OWN", "бюджет фейков исчерпан (" + kind + ", " +
+                                        state.Fakes + " за " + UdpFlowSeconds + " с) — " +
+                                        "пакет уходит без обхода" + (n == 5 ? " (дальше молчу)" : ""));
+
+                    return false;
+                }
 
                 state.Fakes++;
                 return true;
             }
         }
+
+        private int _budgetDenied;
 
         /// <summary>Подчистить старые потоки, чтобы словарь не рос без предела.</summary>
         private void PruneUdpFlows(DateTime now)
@@ -777,14 +844,17 @@ namespace AutoZapret.Zapret.Own
             //
             // У TCP рамки задаёт ClientHello: он один на соединение, и техника
             // применяется к нему. У UDP якоря нет, поэтому:
-            //   * DTLS ClientHello и STUN Binding Request — всегда (это начало
-            //     рукопожатия, их за звонок бывает несколько);
-            //   * всё остальное (QUIC, прочий STUN) — только первый пакет
-            //     потока, иначе фейк уходил бы между кадрами и ломал медиа.
             //
-            // zapret решает то же самое через учёт соединений и cutoff; у нас
-            // бюджет на поток, чтобы случайный мусор не превратился в поток
-            // фейков.
+            //   * DTLS ClientHello — можно повторять: Discord пересогласовывает
+            //     DTLS во время звонка, и каждый новый ClientHello DPI проверяет
+            //     заново;
+            //   * STUN Binding Request — ТОЛЬКО первый на поток. Это была
+            //     ошибка: тот же тип 0x0001 используется для consent freshness
+            //     каждые ~5 секунд, то есть в установленном медиапотоке. Фейк
+            //     перед каждым таким запросом — это мусор посреди звонка, он
+            //     ещё и съедал бюджет, из-за чего следующему DTLS ClientHello
+            //     фейка уже не доставалось (показ экрана не поднимался);
+            //   * всё остальное (QUIC, прочий STUN) — тоже только первый пакет.
             string kind = dtlsHello ? "dtls-hello"
                         : dtls ? "dtls"
                         : stunRequest ? "stun-req"
@@ -793,7 +863,7 @@ namespace AutoZapret.Zapret.Own
 
             PruneUdpFlows(DateTime.UtcNow);
 
-            if (!AllowUdpFake(udp, kind, dtlsHello || stunRequest)) return false;
+            if (!AllowUdpFake(udp, kind, dtlsHello)) return false;
 
             // `fake` для UDP — это поддельный payload, а не «сдвиг seq»:
             // в UDP его нет. `udplen` — игра с полем длины.
@@ -844,7 +914,19 @@ namespace AutoZapret.Zapret.Own
                                 udp.PayloadLength + " байт → " + sent + " пакет(ов)");
             }
 
-            return true;
+            // ВАЖНО: false, а не true.
+            //
+            // `true` означает «я обработал пакет, оригинал отправлять не надо» —
+            // это верно для TCP, где куски разрезанного ClientHello УЖЕ содержат
+            // его байты. Для UDP fake — это ДОПОЛНИТЕЛЬНЫЙ пакет перед настоящим:
+            // сервер должен получить и фейк, и оригинал.
+            //
+            // Здесь была ошибка, стоившая показа экрана: после отправки фейка
+            // оригинальный DTLS ClientHello выбрасывался. Рукопожатие не
+            // начиналось вообще, клиент повторял ClientHello — и мы выбрасывали
+            // каждую копию, пока не кончался бюджет. Со стороны: «показ экрана
+            // не подключается», «голос хандрит».
+            return false;
         }
 
         private bool Send(IntPtr handle, IntPtr addressPtr, byte[] data, int length)
