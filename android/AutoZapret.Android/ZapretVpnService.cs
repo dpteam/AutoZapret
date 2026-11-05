@@ -35,6 +35,14 @@ namespace AutoZapret.Android
         /// <summary>Адрес внутри туннеля: тот же, что ждёт hev в конфиге.</summary>
         private const string TunnelAddress = "10.10.10.10";
 
+        /// <summary>
+        /// IPv6-адрес туннеля. Нужен, только чтобы завернуть IPv6 внутрь: без
+        /// маршрута `::/0` весь IPv6 у приложений идёт мимо туннеля, а значит
+        /// и мимо обхода. На десктопе это вылечили так же (TcpPacket для обоих
+        /// семейств). Адрес локальный (fc00::/7), в интернет он не уходит.
+        /// </summary>
+        private const string TunnelAddress6 = "fc00::1";
+
         private ParcelFileDescriptor _tun;
         private Socks5Proxy _proxy;
         private Thread _thread;
@@ -128,6 +136,20 @@ namespace AutoZapret.Android
             builder.AddRoute("0.0.0.0", 0);
             builder.AddDnsServer("1.1.1.1");
 
+            // IPv6 — целиком в туннель, но только если он в этой сети есть.
+            // Без маршрута `::/0` весь IPv6-трафик приложений идёт мимо
+            // обхода (утечка). С маршрутом, но без живого IPv6 у оператора —
+            // hev сбрасывает такие соединения, и браузер на сброс не
+            // откатывается на IPv4. Проверено на телефоне: wikipedia.org
+            // перестал открываться. Поэтому решаем по факту, а не «на всякий».
+            string tunnel6 = HasUsableIPv6() ? TunnelAddress6 : null;
+
+            if (tunnel6 != null)
+            {
+                builder.AddAddress(TunnelAddress6, 128);
+                builder.AddRoute("::", 0);
+            }
+
             // ---- какие приложения пускать в туннель
             string mode = AppSelection.LoadMode(this);
             System.Collections.Generic.HashSet<string> selected = AppSelection.LoadApps(this);
@@ -174,7 +196,7 @@ namespace AutoZapret.Android
                 return;
             }
 
-            string config = HevTunnel.BuildConfig(TunnelAddress, port);
+            string config = HevTunnel.BuildConfig(TunnelAddress, tunnel6, port);
 
             _running = true;
             IsRunning = true;
@@ -188,7 +210,8 @@ namespace AutoZapret.Android
 
             _thread.Start();
 
-            LogLine("VPN включён: tun → SOCKS5 127.0.0.1:" + port + ", режим приложений: " + mode);
+            LogLine("VPN включён: tun → SOCKS5 127.0.0.1:" + port + ", режим приложений: " + mode +
+                    (tunnel6 != null ? ", IPv6 внутри туннеля" : ", IPv6 нет в сети — только IPv4"));
         }
 
         private void TunnelLoop(int fd, string config)
@@ -226,6 +249,60 @@ namespace AutoZapret.Android
 
             LogLine("VPN выключен");
             StopSelf();
+        }
+
+        /// <summary>
+        /// Есть ли в сети настоящий IPv6. Спрашиваем именно активную сеть
+        /// (ту, через которую телефон сейчас ходит в интернет), а не «любой
+        /// интерфейс с адресом»: на телефоне одновременно живут Wi-Fi без
+        /// IPv6 и мобильная сеть с ним, и по интерфейсам ответ был «да» —
+        /// после чего сайты переставали открываться.
+        ///
+        /// Локальный `fe80::` и ULA `fc00::/7` не в счёт: с ними в интернет
+        /// не выйти, а маршрут `::/0` в туннель уже навредит.
+        /// </summary>
+        private bool HasUsableIPv6()
+        {
+            try
+            {
+                global::Android.Net.ConnectivityManager manager =
+                    GetSystemService(ConnectivityService) as global::Android.Net.ConnectivityManager;
+
+                if (manager == null) return false;
+
+                global::Android.Net.Network network = manager.ActiveNetwork;
+
+                if (network == null) return false;
+
+                global::Android.Net.LinkProperties properties = manager.GetLinkProperties(network);
+
+                if (properties == null) return false;
+
+                foreach (global::Android.Net.LinkAddress link in properties.LinkAddresses)
+                {
+                    Java.Net.InetAddress address = link == null ? null : link.Address;
+
+                    if (address == null) continue;
+
+                    byte[] raw = address.GetAddress();
+
+                    if (raw == null || raw.Length != 16) continue;   // 16 байт = IPv6
+
+                    // fe80::/10 — только локальный сегмент
+                    if (raw[0] == 0xFE && (raw[1] & 0xC0) == 0x80) continue;
+
+                    // fc00::/7 — уникальные локальные адреса, тоже не выход
+                    if ((raw[0] & 0xFE) == 0xFC) continue;
+
+                    return true;
+                }
+            }
+            catch
+            {
+                // не смогли узнать — считаем, что IPv6 нет: молча не ломаем
+            }
+
+            return false;
         }
 
         // ------------------------------------------------------------ уведомление
