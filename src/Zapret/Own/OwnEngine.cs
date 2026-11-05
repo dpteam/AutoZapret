@@ -742,6 +742,29 @@ namespace AutoZapret.Zapret.Own
         }
 
         /// <summary>
+        /// Discord IP discovery в формате bencode: payload начинается с
+        /// `d<цифра>:` — например `d1:ad2:i…` или `d2:ip6:…`.
+        ///
+        /// Именно этот пакет Discord шлёт ПЕРВЫМ на порт медиасервера, и
+        /// именно его winws ловит своим классификатором `discord_ip_discovery`
+        /// (он так и назван в zapret2-стратегии). Мы его не узнавали, поэтому
+        /// обход для голоса и показа экрана не включался вовсе: в логе было
+        /// «udp не распознан: порт 50000, начало: 64 31 3a 61 64 32 3a 69»
+        /// (`d1:ad2:i`).
+        /// </summary>
+        internal static bool LooksLikeDiscordDiscovery(byte[] packet, int offset, int payloadLength)
+        {
+            if (payloadLength < 5) return false;
+            if (offset < 0 || offset + 5 > packet.Length) return false;
+
+            return packet[offset] == (byte)'d' &&
+                   packet[offset + 1] >= (byte)'0' && packet[offset + 1] <= (byte)'9' &&
+                   packet[offset + 2] == (byte)':' &&
+                   ((packet[offset + 3] >= (byte)'a' && packet[offset + 3] <= (byte)'z') ||
+                    (packet[offset + 3] >= (byte)'A' && packet[offset + 3] <= (byte)'Z'));
+        }
+
+        /// <summary>
         /// STUN Binding Request (тип 0x0001) — единственный запрос, на который
         /// имеет смысл подсовывать фейк. Ответы и прочие типы (allocate,
         /// refresh) идут после и к обходу отношения не имеют.
@@ -779,7 +802,9 @@ namespace AutoZapret.Zapret.Own
 
             bool dtls = IsDtls(packet, udp.PayloadOffset, udp.PayloadLength);
 
-            if (!quic && !stun && !dtls)
+            bool discord = LooksLikeDiscordDiscovery(packet, udp.PayloadOffset, udp.PayloadLength);
+
+            if (!quic && !stun && !dtls && !discord)
             {
                 // Диагностика: пакет пришёл на порт профиля, но протокол не
                 // узнан. Раньше такие уходили молча, и по логу нельзя было
@@ -848,6 +873,9 @@ namespace AutoZapret.Zapret.Own
             //   * DTLS ClientHello — можно повторять: Discord пересогласовывает
             //     DTLS во время звонка, и каждый новый ClientHello DPI проверяет
             //     заново;
+            //   * Discord IP discovery (`d1:ad2:i…`) — первый пакет потока,
+            //     один раз: именно его ждёт DPI и именно его ловит winws
+            //     классификатором `discord_ip_discovery`;
             //   * STUN Binding Request — ТОЛЬКО первый на поток. Это была
             //     ошибка: тот же тип 0x0001 используется для consent freshness
             //     каждые ~5 секунд, то есть в установленном медиапотоке. Фейк
@@ -857,6 +885,7 @@ namespace AutoZapret.Zapret.Own
             //   * всё остальное (QUIC, прочий STUN) — тоже только первый пакет.
             string kind = dtlsHello ? "dtls-hello"
                         : dtls ? "dtls"
+                        : discord ? "discord-discovery"
                         : stunRequest ? "stun-req"
                         : stun ? "stun"
                         : "quic";

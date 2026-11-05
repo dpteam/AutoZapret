@@ -4525,6 +4525,20 @@ namespace AutoZapret.App
             Check("UDP: STUN-ответ не считается запросом",
                 !AutoZapret.Zapret.Own.OwnEngine.IsStunRequest(stunResponse, 0, stunResponse.Length), "0x0101");
 
+            // Discord IP discovery — первый пакет голосового потока. В живом
+            // логе он выглядел как «порт 50000, начало: 64 31 3a 61 64 32 3a 69»
+            // (это "d1:ad2:i"), и мы его не узнавали: обхода голоса/экрана не
+            // было вовсе.
+            byte[] discovery = System.Text.Encoding.ASCII.GetBytes("d1:ad2:id20:0123456789abcdefghij");
+
+            Check("UDP: Discord IP discovery узнан",
+                AutoZapret.Zapret.Own.OwnEngine.LooksLikeDiscordDiscovery(discovery, 0, discovery.Length), "d1:ad2:id");
+
+            byte[] notDiscovery = System.Text.Encoding.ASCII.GetBytes("dx:hello");
+
+            Check("UDP: не bencode — не discovery",
+                !AutoZapret.Zapret.Own.OwnEngine.LooksLikeDiscordDiscovery(notDiscovery, 0, notDiscovery.Length), "dx:");
+
             // ---- не UDP пакет не считается нашим
             Check("UDP: TCP не считается UDP",
                 AutoZapret.Zapret.Own.UdpPacket.Parse(SynthTlsPacket(100, 1), 140) == null, "ok");
