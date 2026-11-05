@@ -342,7 +342,28 @@ namespace AutoZapret.App
             {
                 _settings.ProxySecret = Settings.NewSecret();
                 _settings.Save();
+
+                // Работающий прокси обязан перейти на новый секрет СРАЗУ.
+                //
+                // Иначе получается худший вариант: в интерфейсе новая ссылка,
+                // а слушает прокси старый секрет. Человек копирует ссылку
+                // в Telegram, клиент приходит с новым секретом — и получает
+                // отказ «неизвестный proto tag», то есть «прокси сломался».
+                string error = _proxy.UpdateSecret(_settings.ProxySecret);
+
+                if (error != null)
+                {
+                    Log.Warn("PROXY", "секрет не сменился на ходу: " + error);
+                }
+                else if (_proxy.IsRunning)
+                {
+                    _tray.Notify(AppInfo.Name,
+                        "Секрет изменён. Старая ссылка в Telegram больше не работает — добавьте прокси заново",
+                        ToolTipIcon.Info);
+                }
+
                 PushState();
+                SendProxyState();
             });
 
             // ---- диагностика
@@ -1598,6 +1619,11 @@ namespace AutoZapret.App
                 "active", (long)_proxy.Stats.Active,
                 "total", _proxy.Stats.TotalConnections,
                 "failed", _proxy.Stats.Failed,
+                // Почему отклоняли: «не тот секрет» и «клиент на ee» лечатся
+                // по-разному, а в счётчике «отказов N» выглядят одинаково.
+                "rejected", (long)_proxy.Stats.Rejected,
+                "rejectHint", _proxy.Stats.RejectHint() ?? "",
+                "rejectLast", _proxy.Stats.LastReject ?? "",
                 "error", _proxy.LastError ?? ""));
         }
 

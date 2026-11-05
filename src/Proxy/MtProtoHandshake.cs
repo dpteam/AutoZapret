@@ -17,6 +17,11 @@ namespace AutoZapret.Proxy
         public bool Ok;
         public string Error = "";
 
+        /// <summary>
+        /// Почему отказали — машинный признак, чтобы интерфейс не разбирал текст.
+        /// </summary>
+        public HandshakeReject Reject = HandshakeReject.None;
+
         public int Dc;
         public bool IsMedia;
         public bool IsTestDc;
@@ -28,6 +33,25 @@ namespace AutoZapret.Proxy
 
         /// <summary>Исходные 64 байта от клиента — нужны для вычисления обратного направления.</summary>
         public byte[] ClientInit;
+    }
+
+    /// <summary>
+    /// Почему handshake не принят.
+    ///
+    /// Различать это обязательно: все четыре случая выглядят одинаково —
+    /// соединение есть, дальше тишина, — а делать надо совершенно разное.
+    /// </summary>
+    public enum HandshakeReject
+    {
+        None,
+        /// <summary>Секрет не совпал: ссылка в клиенте устарела.</summary>
+        Secret,
+        /// <summary>Пришёл TLS ClientHello: клиент использует Fake-TLS секрет (ee).</summary>
+        Tls,
+        /// <summary>Пришёл HTTP-запрос: порт прокси указан как HTTP-прокси.</summary>
+        Http,
+        /// <summary>Ни то, ни другое: посторонний трафик.</summary>
+        Garbage
     }
 
     /// <summary>
@@ -100,8 +124,8 @@ namespace AutoZapret.Proxy
             else if (Match(plain, TagPos, TagPadded)) result.Tag = MtProtoTag.Padded;
             else
             {
-                result.Error = "неизвестный proto tag " + Hex(plain, TagPos, 4) +
-                               " (неверный секрет или не MTProto-клиент)";
+                result.Reject = Classify(init);
+                result.Error = Explain(result.Reject) + " (proto tag " + Hex(plain, TagPos, 4) + ")";
                 return result;
             }
 
@@ -130,6 +154,69 @@ namespace AutoZapret.Proxy
             result.ClientInit = init;
             result.Ok = true;
             return result;
+        }
+
+        /// <summary>
+        /// Понять, ЧТО именно пришло на порт, если это не наш handshake.
+        ///
+        /// Все отказы выглядят одинаково («неизвестный proto tag»), а делать
+        /// надо совершенно разное:
+        ///   * секрет не тот — ссылка в Telegram устарела, нужна новая;
+        ///   * TLS ClientHello — клиент использует Fake-TLS секрет (ee),
+        ///     наш прокси его не поддерживает, нужна dd-ссылка;
+        ///   * HTTP — порт прокси прописан как HTTP-прокси в браузере или системе;
+        ///   * мусор — на порт ломится что-то постороннее.
+        ///
+        /// Смотрим на СЫРЫЕ байты: они не расшифровываются нашим ключом,
+        /// но их сигнатуры видны как есть.
+        /// </summary>
+        private static HandshakeReject Classify(byte[] init)
+        {
+            if (init == null || init.Length < 4) return HandshakeReject.Garbage;
+
+            // TLS record: 0x16 (handshake) + версия 0x03 0x01..0x04
+            if (init[0] == 0x16 && init[1] == 0x03 &&
+                init[2] >= 0x01 && init[2] <= 0x04)
+                return HandshakeReject.Tls;
+
+            // HTTP: методы, которые прилетают на порт прокси
+            if (StartsWith(init, "GET ") || StartsWith(init, "POST") ||
+                StartsWith(init, "HEAD") || StartsWith(init, "CONNECT") ||
+                StartsWith(init, "PUT ") || StartsWith(init, "OPTIONS"))
+                return HandshakeReject.Http;
+
+            // Всё остальное — секрет не совпал либо посторонний клиент.
+            // Отличить одно от другого без второго секрета нельзя, поэтому
+            // это и есть самый частый и самый вероятный случай.
+            return HandshakeReject.Secret;
+        }
+
+        private static bool StartsWith(byte[] data, string ascii)
+        {
+            if (data.Length < ascii.Length) return false;
+
+            for (int i = 0; i < ascii.Length; i++)
+                if (data[i] != (byte)ascii[i]) return false;
+
+            return true;
+        }
+
+        private static string Explain(HandshakeReject reject)
+        {
+            switch (reject)
+            {
+                case HandshakeReject.Tls:
+                    return "клиент пришёл с Fake-TLS секретом (ee), а прокси работает с dd";
+
+                case HandshakeReject.Http:
+                    return "на порт прокси пришёл HTTP-запрос, а не Telegram";
+
+                case HandshakeReject.Secret:
+                    return "секрет не совпал: ссылка в Telegram устарела";
+
+                default:
+                    return "посторонний трафик на порту прокси";
+            }
         }
 
         /// <summary>Ключ направления «прокси -> клиент»: из перевёрнутого prekey||iv.</summary>

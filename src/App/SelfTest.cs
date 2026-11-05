@@ -1095,6 +1095,47 @@ namespace AutoZapret.App
             AutoZapret.Proxy.HandshakeResult hsBad = AutoZapret.Proxy.MtProtoHandshake.Decode(init, wrongSecret);
             Check("неверный секрет отклонён", !hsBad.Ok, hsBad.Error);
 
+            Check("неверный секрет: причина названа",
+                hsBad.Reject == AutoZapret.Proxy.HandshakeReject.Secret,
+                hsBad.Reject.ToString());
+
+            // ---- классификация чужого входа: от неё зависит, ЧТО советовать
+            //
+            // Все четыре случая выглядят одинаково («соединение есть, дальше
+            // тишина»), а делать надо разное. Проверяем именно распознавание.
+            byte[] tlsHello = new byte[64];
+            tlsHello[0] = 0x16;
+            tlsHello[1] = 0x03;
+            tlsHello[2] = 0x01;
+
+            AutoZapret.Proxy.HandshakeResult hsTls =
+                AutoZapret.Proxy.MtProtoHandshake.Decode(tlsHello, secret);
+
+            Check("чужой вход: TLS ClientHello распознан",
+                !hsTls.Ok && hsTls.Reject == AutoZapret.Proxy.HandshakeReject.Tls,
+                hsTls.Error);
+
+            byte[] http = new byte[64];
+            byte[] get = System.Text.Encoding.ASCII.GetBytes("GET / HTTP/1.1\r\n");
+            Buffer.BlockCopy(get, 0, http, 0, get.Length);
+
+            AutoZapret.Proxy.HandshakeResult hsHttp =
+                AutoZapret.Proxy.MtProtoHandshake.Decode(http, secret);
+
+            Check("чужой вход: HTTP распознан",
+                !hsHttp.Ok && hsHttp.Reject == AutoZapret.Proxy.HandshakeReject.Http,
+                hsHttp.Error);
+
+            byte[] noise = new byte[64];
+            new Random(9).NextBytes(noise);
+
+            AutoZapret.Proxy.HandshakeResult hsNoise =
+                AutoZapret.Proxy.MtProtoHandshake.Decode(noise, secret);
+
+            Check("чужой вход: мусор распознан",
+                !hsNoise.Ok && hsNoise.Reject != AutoZapret.Proxy.HandshakeReject.None,
+                hsNoise.Error);
+
             // ---- обратный ключ: расшифровка того, что мы зашифровали
             byte[] fwdKey, fwdIv;
             AutoZapret.Proxy.MtProtoHandshake.DeriveReverse(init, secret, out fwdKey, out fwdIv);

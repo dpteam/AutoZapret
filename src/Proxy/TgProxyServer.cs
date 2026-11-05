@@ -27,6 +27,42 @@ namespace AutoZapret.Proxy
         public long BytesDown;
         public long Failed;
         public DateTime StartedAt;
+
+        /// <summary>
+        /// Почему отклоняли handshake, по причинам.
+        ///
+        /// Считать причины, а не только «отказов N», — единственный способ
+        /// отличить «клиент пришёл со старым секретом» от «на порт ломится
+        /// что-то постороннее». Обе ситуации выглядят одинаково: соединение
+        /// есть, дальше тишина.
+        /// </summary>
+        public int RejectSecret;
+        public int RejectTls;
+        public int RejectHttp;
+        public int RejectGarbage;
+
+        /// <summary>Последняя причина отказа — для подсказки в интерфейсе.</summary>
+        public string LastReject = "";
+
+        public int Rejected { get { return RejectSecret + RejectTls + RejectHttp + RejectGarbage; } }
+
+        /// <summary>Короткая подсказка человеку: что именно не так с клиентом.</summary>
+        public string RejectHint()
+        {
+            if (RejectTls > 0 && RejectTls >= RejectSecret)
+                return "Telegram стучится с Fake-TLS секретом (ee). Наш прокси работает с dd — " +
+                       "скопируйте ссылку из этой карточки и добавьте прокси заново";
+
+            if (RejectHttp > 0 && RejectHttp >= RejectSecret)
+                return "на порт прокси пришёл HTTP-запрос, а не Telegram. Проверьте, " +
+                       "не указан ли этот порт как HTTP-прокси в браузере или системе";
+
+            if (RejectSecret > 0)
+                return "Telegram стучится, но секрет не совпадает — ссылка в Telegram устарела. " +
+                       "Скопируйте её из этой карточки и добавьте прокси заново";
+
+            return "";
+        }
     }
 
     /// <summary>
@@ -283,8 +319,24 @@ namespace AutoZapret.Proxy
                 HandshakeResult hs = MtProtoHandshake.Decode(init, secret);
                 if (!hs.Ok)
                 {
+                    // Считаем ПРИЧИНУ, а не только «отказ»: «не тот секрет»
+                    // и «клиент на ee-секрете» лечатся совершенно по-разному,
+                    // а в логе выглядят одинаково.
+                    lock (_gate)
+                    {
+                        Stats.Failed++;
+                        Stats.LastReject = hs.Error;
+
+                        switch (hs.Reject)
+                        {
+                            case HandshakeReject.Tls: Stats.RejectTls++; break;
+                            case HandshakeReject.Http: Stats.RejectHttp++; break;
+                            case HandshakeReject.Secret: Stats.RejectSecret++; break;
+                            default: Stats.RejectGarbage++; break;
+                        }
+                    }
+
                     Log.Warn("PROXY", "handshake отклонён: " + hs.Error);
-                    lock (_gate) Stats.Failed++;
 
                     // Дренаж: не рвать сразу, иначе клиент получит RST и не покажет ошибку.
                     Drain(stream);
@@ -567,6 +619,38 @@ namespace AutoZapret.Proxy
                 }
             }
             catch { }
+        }
+
+        /// <summary>
+        /// Сменить секрет НА ХОДУ, не перезапуская прокси.
+        ///
+        /// Зачем: раньше кнопка «Новый» меняла только настройки, а работающий
+        /// прокси продолжал слушать со СТАРЫМ секретом. Дальше человек копировал
+        /// новую ссылку в Telegram, клиент подключался с новым секретом, прокси
+        /// расшифровывал старым — и получал «неизвестный proto tag». Выглядит
+        /// как «прокси сломался», хотя он честно не понимает клиента.
+        ///
+        /// Секрет читается под замком на каждом соединении, поэтому подмена
+        /// безопасна: новое соединение либо целиком со старым секретом, либо
+        /// целиком с новым, промежуточного состояния нет.
+        /// </summary>
+        public string UpdateSecret(string secretHex)
+        {
+            byte[] secret = ParseSecret(secretHex);
+            if (secret == null) return "Секрет должен быть 32 hex-символа (16 байт)";
+
+            lock (_gate)
+            {
+                if (_state != ProxyState.Running) return null;   // не запущен — менять нечего
+
+                _secret = secret;
+            }
+
+            // Старые соединения уже используют свои ключи и не ломаются:
+            // ключ выведен при handshake и живёт в потоке.
+            Log.Info("PROXY", "секрет заменён на ходу: старые ссылки в Telegram больше не работают");
+
+            return null;
         }
 
         public static byte[] ParseSecret(string hex)

@@ -3022,6 +3022,21 @@
         text("proxy-active", msg.active || 0);
         text("proxy-total", msg.total || 0);
         text("proxy-failed", msg.failed || 0);
+        text("proxy-rejected", msg.rejected || 0);
+
+        // Подсказка важнее счётчика: «отказов 2» ничего не говорит,
+        // а «ссылка устарела» — говорит всё.
+        var hint = document.getElementById("proxy-reject-hint");
+        if (hint) {
+            if (msg.rejectHint) {
+                hint.textContent = msg.rejectHint;
+                hint.className = "row-hint diag-warn";
+                hint.style.display = "";
+            } else {
+                hint.textContent = "";
+                hint.style.display = "none";
+            }
+        }
 
         if (msg.error) {
             var line = document.getElementById("proxy-status-line");
