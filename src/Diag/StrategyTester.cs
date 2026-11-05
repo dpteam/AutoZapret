@@ -1736,43 +1736,79 @@ namespace AutoZapret.Diag
         public static int RunTestProxy(string[] args)
         {
             int dc = 2;
+            string relay = null;
+
             for (int i = 0; i < args.Length; i++)
+            {
                 if (string.Equals(args[i], "--test-proxy", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
                     int.TryParse(args[i + 1], out dc);
 
+                if (string.Equals(args[i], "--relay", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                    relay = args[i + 1];
+            }
+
+            if (string.IsNullOrEmpty(relay))
+            {
+                // без --relay берём из настроек: человек уже мог вписать релей в
+                // программе, и проверка должна проверять именно то, что включено
+                AutoZapret.Core.Settings current = AutoZapret.Core.Settings.Current;
+                if (current != null) relay = current.ProxyRelay;
+            }
+
             Console.WriteLine("== проверка Telegram-прокси (DC " + dc + ") ==");
+            if (!string.IsNullOrEmpty(relay))
+                Console.WriteLine("   транспорт: через релей " + Proxy.WsTunnel.Describe(relay));
             Console.WriteLine();
 
             System.Collections.Generic.List<Proxy.ProxySelfTest.Step> steps =
-                Proxy.ProxySelfTest.Run(dc, true);
+                Proxy.ProxySelfTest.Run(dc, true, relay);
 
             Console.WriteLine();
-            bool allOk = true;
+            Proxy.ProxySelfTest.Step handshake = null;
+
             foreach (Proxy.ProxySelfTest.Step step in steps)
             {
                 Console.WriteLine("  " + (step.Ok ? "[ok]  " : "[FAIL]") + " " +
                                   step.Name.PadRight(24) + step.Detail);
-                if (!step.Ok) allOk = false;
+                if (step.Name.IndexOf("handshake", StringComparison.Ordinal) >= 0) handshake = step;
             }
 
             Console.WriteLine();
-            if (allOk)
-            {
-                Console.WriteLine("всё работает: включите прокси в интерфейсе и откройте ссылку в Telegram");
-            }
-            else
-            {
-                Proxy.ProxySelfTest.Step first = null;
-                foreach (Proxy.ProxySelfTest.Step s in steps) { if (!s.Ok) { first = s; break; } }
 
+            // Итог оцениваем по ГЛАВНОМУ шагу — нашему handshake. Он проходит
+            // только если весь путь до Telegram жив: прокси принял клиента,
+            // подключился к апстриму и получил от него ответ. Остальные шаги
+            // объясняют, ГДЕ порвалось, а не «работает ли прокси».
+            if (handshake != null && handshake.Ok)
+            {
+                if (!string.IsNullOrEmpty(relay))
+                    Console.WriteLine("прокси работает через релей " + Proxy.WsTunnel.Describe(relay) +
+                                      ": включите его и откройте ссылку в Telegram");
+                else
+                    Console.WriteLine("прокси работает: включите его и откройте ссылку в Telegram");
+
+                return 0;
+            }
+
+            Proxy.ProxySelfTest.Step first = null;
+            foreach (Proxy.ProxySelfTest.Step s in steps) { if (!s.Ok) { first = s; break; } }
+
+            if (first != null)
+            {
                 Console.WriteLine("первая проблема: " + first.Name);
-                if (first.Name.IndexOf("Telegram", StringComparison.Ordinal) >= 0)
-                    Console.WriteLine("  сеть не пускает до kws*.web.telegram.org — нужен обход DPI (zapret)");
+
+                if (first.Name.IndexOf("релей", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    first.Name.IndexOf("relay", StringComparison.OrdinalIgnoreCase) >= 0)
+                    Console.WriteLine("  релей не отдаёт туннель: проверьте «Как сделать свой?» и ?probe= в браузере");
+                else if (first.Name.IndexOf("Telegram", StringComparison.Ordinal) >= 0)
+                    Console.WriteLine("  сеть не пускает до kws*.web.telegram.org — нужен внешний релей или обход DPI");
                 else if (first.Name.IndexOf("WebSocket", StringComparison.Ordinal) >= 0)
                     Console.WriteLine("  эндпоинт /apiws не отвечает — возможно, изменился у Telegram");
+                else
+                    Console.WriteLine("  прокси не смог ответить клиенту: смотрите лог (категория PROXY)");
             }
 
-            return allOk ? 0 : 1;
+            return 1;
         }
 
         /// <summary>--fakes: список .bin-фейков с проверкой формата.</summary>

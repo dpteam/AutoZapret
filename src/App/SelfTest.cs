@@ -5938,6 +5938,34 @@ namespace AutoZapret.App
             Check("пауза: Reset снимает",
                 !AutoZapret.Proxy.UpstreamRoutes.IsDown(out downReason, out downLeft), "снята");
 
+            // ---- удары не должны запирать перебор навсегда
+            //
+            // Живой регресс: два отказа TCP подряд (connectStage = 2 удара)
+            // по каждому домену, и `Order` возвращал ПУСТОЙ список. Прокси
+            // отвечал «нет доступных маршрутов» на каждое соединение и не
+            // восстанавливался до перезапуска — при том что сеть уже могла
+            // вернуться.
+            AutoZapret.Proxy.UpstreamRoutes.Reset();
+
+            List<string> both = new List<string>
+            {
+                "kws2.web.telegram.org",
+                "kws2-1.web.telegram.org"
+            };
+
+            AutoZapret.Proxy.UpstreamRoutes.Fail(both[0], true);
+            AutoZapret.Proxy.UpstreamRoutes.Fail(both[1], true);
+
+            List<string> afterStrikes = AutoZapret.Proxy.UpstreamRoutes.Order(2, false, both);
+
+            Check("маршруты: удары не запирают навсегда",
+                afterStrikes.Count > 0, afterStrikes.Count + " шт.");
+
+            Check("маршруты: после ударов всё ещё оба",
+                afterStrikes.Count == 2, string.Join(", ", afterStrikes.ToArray()));
+
+            AutoZapret.Proxy.UpstreamRoutes.Reset();
+
             // ---- домены WS: у обычного подключения ОБЯЗАН быть резерв
             //
             // Регресс с живой машины: для не-медиа отдавался только один

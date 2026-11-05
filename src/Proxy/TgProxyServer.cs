@@ -438,9 +438,14 @@ namespace AutoZapret.Proxy
             // остаётся резервом (и работает там, где блокировки нет).
             string relay = _relay;
 
-            if (!string.IsNullOrEmpty(relay) && domains.Count > 0)
+            // Для релея берём имена напрямую, без памяти о маршрутах: карантин
+            // и удары относятся к ПРЯМОМУ пути. Релей — другой адрес, и чужие
+            // отказы к нему отношения не имеют.
+            List<string> relayDomains = DcTable.WsDomains(dc, isMedia);
+
+            if (!string.IsNullOrEmpty(relay) && relayDomains.Count > 0)
             {
-                string relayDomain = domains[0];
+                string relayDomain = relayDomains[0];
                 DateTime relayStarted = DateTime.UtcNow;
 
                 // Релеев может быть несколько (через запятую): один воркер

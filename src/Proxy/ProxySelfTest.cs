@@ -27,7 +27,7 @@ namespace AutoZapret.Proxy
             public string Detail = "";
         }
 
-        public static List<Step> Run(int dc, bool verbose)
+        public static List<Step> Run(int dc, bool verbose, string relay = null)
         {
             // Ручная проверка сбрасывает паузу: человек нажал кнопку — он не
             // должен ждать из-за нашего же backoff. Иначе «проверить» врёт:
@@ -36,15 +36,63 @@ namespace AutoZapret.Proxy
 
             List<Step> steps = new List<Step>();
 
-            steps.Add(StepDirectTls(dc, verbose));
-            steps.Add(StepWsUpgrade(dc, verbose));
-            steps.Add(StepLocalHandshake(dc, verbose));
+            if (!string.IsNullOrEmpty(relay))
+            {
+                // С настроенным релеем прямой путь не показываем вовсе.
+                //
+                // Он всё равно не используется (релей идёт первым), а два
+                // красных креста на заблокированном адресе выглядят как
+                // «прокси сломан» — хотя прокси как раз работает. Проверяем
+                // ровно тот транспорт, которым будем ходить.
+                steps.Add(StepRelay(relay, dc, verbose));
+                steps.Add(StepLocalHandshake(dc, verbose, relay));
+            }
+            else
+            {
+                steps.Add(StepDirectTls(dc, verbose));
+                steps.Add(StepWsUpgrade(dc, verbose));
+                steps.Add(StepLocalHandshake(dc, verbose, null));
+            }
 
             // И на выходе тоже: проверка не должна оставлять прокси в паузе.
             // Иначе «проверил» превращается в «и теперь 30 секунд не работает».
             UpstreamRoutes.Wake();
 
             return steps;
+        }
+
+        /// <summary>
+        /// Шаг «внешний релей»: туннель + TLS к Telegram + /apiws.
+        ///
+        /// Отдельный шаг, а не часть второго: когда он падает, человек должен
+        /// видеть, что дело в релее, а не в прокси — чинятся они в разных местах.
+        /// </summary>
+        private static Step StepRelay(string relay, int dc, bool verbose)
+        {
+            Step step = new Step { Name = "внешний релей" };
+
+            List<string> domains = DcTable.WsDomains(dc, false);
+            string domain = domains.Count > 0 ? domains[0] : "kws2.web.telegram.org";
+
+            DateTime started = DateTime.UtcNow;
+
+            string error = WsTunnel.Probe(relay, domain, 12000);
+
+            long ms = (long)(DateTime.UtcNow - started).TotalMilliseconds;
+
+            if (error == null)
+            {
+                step.Ok = true;
+                step.Detail = WsTunnel.Describe(relay) + " -> " + domain + " за " + ms + " мс";
+            }
+            else
+            {
+                step.Detail = error;
+            }
+
+            if (verbose) Log.Info("PROXY", "шаг 0: " + (step.Ok ? "ok" : "FAIL") + " " + step.Detail);
+
+            return step;
         }
 
         // ------------------------------------------------------------ 1: TLS
@@ -172,7 +220,7 @@ namespace AutoZapret.Proxy
         /// Поднимает прокси на свободном порту, подключается к нему как клиент
         /// и проверяет, что handshake разобран и в ответ пришли 64 байта.
         /// </summary>
-        private static Step StepLocalHandshake(int dc, bool verbose)
+        private static Step StepLocalHandshake(int dc, bool verbose, string relay = null)
         {
             Step step = new Step { Name = "наш прокси: handshake" };
 
@@ -183,7 +231,7 @@ namespace AutoZapret.Proxy
             TgProxyServer server = new TgProxyServer();
             try
             {
-                string error = server.Start("127.0.0.1", port, secretHex);
+                string error = server.Start("127.0.0.1", port, secretHex, relay);
                 if (error != null)
                 {
                     step.Detail = "не запустился: " + error;

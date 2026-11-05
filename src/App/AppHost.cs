@@ -1705,10 +1705,10 @@ namespace AutoZapret.App
 
         private void RunProxyTestUi()
         {
-            List<ProxySelfTest.Step> steps = ProxySelfTest.Run(2, false);
+            List<ProxySelfTest.Step> steps = ProxySelfTest.Run(2, false, _settings.ProxyRelay);
 
             List<object> items = new List<object>();
-            bool allOk = true;
+            bool handshakeOk = false;
             string firstFail = null;
 
             foreach (ProxySelfTest.Step step in steps)
@@ -1720,26 +1720,32 @@ namespace AutoZapret.App
                     { "detail", step.Detail ?? "" }
                 });
 
-                if (!step.Ok)
-                {
-                    allOk = false;
-                    if (firstFail == null) firstFail = step.Name;
-                }
+                if (step.Name.IndexOf("handshake", StringComparison.Ordinal) >= 0 && step.Ok)
+                    handshakeOk = true;
+
+                if (!step.Ok && firstFail == null) firstFail = step.Name;
             }
 
+            // Итог — по нашему handshake: он проходит только если жив ВЕСЬ путь
+            // до Telegram. Остальные шаги показывают, где именно порвалось.
             string advice = "";
-            if (!allOk)
+
+            if (!handshakeOk)
             {
-                if (firstFail != null && firstFail.IndexOf("Telegram", StringComparison.Ordinal) >= 0)
-                    advice = "Сеть не пускает до kws*.web.telegram.org. Это блокировка на уровне TCP — " +
-                             "desync-стратегии её обычно не пробивают. Нужен VPN/прокси (см. план P11).";
+                if (firstFail != null && firstFail.IndexOf("релей", StringComparison.OrdinalIgnoreCase) >= 0)
+                    advice = "Релей не отдаёт туннель. Проверьте адрес и ?probe= в браузере; " +
+                             "код воркера — кнопка «Как сделать свой?».";
+                else if (firstFail != null && firstFail.IndexOf("Telegram", StringComparison.Ordinal) >= 0)
+                    advice = "Сеть не пускает до kws*.web.telegram.org: это блокировка по адресу, " +
+                             "desync её не пробивает. Впишите внешний релей (Настройки → Telegram-прокси).";
                 else if (firstFail != null && firstFail.IndexOf("WebSocket", StringComparison.Ordinal) >= 0)
                     advice = "Эндпоинт /apiws не отвечает. Telegram мог его изменить — попробуйте позже.";
                 else
-                    advice = "Прокси не смог ответить: проверьте порт и что он не занят другим приложением.";
+                    advice = "Прокси не смог ответить клиенту: смотрите лог (категория PROXY).";
             }
 
-            _form.Bridge.Send(WebBridge.Msg("proxy.test", "steps", items, "advice", advice));
+            _form.Bridge.Send(WebBridge.Msg("proxy.test", "steps", items, "advice", advice,
+                "relay", _settings.ProxyRelay ?? ""));
         }
 
         /// <summary>
