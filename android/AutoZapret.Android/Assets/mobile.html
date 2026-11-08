@@ -231,12 +231,22 @@
       <input type="number" id="port" min="1024" max="65535" value="1080">
     </div>
 
+    <div class="row">
+      <div>
+        <div class="label">Техника обхода</div>
+        <div class="hint" id="tech-hint">загружаю…</div>
+      </div>
+    </div>
+
+    <select id="technique" style="width:100%;padding:11px;background:var(--input);color:var(--text);border:1px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;margin-bottom:4px">
+    </select>
+
     <div class="row" style="display:block">
       <div style="margin-bottom:8px">
-        <div class="label">Техника обхода</div>
-        <div class="hint" id="tech-hint">ClientHello уходит двумя сегментами</div>
+        <div class="label">Или профиль из zapret</div>
+        <div class="hint" id="zapret-hint">переведённые стратегии winws — что выражается через сокеты</div>
       </div>
-      <select id="technique" style="width:100%;padding:11px;background:var(--input);color:var(--text);border:1px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit">
+      <select id="zapret" style="width:100%;padding:11px;background:var(--input);color:var(--text);border:1px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit">
       </select>
     </div>
 
@@ -271,6 +281,28 @@
     </div>
 
     <div class="hint">Список применяется при следующем включении VPN.</div>
+  </div>
+
+  <div class="card">
+    <div class="label" style="margin-bottom:8px">Автоподбор под сеть</div>
+    <div class="hint" style="margin-bottom:10px">
+      TTL фейка зависит от числа хопов до DPI: на Wi-Fi он один, в мобильной
+      сети другой. Кнопка перебирает техники настоящими соединениями и
+      запоминает победителя отдельно для каждой сети.
+    </div>
+
+    <button class="vpn" id="tune-run" style="width:100%">Подобрать для этой сети</button>
+
+    <div class="check" id="tune-list"></div>
+    <div class="verdict" id="tune-detail"></div>
+
+    <label class="app" style="border:none;padding:10px 0 0">
+      <input type="checkbox" id="tune-auto">
+      <div>
+        <div>Применять автоматически</div>
+        <div class="pkg">подобранный профиль подменяет ручную технику при запуске</div>
+      </div>
+    </label>
   </div>
 
   <div class="card">
@@ -367,7 +399,21 @@
       if (quic && typeof s.blockQuic === "boolean") quic.checked = s.blockQuic;
 
       if (s.technique) selectTechnique(s.technique);
+
+      var zapret = document.getElementById("zapret");
+      if (zapret && typeof s.zapretPreset === "string" && zapret.value !== s.zapretPreset) {
+        if (hasOption(zapret, s.zapretPreset)) zapret.value = s.zapretPreset;
+      }
     }
+  }
+
+  // select.value = x при отсутствии такого пункта молча ставит ПЕРВЫЙ —
+  // та же грабля, что и на десктопе.
+  function hasOption(select, value) {
+    for (var i = 0; i < select.options.length; i++) {
+      if (select.options[i].value === value) return true;
+    }
+    return false;
   }
 
   // Список техник приходит из движка (DesyncPresets), поэтому здесь только
@@ -446,7 +492,89 @@
     else if (msg.type === "techniques") renderTechniques(msg);
     else if (msg.type === "check") renderCheck(msg);
     else if (msg.type === "bundle") renderBundle(msg);
+    else if (msg.type === "tune") renderTune(msg);
+    else if (msg.type === "tune-state") renderTuneState(msg);
+    else if (msg.type === "zapret-presets") renderZapret(msg);
   };
+
+  // Профили zapret: переведённые стратегии winws. Неподдерживаемые показываем
+  // с причиной, а не прячем — иначе человек не поймёт, почему их нет.
+  function renderZapret(msg) {
+    var select = document.getElementById("zapret");
+    if (!select) return;
+
+    select.innerHTML = "";
+
+    var none = document.createElement("option");
+    none.value = "";
+    none.textContent = "не использовать";
+    select.appendChild(none);
+
+    var works = 0;
+
+    (msg.items || []).forEach(function (item) {
+      var option = document.createElement("option");
+      option.value = item.id;
+      option.textContent = item.works ? item.name : item.name + " (не поддерживается)";
+      option.disabled = !item.works;
+      select.appendChild(option);
+
+      if (item.works) works++;
+    });
+
+    var hint = document.getElementById("zapret-hint");
+    if (hint) {
+      hint.textContent = works > 0
+        ? works + " профилей переносится, остальные требуют того, чего на Android нет"
+        : "ни один профиль не переносится";
+    }
+  }
+
+  // Состояние автоподбора: что уже найдено для каждой сети.
+  function renderTuneState(msg) {
+    var list = document.getElementById("tune-list");
+    var auto = document.getElementById("tune-auto");
+
+    if (auto) auto.checked = !!msg.auto;
+
+    if (!list) return;
+
+    list.innerHTML = "";
+
+    (msg.networks || []).forEach(function (item) {
+      var row = document.createElement("div");
+      row.className = "row2";
+
+      var name = document.createElement("div");
+      name.className = "prov";
+      name.textContent = item.name + (item.key === msg.current ? " · сейчас" : "");
+
+      var val = document.createElement("div");
+      val.className = "val " + (item.profile ? "ok" : "warn");
+      val.textContent = item.profile
+        ? item.profile + (item.at ? " · " + item.at : "")
+        : "не подобрано";
+
+      row.appendChild(name);
+      row.appendChild(val);
+      list.appendChild(row);
+    });
+  }
+
+  function renderTune(msg) {
+    var btn = document.getElementById("tune-run");
+    var detail = document.getElementById("tune-detail");
+
+    if (btn) {
+      btn.textContent = "Подобрать для этой сети";
+      btn.disabled = false;
+    }
+
+    if (detail) {
+      detail.className = "verdict " + (msg.ok ? "ok" : "bad");
+      detail.textContent = msg.detail || "";
+    }
+  }
 
   function renderBundle(msg) {
     var note = document.getElementById("bundle-note");
@@ -562,6 +690,7 @@
     send("settings.set", {
       port: parseInt(document.getElementById("port").value, 10) || 1080,
       technique: document.getElementById("technique").value,
+      zapretPreset: document.getElementById("zapret").value,
       delay: parseInt(document.getElementById("delay").value, 10) || 0,
       blockQuic: !!document.getElementById("block-quic").checked
     });
@@ -573,6 +702,17 @@
 
   document.getElementById("technique").addEventListener("change", function () {
     selectTechnique(document.getElementById("technique").value);
+    save();
+  });
+
+  document.getElementById("zapret").addEventListener("change", function () {
+    var value = document.getElementById("zapret").value;
+    var hint = document.getElementById("zapret-hint");
+
+    if (value && hint) {
+      hint.textContent = "выбран профиль zapret: он важнее ручной техники";
+    }
+
     save();
   });
 
@@ -615,6 +755,25 @@
     }
 
     send("bundle.share");
+  });
+
+  document.getElementById("tune-run").addEventListener("click", function () {
+    var btn = document.getElementById("tune-run");
+    var detail = document.getElementById("tune-detail");
+
+    btn.textContent = "Перебираю…";
+    btn.disabled = true;
+
+    if (detail) {
+      detail.className = "verdict warn";
+      detail.textContent = "идёт перебор, это занимает до минуты…";
+    }
+
+    send("tune.run");
+  });
+
+  document.getElementById("tune-auto").addEventListener("change", function () {
+    send("tune.auto", { enabled: !!document.getElementById("tune-auto").checked });
   });
 
   send("ready");

@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Монохромный значок для тематических иконок Android 13+.
+  Монохромный вариант для тематических значков Android 13+.
 
-  Система сама перекрашивает его в цвет обоев, поэтому здесь только форма,
-  без цвета. Тот же разорванный замок, но одной фигурой.
+  Система перекрашивает его сама, поэтому здесь только форма и только один
+  цвет. Та же композиция, что в цветном варианте: обломки стены + стрелка.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -12,17 +12,18 @@
     android:viewportHeight="108">
 
     <path
-        android:pathData="M38,54 L38,42 A16,16 0 0 1 70,42 L70,50"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="7"
-        android:strokeLineCap="round"
-        android:fillColor="@android:color/transparent" />
-
-    <path
-        android:pathData="M38,54 L53,54 L50,59 L54,64 L49,69 L54,74 L50,79 L53,84 L38,84 A5,5 0 0 1 33,79 L33,59 A5,5 0 0 1 38,54 Z"
+        android:pathData="M41,26 L50,26 L50,41 L41,46 Z"
         android:fillColor="#FFFFFF" />
 
     <path
-        android:pathData="M70,54 L55,54 L58,59 L54,64 L59,69 L54,74 L58,79 L55,84 L70,84 A5,5 0 0 1 75,79 L75,59 A5,5 0 0 1 70,54 Z"
+        android:pathData="M41,62 L50,57 L50,82 L41,82 Z"
+        android:fillColor="#FFFFFF" />
+
+    <path
+        android:pathData="M19,49 L67,49 L67,59 L19,59 Z"
+        android:fillColor="#FFFFFF" />
+
+    <path
+        android:pathData="M65,39 L91,54 L65,69 Z"
         android:fillColor="#FFFFFF" />
 </vector>

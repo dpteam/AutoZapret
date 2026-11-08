@@ -55,10 +55,25 @@ namespace AutoZapret.Zapret
         /// </summary>
         public int ImportFromDirectory(string dir, string binDir, string listsDir)
         {
-            return ImportFromDirectory(dir, binDir, listsDir, null);
+            return ImportFromDirectory(dir, binDir, listsDir, null, null, false);
         }
 
         public int ImportFromDirectory(string dir, string binDir, string listsDir, string luaDir)
+        {
+            return ImportFromDirectory(dir, binDir, listsDir, luaDir, null, false);
+        }
+
+        /// <summary>
+        /// Импорт с явным префиксом источника и, при желании, без очистки
+        /// стратегий того же движка.
+        ///
+        /// keepExisting нужен, когда наборов несколько: импорт Flowseal не
+        /// должен стирать Zapret-Mods и наоборот. Обычный импорт движка
+        /// по-прежнему заменяет свой набор целиком — иначе после обновления
+        /// движка остались бы стратегии, которых в нём уже нет.
+        /// </summary>
+        public int ImportFromDirectory(string dir, string binDir, string listsDir, string luaDir,
+                                       string sourcePrefix, bool keepExisting)
         {
             List<Strategy> imported = new List<Strategy>();
 
@@ -76,7 +91,7 @@ namespace AutoZapret.Zapret
                 string name = Path.GetFileName(file);
                 if (name.StartsWith("service", StringComparison.OrdinalIgnoreCase)) continue;
 
-                Strategy s = StrategyParser.ParseBat(file, binDir, listsDir, luaDir);
+                Strategy s = StrategyParser.ParseBat(file, binDir, listsDir, luaDir, sourcePrefix);
                 if (s == null)
                 {
                     Log.Debug("WINWS", "пропущен (нет winws): " + name);
@@ -103,8 +118,20 @@ namespace AutoZapret.Zapret
 
             lock (_gate)
             {
-                // заменяем только стратегии того же движка: v1 и v2 живут вместе
-                _strategies.RemoveAll(s => string.Equals(s.Engine, engine, StringComparison.OrdinalIgnoreCase));
+                if (!keepExisting)
+                {
+                    // заменяем только стратегии того же движка: v1 и v2 живут вместе
+                    _strategies.RemoveAll(s => string.Equals(s.Engine, engine, StringComparison.OrdinalIgnoreCase));
+                }
+                else
+                {
+                    // Дополнительный набор: убираем только одноимённые id этого
+                    // же источника, чтобы повторный импорт не плодил дубликаты,
+                    // но и чужие наборы не трогал.
+                    _strategies.RemoveAll(s => imported.Exists(i =>
+                        string.Equals(i.Id, s.Id, StringComparison.OrdinalIgnoreCase)));
+                }
+
                 _strategies.AddRange(imported);
                 _strategies.Sort((a, b) => string.Compare(a.Id, b.Id, StringComparison.OrdinalIgnoreCase));
             }

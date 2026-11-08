@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Фон значка: тот же тёмный, что у экрана приложения -->
-    <color name="appicon_background">#0D0F1A</color>
-    <color name="ic_launcher_background">#0D0F1A</color>
+    <!--
+      Фон adaptive-icon. Не чистый чёрный: на чёрных обоях значок с тёмным
+      фоном сливается с ними, и остаётся висеть одна стрелка. Тёмно-синий
+      держит палитру приложения и при этом отделяется от фона рабочего стола.
+    -->
+    <color name="appicon_background">#131A2E</color>
+    <color name="ic_launcher_background">#131A2E</color>
 </resources>

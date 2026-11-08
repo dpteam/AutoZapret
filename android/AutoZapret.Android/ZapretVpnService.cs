@@ -29,6 +29,9 @@ namespace AutoZapret.Android
         public const string ActionStart = "ru.autozapret.android.START";
         public const string ActionStop = "ru.autozapret.android.STOP";
 
+        /// <summary>Broadcast из кнопки в уведомлении: остановить туннель.</summary>
+        public const string ActionStopBroadcast = "ru.autozapret.android.STOP_FROM_NOTIFICATION";
+
         private const int NotificationId = 42;
         private const string ChannelId = "autozapret-vpn";
 
@@ -50,11 +53,29 @@ namespace AutoZapret.Android
 
         public static bool IsRunning { get; private set; }
 
+        /// <summary>
+        /// Живой экземпляр сервиса.
+        ///
+        /// Зачем статическая ссылка: кнопка «Выключить» в уведомлении не может
+        /// запустить сервис повторно (он уже foreground, и `PendingIntent.GetService`
+        /// такой intent просто не доставляет — проверено, в logcat тишина).
+        /// А приложение живёт в одном процессе, поэтому приёмник команд видит
+        /// этот экземпляр и может попросить его остановиться напрямую.
+        /// </summary>
+        public static ZapretVpnService Current { get; private set; }
+
         /// <summary>Прокси, который поднят внутри сервиса — чтобы UI видел счётчики.</summary>
         public static Socks5Proxy Running { get; private set; }
 
         /// <summary>Куда писать строки лога для интерфейса (ставит MainActivity).</summary>
         public static Action<string> LogSink;
+
+        public override void OnCreate()
+        {
+            base.OnCreate();
+
+            Current = this;
+        }
 
         public override StartCommandResult OnStartCommand(Intent intent, StartCommandFlags flags, int startId)
         {
@@ -101,7 +122,27 @@ namespace AutoZapret.Android
         public override void OnDestroy()
         {
             StopTunnel();
+            Current = null;
             base.OnDestroy();
+        }
+
+        /// <summary>
+        /// Остановить по запросу извне (кнопка в уведомлении, headless-команда).
+        ///
+        /// Отдельный метод, а не повторный `startService`: для уже запущенного
+        /// foreground-сервиса такой вызов система просто игнорирует, и кнопка
+        /// «Выключить» не делает ничего. Проверено на телефоне.
+        /// </summary>
+        public void RequestStop()
+        {
+            try
+            {
+                StopTunnel();
+            }
+            catch (Exception ex)
+            {
+                LogLine("остановка по запросу: " + ex.GetType().Name + ": " + ex.Message);
+            }
         }
 
         // ------------------------------------------------------------- запуск
@@ -119,7 +160,22 @@ namespace AutoZapret.Android
             _proxy.Config.DelayMs = prefs.GetInt("delay", 0);
             _proxy.Config.BlockQuic = prefs.GetBoolean("block_quic", true);
 
-            DesyncPreset.ById(prefs.GetString("technique", DesyncPreset.Split1.Id)).ApplyTo(_proxy.Config);
+            // Профиль, подобранный под ЭТУ сеть, важнее ручного выбора: TTL
+            // фейка зависит от числа хопов до DPI, и один и тот же на Wi-Fi и
+            // в мобильной сети не работает. Если для текущей сети профиль есть
+            // — берём его, иначе ручную настройку.
+            TuneProfile tuned = NetworkTuner.ForCurrent(this);
+
+            if (tuned != null)
+            {
+                tuned.ApplyTo(_proxy.Config);
+                LogLine("профиль для «" + NetworkTuner.NameOf(NetworkTuner.CurrentKey(this)) +
+                        "»: " + tuned.Describe());
+            }
+            else
+            {
+                DesyncPreset.ById(prefs.GetString("technique", DesyncPreset.Split1.Id)).ApplyTo(_proxy.Config);
+            }
 
             // Лог прокси — в тот же журнал, что видит человек. Раньше Say()
             // уходил в пустоту (Log никто не выставил), и в logcat было видно
@@ -329,13 +385,38 @@ namespace AutoZapret.Android
             PendingIntent pending = PendingIntent.GetActivity(this, 0, open,
                 Build.VERSION.SdkInt >= BuildVersionCodes.M ? PendingIntentFlags.Immutable : 0);
 
-            return new Notification.Builder(this, ChannelId)
+            // Кнопка «Выключить» прямо в уведомлении. Зачем: заходить в
+            // приложение ради одного нажатия — лишние три шага, а выключают
+            // обход чаще, чем включают (сайт не открылся, банк ругается).
+            //
+            // Через broadcast, а не PendingIntent.GetService: для уже
+            // запущенного foreground-сервиса система такой intent не
+            // доставляет, и кнопка молча не работает. Приёмник живёт в этом же
+            // процессе и дёргает RequestStop напрямую.
+            Intent stop = new Intent(ActionStopBroadcast);
+            stop.SetPackage(PackageName);
+
+            PendingIntent stopPending = PendingIntent.GetBroadcast(this, 1, stop,
+                Build.VERSION.SdkInt >= BuildVersionCodes.M ? PendingIntentFlags.Immutable : 0);
+
+            Notification.Action stopAction = new Notification.Action.Builder(
+                global::Android.Graphics.Drawables.Icon.CreateWithResource(this, Resource.Drawable.ic_stat_shield),
+                new Java.Lang.String("Выключить"), stopPending).Build();
+
+            Notification.Builder builder = new Notification.Builder(this, ChannelId)
                 .SetContentTitle("AutoZapret")
                 .SetContentText("Обход включён")
                 .SetSmallIcon(Resource.Drawable.ic_stat_shield)
                 .SetContentIntent(pending)
                 .SetOngoing(true)
-                .Build();
+                .AddAction(stopAction);
+
+            // Действие видно сразу, без разворота уведомления: у нас ровно
+            // одно действие, и прятать его в «развернуть» незачем.
+            if (Build.VERSION.SdkInt >= BuildVersionCodes.N)
+                builder.SetCustomBigContentView(null);
+
+            return builder.Build();
         }
 
         private static void LogLine(string line)

@@ -93,6 +93,22 @@ namespace AutoZapret.Zapret
         /// <summary>Разбирает один .bat. luaDir нужен только для v2 (winws2).</summary>
         public static Strategy ParseBat(string path, string binDir, string listsDir, string luaDir)
         {
+            return ParseBat(path, binDir, listsDir, luaDir, null);
+        }
+
+        /// <summary>
+        /// Разбирает один .bat с явным префиксом источника.
+        ///
+        /// Зачем префикс параметром. Раньше он выбирался по имени exe:
+        /// winws.exe → `flowseal.`, winws2.exe → `zapret2.`. Из-за этого ЛЮБОЙ
+        /// набор .bat-файлов (Zapret-Mods, zapret-discord-youtube, свой) получал
+        /// id `flowseal.*` — то есть выдавал себя за сборку Flowseal, и в списке
+        /// нельзя было понять, откуда стратегия. Теперь префикс задаёт тот, кто
+        /// импортирует, а по имени exe он выводится только как запасной вариант.
+        /// </summary>
+        public static Strategy ParseBat(string path, string binDir, string listsDir, string luaDir,
+                                        string sourcePrefix)
+        {
             string text;
             try { text = File.ReadAllText(path, DetectEncoding(path)); }
             catch (Exception ex)
@@ -157,7 +173,8 @@ namespace AutoZapret.Zapret
 
             Strategy strategy = new Strategy
             {
-                Id = (isV2 ? "zapret2." : "flowseal.") + NormalizeId(Path.GetFileNameWithoutExtension(path)),
+                Id = (sourcePrefix != null ? sourcePrefix : (isV2 ? "zapret2." : "flowseal.")) +
+                     NormalizeId(Path.GetFileNameWithoutExtension(path)),
                 Name = Path.GetFileNameWithoutExtension(path),
                 Engine = isV2 ? "v2" : "v1",
                 Source = Path.GetFileName(path)

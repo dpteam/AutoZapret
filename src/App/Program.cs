@@ -73,6 +73,7 @@ namespace AutoZapret.App
             }
             if (HasFlag(args, "--probe")) return Diag.DiagCommand.RunProbe(args);
             if (HasFlag(args, "--strategies")) return Diag.DiagCommand.RunStrategies(args);
+            if (HasFlag(args, "--import-strategies")) return Diag.DiagCommand.RunImportStrategies(args);
             if (HasFlag(args, "--update-lists")) return Diag.DiagCommand.RunUpdateLists(args);
             if (HasFlag(args, "--fakes")) return Diag.DiagCommand.RunFakes(args);
             if (HasFlag(args, "--test-proxy")) return Diag.DiagCommand.RunTestProxy(args);

@@ -190,14 +190,18 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: selftest-report
+          # Имя начинается с платформы и с того, ЧТО это: отчёт, а не сборка.
+          # Раньше все три артефакта выглядели одинаково и понять, что качать,
+          # можно было только по размеру.
+          name: report-selftest
           path: bin/selftest.txt
           if-no-files-found: warn
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: AutoZapret-${{ github.sha }}
+          # Требует установленного .NET 9. Для разработчиков и отладки.
+          name: win-needs-dotnet-${{ github.sha }}
           path: |
             bin/AutoZapret.exe
             bin/AutoZapret.dll
@@ -260,7 +264,8 @@ jobs:
       - name: Upload self-contained
         uses: actions/upload-artifact@v4
         with:
-          name: AutoZapret-selfcontained-${{ github.sha }}
+          # То, что реально отдаётся людям: .NET внутри, запускается как есть.
+          name: win-portable-${{ github.sha }}
           path: |
             publish/AutoZapret.exe
             publish/WebView2Loader.dll

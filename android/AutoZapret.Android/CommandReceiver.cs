@@ -30,7 +30,7 @@ namespace AutoZapret.Android
     /// оттуда результат и забирается.
     /// </summary>
     [BroadcastReceiver(Enabled = true, Exported = true)]
-    [IntentFilter(new[] { ActionSet, ActionState, ActionCheck, ActionApps, ActionVpnOn, ActionVpnOff })]
+    [IntentFilter(new[] { ActionSet, ActionState, ActionCheck, ActionApps, ActionVpnOn, ActionVpnOff, ActionStopVpn })]
     public sealed class CommandReceiver : BroadcastReceiver
     {
         public const string ActionSet = "ru.autozapret.android.SET";
@@ -39,6 +39,10 @@ namespace AutoZapret.Android
         public const string ActionApps = "ru.autozapret.android.APPS";
         public const string ActionVpnOn = "ru.autozapret.android.VPN.ON";
         public const string ActionVpnOff = "ru.autozapret.android.VPN.OFF";
+        public const string ActionTune = "ru.autozapret.android.TUNE";
+
+        /// <summary>Кнопка «Выключить» в уведомлении VPN-сервиса.</summary>
+        public const string ActionStopVpn = ZapretVpnService.ActionStopBroadcast;
 
         /// <summary>
         /// Сюда активность кладёт свой обработчик, пока она жива.
@@ -58,6 +62,25 @@ namespace AutoZapret.Android
 
             try
             {
+                // Кнопка в уведомлении: останавливаем сервис напрямую. Активность
+                // при этом закрыта (человек в шторке), поэтому Forward здесь не
+                // годится — нужен сам экземпляр сервиса.
+                if (action == ActionStopVpn)
+                {
+                    ZapretVpnService running = ZapretVpnService.Current;
+
+                    if (running == null)
+                    {
+                        Say("VPN: уже выключен");
+                        return;
+                    }
+
+                    Say("VPN: выключаю из уведомления");
+                    running.RequestStop();
+
+                    return;
+                }
+
                 // VPN — только через активность: см. комментарий у Forward.
                 if (action == ActionVpnOn || action == ActionVpnOff)
                 {

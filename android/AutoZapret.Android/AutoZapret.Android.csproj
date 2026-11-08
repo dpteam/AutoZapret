@@ -44,6 +44,19 @@
     <AndroidAsset Include="Assets\mobile.html">
       <Link>Assets/mobile.html</Link>
     </AndroidAsset>
+
+    <!--
+      Наборы стратегий — те же файлы, что у десктопа, подключены ссылкой, а не
+      копией. Один источник правды: правка стратегии на десктопе сразу видна
+      Android-версии, и расхождение «на десктопе ALT7, на телефоне ALT6»
+      невозможно по построению.
+    -->
+    <AndroidAsset Include="..\..\assets\strategies\strategies.v1.json">
+      <Link>strategies.v1.json</Link>
+    </AndroidAsset>
+    <AndroidAsset Include="..\..\assets\strategies\strategies.v2.json">
+      <Link>strategies.v2.json</Link>
+    </AndroidAsset>
   </ItemGroup>
 
   <!--

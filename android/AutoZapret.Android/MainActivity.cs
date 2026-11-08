@@ -33,13 +33,16 @@ namespace AutoZapret.Android
 
         private int _port = 1080;
         private string _technique = DesyncPreset.Split1.Id;
+        private string _zapretPreset = "";
         private int _delay;
         private bool _blockQuic = true;
 
         private volatile bool _busy;
         private volatile bool _checking;
+        private volatile bool _tuning;
 
         private const int VpnRequestCode = 1001;
+        private const int NotificationRequestCode = 1002;
 
         protected override void OnCreate(Bundle savedInstanceState)
         {
@@ -75,6 +78,49 @@ namespace AutoZapret.Android
             ZapretVpnService.LogSink = PushLog;
 
             DescribeEnvironment();
+
+            RequestNotificationPermission();
+        }
+
+        /// <summary>
+        /// Спросить разрешение на уведомления (Android 13+).
+        ///
+        /// Без него система ставит приложению importance=NONE, и уведомление
+        /// сервиса не показывается вообще — вместе с кнопкой «Выключить».
+        /// Объявления в манифесте недостаточно: с API 33 это разрешение
+        /// рантаймовое. Проверено на телефоне: канал создавался, а в шторке
+        /// ничего не было.
+        /// </summary>
+        private void RequestNotificationPermission()
+        {
+            try
+            {
+                if (Build.VERSION.SdkInt < BuildVersionCodes.Tiramisu) return;
+
+                const string permission = "android.permission.POST_NOTIFICATIONS";
+
+                if (CheckSelfPermission(permission) == global::Android.Content.PM.Permission.Granted) return;
+
+                RequestPermissions(new[] { permission }, NotificationRequestCode);
+            }
+            catch
+            {
+            }
+        }
+
+        public override void OnRequestPermissionsResult(int requestCode, string[] permissions,
+                                                       global::Android.Content.PM.Permission[] grantResults)
+        {
+            base.OnRequestPermissionsResult(requestCode, permissions, grantResults);
+
+            if (requestCode != NotificationRequestCode) return;
+
+            bool granted = grantResults != null && grantResults.Length > 0 &&
+                           grantResults[0] == global::Android.Content.PM.Permission.Granted;
+
+            PushLog(granted
+                ? "уведомления разрешены: в шторке будет кнопка «Выключить»"
+                : "уведомления запрещены: кнопка «Выключить» в шторке не появится");
         }
 
         // --------------------------------------------------------- состояние
@@ -85,6 +131,7 @@ namespace AutoZapret.Android
 
             _port = prefs.GetInt("port", 1080);
             _technique = DesyncPreset.ById(prefs.GetString("technique", DesyncPreset.Split1.Id)).Id;
+            _zapretPreset = prefs.GetString("zapret_preset", "");
             _delay = prefs.GetInt("delay", 0);
             _blockQuic = prefs.GetBoolean("block_quic", true);
         }
@@ -97,6 +144,7 @@ namespace AutoZapret.Android
             {
                 editor.PutInt("port", _port);
                 editor.PutString("technique", _technique);
+                editor.PutString("zapret_preset", _zapretPreset);
                 editor.PutInt("delay", _delay);
                 editor.PutBoolean("block_quic", _blockQuic);
                 editor.Apply();
@@ -130,6 +178,29 @@ namespace AutoZapret.Android
             proxy.Config.Port = _port;
             proxy.Config.DelayMs = _delay;
             proxy.Config.BlockQuic = _blockQuic;
+
+            // Порядок важности:
+            //   1. профиль, подобранный под ЭТУ сеть (точнее всего);
+            //   2. выбранный профиль zapret;
+            //   3. ручная техника.
+            TuneProfile tuned = NetworkTuner.ForCurrent(this);
+
+            if (tuned != null)
+            {
+                tuned.ApplyTo(proxy.Config);
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(_zapretPreset))
+            {
+                ZapretPreset preset = ZapretPresets.ById(this, _zapretPreset);
+
+                if (preset != null && preset.Works)
+                {
+                    preset.ApplyTo(proxy.Config);
+                    return;
+                }
+            }
 
             DesyncPreset.ById(_technique).ApplyTo(proxy.Config);
         }
@@ -252,6 +323,7 @@ namespace AutoZapret.Android
                     case "ready":
                         SendTechniques();
                         PushState();
+                        SendTuneState();
                         PushLog("Android-версия " + PackageManager.GetPackageInfo(PackageName, 0).VersionName);
                         break;
 
@@ -273,6 +345,7 @@ namespace AutoZapret.Android
                         {
                             int port = msg.OptInt("port", _port);
                             string technique = msg.OptString("technique", _technique);
+                            string zapret = msg.OptString("zapretPreset", _zapretPreset);
                             int delay = msg.OptInt("delay", _delay);
                             bool blockQuic = msg.OptBoolean("blockQuic", _blockQuic);
 
@@ -282,10 +355,12 @@ namespace AutoZapret.Android
                             technique = DesyncPreset.ById(technique).Id;
 
                             bool changed = port != _port || technique != _technique ||
+                                           zapret != _zapretPreset ||
                                            delay != _delay || blockQuic != _blockQuic;
 
                             _port = port;
                             _technique = technique;
+                            _zapretPreset = zapret ?? "";
                             _delay = delay;
                             _blockQuic = blockQuic;
                             SaveSettings();
@@ -309,6 +384,25 @@ namespace AutoZapret.Android
                     case "check.run":
                         RunBlockCheck();
                         break;
+
+                    case "tune.run":
+                        RunTune();
+                        break;
+
+                    case "tune.list":
+                        SendTuneState();
+                        break;
+
+                    case "tune.auto":
+                        {
+                            bool enabled = msg.OptBoolean("enabled", NetworkTuner.AutoApplyEnabled(this));
+
+                            NetworkTuner.SetAutoApply(this, enabled);
+                            PushLog("автопрофиль: " + (enabled ? "включён" : "выключен"));
+                            SendTuneState();
+
+                            break;
+                        }
 
                     case "bundle.share":
                         ShareSupportBundle();
@@ -421,6 +515,31 @@ namespace AutoZapret.Android
             msg.Put("items", items);
 
             Deliver(msg.ToString());
+
+            // Профили zapret — отдельным списком: это не наши пресеты, а
+            // переведённые стратегии winws. Смешивать их в один список нельзя:
+            // у них разная природа, и человек должен видеть, откуда что.
+            Org.Json.JSONArray zapret = new Org.Json.JSONArray();
+
+            foreach (ZapretPreset preset in ZapretPresets.All(this))
+            {
+                Org.Json.JSONObject item = new Org.Json.JSONObject();
+                item.Put("id", preset.Id);
+                item.Put("name", preset.Name);
+                item.Put("source", preset.Source);
+                item.Put("note", preset.Note);
+                item.Put("works", preset.Works);
+                item.Put("reason", preset.Unsupported);
+                item.Put("describe", preset.Describe());
+
+                zapret.Put(item);
+            }
+
+            Org.Json.JSONObject zmsg = new Org.Json.JSONObject();
+            zmsg.Put("type", "zapret-presets");
+            zmsg.Put("items", zapret);
+
+            Deliver(zmsg.ToString());
         }
 
         /// <summary>
@@ -779,6 +898,100 @@ namespace AutoZapret.Android
             }
         }
 
+        /// <summary>
+        /// Подобрать технику под текущую сеть.
+        ///
+        /// В фоне: перебор занимает до минуты (14 кандидатов × до 3,5 с), и
+        /// делать это в UI-потоке нельзя — кнопка замрёт и всё выглядит как
+        /// поломка.
+        /// </summary>
+        private void RunTune()
+        {
+            if (_tuning) return;
+
+            _tuning = true;
+
+            PushLog("подбор профиля: перебираю техники под текущую сеть…");
+
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                TuneOutcome outcome = null;
+                Exception failure = null;
+
+                try
+                {
+                    outcome = NetworkTuner.Tune(this, delegate (string line) { PushLog(line); });
+                }
+                catch (Exception ex)
+                {
+                    failure = ex;
+                }
+
+                _tuning = false;
+
+                if (failure != null)
+                {
+                    PushLog("подбор не удался: " + failure.GetType().Name + ": " + failure.Message);
+                    SendTune(null, "ошибка: " + failure.Message);
+                    return;
+                }
+
+                PushLog("подбор: " + outcome.Detail);
+
+                SendTune(outcome, outcome.Detail);
+            });
+        }
+
+        private void SendTune(TuneOutcome outcome, string detail)
+        {
+            Org.Json.JSONObject msg = new Org.Json.JSONObject();
+            msg.Put("type", "tune");
+            msg.Put("detail", detail ?? "");
+            msg.Put("ok", outcome != null && outcome.Ok);
+
+            Org.Json.JSONArray rows = new Org.Json.JSONArray();
+
+            if (outcome != null)
+            {
+                foreach (string row in outcome.Rows) rows.Put(row);
+            }
+
+            msg.Put("rows", rows);
+
+            Deliver(msg.ToString());
+
+            SendTuneState();
+        }
+
+        /// <summary>Что уже подобрано для каждой сети — для карточки в интерфейсе.</summary>
+        private void SendTuneState()
+        {
+            Org.Json.JSONObject msg = new Org.Json.JSONObject();
+            msg.Put("type", "tune-state");
+            msg.Put("current", NetworkTuner.CurrentKey(this));
+            msg.Put("currentName", NetworkTuner.NameOf(NetworkTuner.CurrentKey(this)));
+            msg.Put("auto", NetworkTuner.AutoApplyEnabled(this));
+
+            Org.Json.JSONArray networks = new Org.Json.JSONArray();
+
+            foreach (string key in new[] { "wifi", "mobile" })
+            {
+                TuneProfile profile = NetworkTuner.Load(this, key);
+
+                Org.Json.JSONObject item = new Org.Json.JSONObject();
+                item.Put("key", key);
+                item.Put("name", NetworkTuner.NameOf(key));
+                item.Put("profile", profile == null ? "" : profile.Describe());
+                item.Put("at", NetworkTuner.LoadedAt(this, key));
+
+                networks.Put(item);
+            }
+
+            msg.Put("networks", networks);
+
+            Deliver(msg.ToString());
+        }
+
         private void PushState()
         {
             Socks5Proxy active = _proxy != null && _proxy.IsRunning ? _proxy : ZapretVpnService.Running;
@@ -793,6 +1006,7 @@ namespace AutoZapret.Android
             state.Put("busy", _busy);
             state.Put("port", _port);
             state.Put("technique", _technique);
+            state.Put("zapretPreset", _zapretPreset);
             state.Put("delay", _delay);
             state.Put("blockQuic", _blockQuic);
             state.Put("appMode", AppSelection.LoadMode(this));

@@ -1869,11 +1869,92 @@ namespace AutoZapret.Diag
         }
 
         /// <summary>
+        /// --import-strategies &lt;каталог&gt; [--as &lt;префикс&gt;]: добавить чужой набор
+        /// стратегий (Zapret-Mods, zapret-discord-youtube) в общий список.
+        ///
+        /// Зачем отдельная команда, а не «оно само». Наборы лежат в refs/ и в
+        /// git не попадают, поэтому их импорт — осознанное действие
+        /// разработчика, а не то, что случается при каждом запуске. Результат
+        /// пишется в assets/strategies/*.json, и уже оттуда его получают и
+        /// десктоп, и Android.
+        ///
+        /// Без --as префикс берётся из имени каталога: `general.bat` есть у
+        /// всех наборов, и без префикса они затрут друг друга.
+        /// </summary>
+        public static int RunImportStrategies(string[] args)
+        {
+            string dir = null;
+            string prefix = null;
+
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], "--import-strategies", StringComparison.OrdinalIgnoreCase) &&
+                    i + 1 < args.Length && !args[i + 1].StartsWith("--"))
+                {
+                    dir = args[i + 1];
+                }
+                else if (string.Equals(args[i], "--as", StringComparison.OrdinalIgnoreCase) &&
+                         i + 1 < args.Length && !args[i + 1].StartsWith("--"))
+                {
+                    prefix = args[i + 1];
+                }
+            }
+
+            if (string.IsNullOrEmpty(dir) || !System.IO.Directory.Exists(dir))
+            {
+                Console.WriteLine("нужен существующий каталог: --import-strategies <путь> [--as <префикс>]");
+                return 2;
+            }
+
+            if (string.IsNullOrEmpty(prefix))
+            {
+                prefix = new System.IO.DirectoryInfo(dir).Name
+                    .ToLowerInvariant()
+                    .Replace(" ", "-")
+                    .Replace("_", "-");
+            }
+
+            if (!prefix.EndsWith(".", StringComparison.Ordinal)) prefix += ".";
+
+            string file = System.IO.Path.Combine(Paths.StrategiesDir, "strategies.v1.json");
+
+            Console.WriteLine("== импорт набора ==");
+            Console.WriteLine("каталог: " + dir);
+            Console.WriteLine("префикс: " + prefix);
+            Console.WriteLine("файл:    " + file);
+
+            StrategyStore store = new StrategyStore();
+
+            if (System.IO.File.Exists(file)) store.Load(file);
+
+            int before = store.Count;
+
+            // binDir и listsDir нужны парсеру для подстановки плейсхолдеров.
+            // У чужих наборов те же имена файлов, что у движка.
+            int added = store.ImportFromDirectory(dir, Paths.EngineBinDir, Paths.EngineListsDir,
+                                                  System.IO.Path.Combine(Paths.EngineDir, "lua"),
+                                                  prefix, true);
+
+            Console.WriteLine("было: " + before + ", добавлено: " + added + ", стало: " + store.Count);
+
+            if (added == 0)
+            {
+                Console.WriteLine("ничего не добавлено: набор пуст или не содержит winws");
+                return 1;
+            }
+
+            store.Save(file, "imported");
+
+            Console.WriteLine("сохранено: " + file);
+
+            return 0;
+        }
+
+        /// <summary>
         /// --strategies: список стратегий с идентификаторами (для отладки и для --only).
         /// Заодно создаёт кэш strategies.v1.json.
         /// </summary>
-        public static int RunStrategies(string[] args)
-        {
+        public static int RunStrategies(string[] args)        {
             using (ZapretService svc = new ZapretService())
             {
                 svc.EnsureStrategies();
