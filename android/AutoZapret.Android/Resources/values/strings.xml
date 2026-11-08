@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">AutoZapret.Android</string>
-    <string name="app_text">Hello, Android!</string>
+    <string name="app_name">AutoZapret</string>
+    <string name="app_text">AutoZapret</string>
 </resources>

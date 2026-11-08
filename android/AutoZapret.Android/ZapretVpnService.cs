@@ -110,10 +110,16 @@ namespace AutoZapret.Android
         {
             if (_running) return;
 
-            int port = GetSharedPreferences("autozapret", FileCreationMode.Private).GetInt("port", 1080);
+            ISharedPreferences prefs = GetSharedPreferences("autozapret", FileCreationMode.Private);
+
+            int port = prefs.GetInt("port", 1080);
 
             _proxy = new Socks5Proxy();
             _proxy.Config.Port = port;
+            _proxy.Config.DelayMs = prefs.GetInt("delay", 0);
+            _proxy.Config.BlockQuic = prefs.GetBoolean("block_quic", true);
+
+            DesyncPreset.ById(prefs.GetString("technique", DesyncPreset.Split1.Id)).ApplyTo(_proxy.Config);
 
             // Лог прокси — в тот же журнал, что видит человек. Раньше Say()
             // уходил в пустоту (Log никто не выставил), и в logcat было видно
@@ -210,7 +216,8 @@ namespace AutoZapret.Android
 
             _thread.Start();
 
-            LogLine("VPN включён: tun → SOCKS5 127.0.0.1:" + port + ", режим приложений: " + mode +
+            LogLine("VPN включён: tun → SOCKS5 127.0.0.1:" + port + ", " + _proxy.Config.Describe() +
+                    ", режим приложений: " + mode +
                     (tunnel6 != null ? ", IPv6 внутри туннеля" : ", IPv6 нет в сети — только IPv4"));
         }
 
@@ -325,7 +332,7 @@ namespace AutoZapret.Android
             return new Notification.Builder(this, ChannelId)
                 .SetContentTitle("AutoZapret")
                 .SetContentText("Обход включён")
-                .SetSmallIcon(global::Android.Resource.Drawable.IcDialogInfo)
+                .SetSmallIcon(Resource.Drawable.ic_stat_shield)
                 .SetContentIntent(pending)
                 .SetOngoing(true)
                 .Build();

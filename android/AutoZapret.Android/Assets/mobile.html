@@ -168,6 +168,40 @@
   .app:last-child { border-bottom: none; }
   .app input { width: 18px; height: 18px; }
   .app .pkg { color: var(--dim); font-size: 10.5px; }
+
+  .check {
+    margin-top: 10px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--input);
+    overflow: hidden;
+  }
+
+  .check:empty { display: none; }
+
+  .check .row2 {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12.5px;
+  }
+
+  .check .row2:last-child { border-bottom: none; }
+  .check .prov { color: var(--text); }
+  .check .val { font-variant-numeric: tabular-nums; }
+
+  .ok { color: var(--green); }
+  .bad { color: var(--red); }
+  .warn { color: var(--yellow); }
+
+  .verdict {
+    margin-top: 10px;
+    font-size: 12.5px;
+    line-height: 1.45;
+  }
 </style>
 </head>
 <body>
@@ -197,12 +231,13 @@
       <input type="number" id="port" min="1024" max="65535" value="1080">
     </div>
 
-    <div class="row">
-      <div>
-        <div class="label">Резать ClientHello на байте</div>
-        <div class="hint">1 — сразу после заголовка записи (0x16 0x03)</div>
+    <div class="row" style="display:block">
+      <div style="margin-bottom:8px">
+        <div class="label">Техника обхода</div>
+        <div class="hint" id="tech-hint">ClientHello уходит двумя сегментами</div>
       </div>
-      <input type="number" id="split" min="1" max="1200" value="1">
+      <select id="technique" style="width:100%;padding:11px;background:var(--input);color:var(--text);border:1px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit">
+      </select>
     </div>
 
     <div class="row">
@@ -211,6 +246,14 @@
         <div class="hint">0 — отправлять подряд</div>
       </div>
       <input type="number" id="delay" min="0" max="1000" value="0">
+    </div>
+
+    <div class="row">
+      <div>
+        <div class="label">Закрыть QUIC (UDP 443)</div>
+        <div class="hint">YouTube и Google идут по QUIC мимо обхода — отказ заставит их перейти на TCP</div>
+      </div>
+      <input type="checkbox" id="block-quic" style="width:22px;height:22px">
     </div>
   </div>
 
@@ -228,6 +271,32 @@
     </div>
 
     <div class="hint">Список применяется при следующем включении VPN.</div>
+  </div>
+
+  <div class="card">
+    <div class="label" style="margin-bottom:8px">Проверка блокировки</div>
+    <div class="hint" style="margin-bottom:10px">
+      Прогоняет шесть провайдеров по IP и смотрит, рвётся ли поток на 16–20 КБ.
+      Это тот же тест, что на hyperion-cs.github.io/dpi-checkers, но без сайта.
+    </div>
+
+    <button class="vpn" id="check-run" style="width:100%">Проверить сейчас</button>
+
+    <div class="check" id="check-list"></div>
+    <div class="verdict" id="check-verdict"></div>
+  </div>
+
+  <div class="card">
+    <div class="label" style="margin-bottom:8px">Лог для поддержки</div>
+    <div class="hint" style="margin-bottom:10px">
+      Соберёт один ZIP: версия, устройство, настройки, состояние сети и DNS,
+      лог приложения. Отправь его тому, кто разбирается — по нему видно, что
+      сломалось, без переписки на десять сообщений.
+    </div>
+
+    <button class="vpn" id="bundle" style="width:100%">Собрать лог в ZIP</button>
+
+    <div class="verdict" id="bundle-note"></div>
   </div>
 
   <div class="card">
@@ -291,11 +360,58 @@
     if (!busy) {
       if (document.activeElement !== document.getElementById("port") && s.port)
         document.getElementById("port").value = s.port;
-      var split = document.getElementById("split");
-      if (document.activeElement !== split && s.split) split.value = s.split;
       var delay = document.getElementById("delay");
       if (document.activeElement !== delay && typeof s.delay === "number") delay.value = s.delay;
+
+      var quic = document.getElementById("block-quic");
+      if (quic && typeof s.blockQuic === "boolean") quic.checked = s.blockQuic;
+
+      if (s.technique) selectTechnique(s.technique);
     }
+  }
+
+  // Список техник приходит из движка (DesyncPresets), поэтому здесь только
+  // отрисовка: добавили пресет в C# — он появился в интерфейсе сам.
+  var techniqueHints = {};
+
+  function renderTechniques(msg) {
+    var select = document.getElementById("technique");
+    if (!select) return;
+
+    select.innerHTML = "";
+    techniqueHints = {};
+
+    var items = msg.items || [];
+
+    items.forEach(function (item) {
+      var option = document.createElement("option");
+      option.value = item.id;
+      option.textContent = item.name;
+      select.appendChild(option);
+
+      techniqueHints[item.id] = item.hint || "";
+    });
+
+    if (msg.current) selectTechnique(msg.current);
+  }
+
+  function selectTechnique(id) {
+    var select = document.getElementById("technique");
+    if (!select || !id) return;
+
+    // select.value = x при отсутствии такого пункта молча ставит ПЕРВЫЙ —
+    // та же грабля, что и на десктопе. Проверяем, что пункт есть.
+    var found = false;
+    for (var i = 0; i < select.options.length; i++) {
+      if (select.options[i].value === id) { found = true; break; }
+    }
+
+    if (!found) return;
+
+    if (select.value !== id) select.value = id;
+
+    var hint = document.getElementById("tech-hint");
+    if (hint) hint.textContent = techniqueHints[id] || "";
   }
 
   function appendLog(line) {
@@ -327,7 +443,67 @@
     }
     else if (msg.type === "log") appendLog(msg.line || "");
     else if (msg.type === "apps") renderApps(msg);
+    else if (msg.type === "techniques") renderTechniques(msg);
+    else if (msg.type === "check") renderCheck(msg);
+    else if (msg.type === "bundle") renderBundle(msg);
   };
+
+  function renderBundle(msg) {
+    var note = document.getElementById("bundle-note");
+    var btn = document.getElementById("bundle");
+
+    if (btn) {
+      btn.textContent = "Собрать лог в ZIP";
+      btn.disabled = false;
+    }
+
+    if (!note) return;
+
+    if (msg.error) {
+      note.className = "verdict bad";
+      note.textContent = "не собралось: " + msg.error;
+      return;
+    }
+
+    if (msg.path) {
+      note.className = "verdict ok";
+      note.textContent = "готово. Если окно «Отправить» не открылось — файл в «Загрузки/AutoZapret»";
+    }
+  }
+
+  // Результат проверки блокировки. Пусто до первого запуска — карточка
+  // остаётся с одной кнопкой, без пустой таблицы.
+  function renderCheck(msg) {
+    var list = document.getElementById("check-list");
+    var verdict = document.getElementById("check-verdict");
+
+    if (!list || !verdict) return;
+
+    list.innerHTML = "";
+
+    (msg.items || []).forEach(function (item) {
+      var row = document.createElement("div");
+      row.className = "row2";
+
+      var prov = document.createElement("div");
+      prov.className = "prov";
+      prov.textContent = item.provider;
+
+      var val = document.createElement("div");
+      val.className = "val " + (item.survived ? "ok" : (item.blocked ? "bad" : "warn"));
+      val.textContent = item.detail || "";
+
+      row.appendChild(prov);
+      row.appendChild(val);
+      list.appendChild(row);
+    });
+
+    var text = msg.verdict || "";
+    verdict.textContent = text;
+
+    verdict.className = "verdict " +
+      (text.indexOf("ОБРЫВ") >= 0 ? "bad" : (text.indexOf("не обнаружено") >= 0 ? "ok" : "warn"));
+  }
 
   function renderApps(msg) {
     var box = document.getElementById("apps");
@@ -385,17 +561,60 @@
   function save() {
     send("settings.set", {
       port: parseInt(document.getElementById("port").value, 10) || 1080,
-      split: parseInt(document.getElementById("split").value, 10) || 1,
-      delay: parseInt(document.getElementById("delay").value, 10) || 0
+      technique: document.getElementById("technique").value,
+      delay: parseInt(document.getElementById("delay").value, 10) || 0,
+      blockQuic: !!document.getElementById("block-quic").checked
     });
   }
 
   document.getElementById("port").addEventListener("change", save);
-  document.getElementById("split").addEventListener("change", save);
   document.getElementById("delay").addEventListener("change", save);
+  document.getElementById("block-quic").addEventListener("change", save);
+
+  document.getElementById("technique").addEventListener("change", function () {
+    selectTechnique(document.getElementById("technique").value);
+    save();
+  });
 
   document.getElementById("app-mode").addEventListener("change", function () {
     send("apps.mode", { mode: document.getElementById("app-mode").value });
+  });
+
+  document.getElementById("check-run").addEventListener("click", function () {    var btn = document.getElementById("check-run");
+    var verdict = document.getElementById("check-verdict");
+
+    // Кнопка должна показать, что работа идёт: проба занимает несколько
+    // секунд, и без этого кажется, что нажатие не сработало.
+    btn.textContent = "Проверяю…";
+    btn.disabled = true;
+    if (verdict) {
+      verdict.className = "verdict warn";
+      verdict.textContent = "идёт проверка, это занимает до 10 секунд…";
+    }
+
+    send("check.run");
+
+    // Возврат кнопки — по таймеру: ответ придёт отдельным сообщением, а
+    // подвисшая кнопка хуже, чем лишние полсекунды ожидания.
+    setTimeout(function () {
+      btn.textContent = "Проверить сейчас";
+      btn.disabled = false;
+    }, 15000);
+  });
+
+  document.getElementById("bundle").addEventListener("click", function () {
+    var btn = document.getElementById("bundle");
+    var note = document.getElementById("bundle-note");
+
+    btn.textContent = "Собираю…";
+    btn.disabled = true;
+
+    if (note) {
+      note.className = "verdict warn";
+      note.textContent = "собираю архив…";
+    }
+
+    send("bundle.share");
   });
 
   send("ready");

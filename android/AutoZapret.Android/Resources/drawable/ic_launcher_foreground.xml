@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Логотип AutoZapret: разорванный замок.
+
+  Тот же знак, что на десктопе (assets/AutoZapret.ico), но вектором: в .ico
+  была одна картинка 32x32, и в трее телефона она бы мылилась. Вектор
+  масштабируется в любой плотности без потерь.
+
+  Геометрия: тело замка разорвано зигзагом по центру — это и есть «обход».
+  Дужка целая: замок не сломан, а открыт.
+
+  Viewport 108x108 — стандарт adaptive-icon. Безопасная зона — центральные
+  72x72 (от 18 до 90), за неё ничего не выходит: лаунчеры обрезают по-разному.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Дужка: открытая, без нижней части справа -->
+    <path
+        android:pathData="M38,54 L38,42 A16,16 0 0 1 70,42 L70,50"
+        android:strokeColor="#8A93B5"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent" />
+
+    <!-- Левая половина тела -->
+    <path
+        android:pathData="M38,54 L53,54 L50,59 L54,64 L49,69 L54,74 L50,79 L53,84 L38,84 A5,5 0 0 1 33,79 L33,59 A5,5 0 0 1 38,54 Z"
+        android:fillColor="#F0B429" />
+
+    <!-- Правая половина тела -->
+    <path
+        android:pathData="M70,54 L55,54 L58,59 L54,64 L59,69 L54,74 L58,79 L55,84 L70,84 A5,5 0 0 1 75,79 L75,59 A5,5 0 0 1 70,54 Z"
+        android:fillColor="#F0B429" />
+
+    <!-- Замочная скважина: маленький тёмный ромб в центре -->
+    <path
+        android:pathData="M54,66 L57,71 L54,76 L51,71 Z"
+        android:fillColor="#0D0F1A" />
+</vector>

@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#2C3E50</color>
+    <!-- Фон значка: тот же тёмный, что у экрана приложения -->
+    <color name="appicon_background">#0D0F1A</color>
+    <color name="ic_launcher_background">#0D0F1A</color>
 </resources>

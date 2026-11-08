@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Монохромный значок для тематических иконок Android 13+.
+
+  Система сама перекрашивает его в цвет обоев, поэтому здесь только форма,
+  без цвета. Тот же разорванный замок, но одной фигурой.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:pathData="M38,54 L38,42 A16,16 0 0 1 70,42 L70,50"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent" />
+
+    <path
+        android:pathData="M38,54 L53,54 L50,59 L54,64 L49,69 L54,74 L50,79 L53,84 L38,84 A5,5 0 0 1 33,79 L33,59 A5,5 0 0 1 38,54 Z"
+        android:fillColor="#FFFFFF" />
+
+    <path
+        android:pathData="M70,54 L55,54 L58,59 L54,64 L59,69 L54,74 L58,79 L55,84 L70,84 A5,5 0 0 1 75,79 L75,59 A5,5 0 0 1 70,54 Z"
+        android:fillColor="#FFFFFF" />
+</vector>
