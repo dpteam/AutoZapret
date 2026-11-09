@@ -150,6 +150,7 @@ namespace AutoZapret.Android
 
             int port = prefs.GetInt("port", 1080);
             string technique = prefs.GetString("technique", DesyncPreset.Split1.Id);
+            string zapretPreset = prefs.GetString("zapret_preset", "");
             int delay = prefs.GetInt("delay", 0);
             bool blockQuic = prefs.GetBoolean("block_quic", true);
             string networkMode = prefs.GetString("network_mode", NetworkBinding.ModeAuto);
@@ -164,6 +165,11 @@ namespace AutoZapret.Android
             {
                 technique = DesyncPreset.ById(newTechnique).Id;
                 changed = true;
+
+                // Ручной выбор техники снимает профиль zapret: иначе старый
+                // профиль молча перекрывает выбор, и «выбрал fake8, а работает
+                // ALT12» выглядит как поломка выбора.
+                zapretPreset = "";
             }
 
             int newDelay = intent.GetIntExtra("delay", -1);
@@ -197,6 +203,7 @@ namespace AutoZapret.Android
                 {
                     editor.PutInt("port", port);
                     editor.PutString("technique", technique);
+                    editor.PutString("zapret_preset", zapretPreset);
                     editor.PutInt("delay", delay);
                     editor.PutBoolean("block_quic", blockQuic);
                     editor.PutString("network_mode", networkMode);

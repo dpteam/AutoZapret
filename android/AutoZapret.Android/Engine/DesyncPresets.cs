@@ -50,6 +50,21 @@ namespace AutoZapret.Android.Engine
             Positions = new int[0]
         };
 
+        /// <summary>
+        /// Взять профиль, подобранный автоподбором под текущую сеть.
+        ///
+        /// Отдельный пункт, а не «всегда главнее»: подобранный профиль раньше
+        /// молча перекрывал ручной выбор, и выглядело это как «выбор не
+        /// действует». Теперь авто — это осознанный выбор.
+        /// </summary>
+        public static readonly DesyncPreset Auto = new DesyncPreset
+        {
+            Id = "auto",
+            Name = "Авто (по сети)",
+            Hint = "взять профиль, подобранный кнопкой «Подобрать для этой сети»",
+            Positions = new int[0]
+        };
+
         public static readonly DesyncPreset Split1 = new DesyncPreset
         {
             Id = "split1",
@@ -143,7 +158,7 @@ namespace AutoZapret.Android.Engine
         /// <summary>Порядок в интерфейсе — от мягкого к жёсткому.</summary>
         public static readonly DesyncPreset[] All = new[]
         {
-            Off, Split1, Split2, MultiSplit, DisorderPreset, OobPreset, DisorderOobPreset,
+            Off, Auto, Split1, Split2, MultiSplit, DisorderPreset, OobPreset, DisorderOobPreset,
             FakeTtl8, FakeSplit, FakeDisorder
         };
 

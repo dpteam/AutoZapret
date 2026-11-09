@@ -237,15 +237,24 @@ namespace AutoZapret.Android
                     " · доступно: " + string.Join(", ", NetworkBinding.Describe(this).ToArray()));
 
             // Порядок важности:
-            //   1. профиль, подобранный под ЭТУ сеть (точнее всего);
-            //   2. выбранный профиль zapret;
+            //   1. профиль, подобранный под ЭТУ сеть — только если техника
+            //      явно «auto». Раньше подобранный профиль перекрывал ручной
+            //      выбор ВСЕГДА, и это был молчаливый баг: человек выбирал
+            //      «Фейк + TTL 8», а работал старый «разрез 1» из прошлого
+            //      автоподбора — снаружи выглядело как «выбор не действует»;
+            //   2. профиль zapret, если выбран;
             //   3. ручная техника.
-            TuneProfile tuned = NetworkTuner.ForCurrent(this);
-
-            if (tuned != null)
+            if (_technique == "auto")
             {
-                tuned.ApplyTo(proxy.Config);
-                return;
+                TuneProfile tuned = NetworkTuner.ForCurrent(this);
+
+                if (tuned != null)
+                {
+                    tuned.ApplyTo(proxy.Config);
+                    PushLog("техника: авто, профиль сети «" +
+                            NetworkTuner.NameOf(NetworkTuner.CurrentKey(this)) + "» — " + tuned.Describe());
+                    return;
+                }
             }
 
             if (!string.IsNullOrEmpty(_zapretPreset))
@@ -255,11 +264,15 @@ namespace AutoZapret.Android
                 if (preset != null && preset.Works)
                 {
                     preset.ApplyTo(proxy.Config);
+                    PushLog("техника: профиль zapret «" + preset.Name + "»");
                     return;
                 }
             }
 
-            DesyncPreset.ById(_technique).ApplyTo(proxy.Config);
+            DesyncPreset chosen = DesyncPreset.ById(_technique);
+
+            chosen.ApplyTo(proxy.Config);
+            PushLog("техника: " + chosen.Name);
         }
 
         /// <summary>Поднять движок byedpi и направить в него прокси.</summary>

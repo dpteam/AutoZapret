@@ -173,15 +173,17 @@ namespace AutoZapret.Android
             // — берём его, иначе ручную настройку.
             TuneProfile tuned = NetworkTuner.ForCurrent(this);
 
-            if (tuned != null)
+            string technique = prefs.GetString("technique", DesyncPreset.Split1.Id);
+
+            if (technique == "auto" && tuned != null)
             {
                 tuned.ApplyTo(_proxy.Config);
-                LogLine("профиль для «" + NetworkTuner.NameOf(NetworkTuner.CurrentKey(this)) +
-                        "»: " + tuned.Describe());
+                LogLine("техника: авто, профиль сети — " + tuned.Describe());
             }
             else
             {
-                DesyncPreset.ById(prefs.GetString("technique", DesyncPreset.Split1.Id)).ApplyTo(_proxy.Config);
+                DesyncPreset.ById(technique).ApplyTo(_proxy.Config);
+                LogLine("техника: " + DesyncPreset.ById(technique).Name);
             }
 
             // Движок byedpi: если бинарник есть, desync делает он. Наш прокси
