@@ -26,6 +26,14 @@ namespace AutoZapret.Android.Engine
         private const string Lib = "hev-socks5-tunnel";
 
         /// <summary>
+        /// MTU туннеля. Одно значение на всё приложение: его же передаёт
+        /// VpnService.Builder.SetMtu. Если значения разойдутся, крупные
+        /// пакеты (картинки, тела ответов) приходят битыми, и страница
+        /// остаётся со скелетом при живых соединениях.
+        /// </summary>
+        public const int Mtu = 1500;
+
+        /// <summary>
         /// Запустить туннель. Блокирует поток до Stop(). 0 — успех, иначе -1.
         /// </summary>
         [DllImport(Lib, EntryPoint = "hev_socks5_tunnel_main_from_str", CallingConvention = CallingConvention.Cdecl)]
@@ -43,8 +51,13 @@ namespace AutoZapret.Android.Engine
         public static string BuildConfig(string tunIpv4, string tunIpv6, int socksPort)
         {
             // tunnel.ipv4/ipv6 обязаны совпадать с адресами, которые выдан
-            // VpnService. mtu 8500 — как в их конфиге по умолчанию: меньше
-            // нарезки в user space.
+            // VpnService. mtu — ровно тот же, что в builder.SetMtu.
+            //
+            // Почему это критично: hev выставляет MTU интерфейсу сам, через
+            // ioctl(SIOCSIFMTU), и его значение перекрывает builder.SetMtu.
+            // Если здесь 8500, а канал 1500, приложения шлют сегменты по
+            // 8500 байт, и крупные пакеты рвутся: страница рисует скелет и
+            // зависает при живых соединениях.
             //
             // ipv6 передаётся только когда у сети действительно есть IPv6:
             // если его нет, а маршрут `::/0` завернут в туннель, ответ «не
@@ -55,7 +68,7 @@ namespace AutoZapret.Android.Engine
             return
                 "tunnel:\n" +
                 "  name: tun0\n" +
-                "  mtu: 8500\n" +
+                "  mtu: " + Mtu + "\n" +
                 "  ipv4: " + tunIpv4 + "\n" +
                 ipv6Line +
                 "  icmp: 'reply'\n" +

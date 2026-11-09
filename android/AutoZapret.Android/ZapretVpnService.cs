@@ -53,6 +53,21 @@ namespace AutoZapret.Android
         private const string TunnelAddress = "10.10.10.10";
 
         /// <summary>
+        /// MTU туннеля.
+        ///
+        /// ВАЖНО: hev сам выставляет MTU интерфейсу через ioctl(SIOCSIFMTU),
+        /// поэтому значение из конфига hev перекрывает builder.SetMtu. Если
+        /// там стоит 8500, а физический канал 1500, приложения считают MTU
+        /// туннеля равным 8500, шлют сегменты по 8500 байт, и они рвутся в
+        /// сети: мелкие пакеты проходят, крупные (картинки, тела ответов) —
+        /// нет. Снаружи это выглядит как «страница нарисовала скелет и
+        /// зависла» при полностью живых соединениях.
+        ///
+        /// 1500 — значение мобильных сетей.
+        /// </summary>
+        private const int TunnelMtu = HevTunnel.Mtu;
+
+        /// <summary>
         /// IPv6-адрес туннеля. Нужен, только чтобы завернуть IPv6 внутрь: без
         /// маршрута `::/0` весь IPv6 у приложений идёт мимо туннеля, а значит
         /// и мимо обхода. На десктопе это вылечили так же (TcpPacket для обоих
@@ -241,9 +256,13 @@ namespace AutoZapret.Android
                 LogLine("техника: " + DesyncPreset.ById(technique).Name);
             }
 
-            // Движок byedpi: если бинарник есть, desync делает он. Наш прокси
-            // остаётся спереди ради честного DNS через DoH.
-            StartEngineIfAvailable(prefs, port);
+            // Движок byedpi запускается ПОСЛЕ Establish, а не здесь.
+            //
+            // Порядок критичен: если запустить до поднятия VPN, сокеты движка
+            // создаются при старом маршруте, а после установки туннеля их
+            // соединения уходят в никуда — в логе `connect: Connection timed
+            // out` на настоящий адрес, хотя тот же UID через наш прокси
+            // качает мегабайты. Проверено на телефоне.
 
             // Лог прокси — в тот же журнал, что видит человек. Раньше Say()
             // уходил в пустоту (Log никто не выставил), и в logcat было видно
@@ -274,6 +293,49 @@ namespace AutoZapret.Android
             builder.AddAddress(TunnelAddress, 32);
             builder.AddRoute("0.0.0.0", 0);
             builder.AddDnsServer("1.1.1.1");
+
+            // MTU обязан совпадать с тем, что прописан в конфиге hev.
+            //
+            // Раньше здесь стояло только AddAddress, то есть VpnService брал
+            // MTU по умолчанию (1500), а hev в своём конфиге ждал 8500. Такое
+            // расхождение ломает крупные пакеты: картинки и тела ответов
+            // приходят битыми, страница рисует скелет и не заполняется, хотя
+            // соединения устанавливаются.
+            //
+            // 1500 — значение мобильных сетей: больше даёт фрагментацию,
+            // меньше — лишнюю нарезку.
+            builder.SetMtu(TunnelMtu);
+
+            // Подложная сеть: через неё ходит трафик приложений, ИСКЛЮЧЁННЫХ
+            // из VPN (в том числе нашего собственного процесса и его дочерних).
+            //
+            // ВАЖНО: именно ФИЗИЧЕСКАЯ сеть, а не cm.ActiveNetwork. В момент
+            // Establish активной сетью может оказаться сам VPN, и тогда
+            // «подложной» станет наш же туннель: исключённый трафик уходит в
+            // него по кругу, и дочерний byedpi получает
+            // `connect: Connection timed out` на настоящий адрес, хотя наш
+            // прокси в том же UID качает мегабайты.
+            try
+            {
+                global::Android.Net.ConnectivityManager cm =
+                    GetSystemService(ConnectivityService) as global::Android.Net.ConnectivityManager;
+
+                global::Android.Net.Network physical = PickPhysicalNetwork(cm);
+
+                if (physical != null)
+                {
+                    builder.SetUnderlyingNetworks(new[] { physical });
+                    LogLine("подложная сеть выбрана (не VPN)");
+                }
+                else
+                {
+                    LogLine("ВНИМАНИЕ: физическая сеть не найдена, UnderlyingNetworks не задан");
+                }
+            }
+            catch (Exception ex)
+            {
+                LogLine("UnderlyingNetworks: " + ex.GetType().Name);
+            }
 
             // IPv6 — целиком в туннель, но только если он в этой сети есть.
             // Без маршрута `::/0` весь IPv6-трафик приложений идёт мимо
@@ -334,6 +396,13 @@ namespace AutoZapret.Android
                 StopSelf();
                 return;
             }
+
+            // Только теперь, когда туннель поднят и UnderlyingNetworks задан,
+            // запускаем движок. До Establish его сокеты создаются при старом
+            // маршруте и после установки VPN уходят в никуда: `connect:
+            // Connection timed out` на настоящий адрес, хотя тот же UID через
+            // наш прокси качает мегабайты.
+            StartEngineIfAvailable(prefs, port);
 
             string config = HevTunnel.BuildConfig(TunnelAddress, tunnel6, port);
 
@@ -475,18 +544,20 @@ namespace AutoZapret.Android
 
                 string args = EngineArgsFor(technique);
 
-                // Дочерний процесс не наследует привязку процесса: при двух
-                // сетях ему нужен явный адрес исходящих.
-                string networkMode = prefs.GetString("network_mode", NetworkBinding.ModeAuto);
-
-                string address = NetworkBinding.AddressOf(this, networkMode);
-
-                // Без явного адреса byedpi привязывает исходящие к `::` (IPv6
-                // any). У приложения IPv6 может отсутствовать, и connect висит
-                // до таймаута. 0.0.0.0 возвращает движок на IPv4.
-                if (address.Length == 0) address = "0.0.0.0";
-
-                args = (args + " -I " + address).Trim();
+                // byedpi ВСЕГДА запускается с 0.0.0.0, без привязки к адресу
+                // конкретной сети.
+                //
+                // Проверено на телефоне: с `-I 192.168.1.155` (адрес Wi-Fi)
+                // движок стартует и не соединяется вообще — проверка движка
+                // падает, и приложение откатывается на свой. С `-I 0.0.0.0`
+                // тот же бинарь с теми же флагами работает.
+                //
+                // Причина та же, что у привязки сокета к локальному IP: пакет
+                // с source-адресом одной сети попадает в таблицу маршрутов
+                // другой и отбрасывается. Выбор сети поэтому делаем только
+                // через BindProcessToNetwork для своего процесса, а движку
+                // оставляем свободу.
+                args = (args + " -I 0.0.0.0").Trim();
 
                 if (!ShouldUseEngine(prefs, _proxy.Config)) return;
 
@@ -499,16 +570,17 @@ namespace AutoZapret.Android
                     return;
                 }
 
-                // Проверяем движок настоящим соединением, прежде чем отдавать
-                // ему весь трафик: он может запуститься и при этом не иметь
-                // выхода в сеть.
+                // Проверяем движок настоящим соединением — но это только
+                // предупреждение, а не приговор.
+                //
+                // Причина: если техника требует fake, наш движок его выполнить
+                // не может вообще. Откат «на свой» гарантирует провал, тогда
+                // как движок может работать — проба ходит на 1.1.1.1, а он
+                // бывает недоступен по причинам, к движку не относящимся.
                 if (!MainActivity.EngineWorksFor(enginePort))
-                {
-                    LogLine("движок запустился, но не соединяется — работаю своим");
-                    _engine.Stop();
-                    _proxy.Config.ForwardPort = 0;
-                    return;
-                }
+                    LogLine("ВНИМАНИЕ: проба движка не прошла, но оставляю его — техника требует fake");
+                else
+                    LogLine("движок проверен: соединение проходит");
 
                 _proxy.Config.ForwardPort = enginePort;
                 LogLine("обход через byedpi на 127.0.0.1:" + enginePort);
@@ -585,6 +657,42 @@ namespace AutoZapret.Android
 
             LogLine("VPN выключен");
             StopSelf();
+        }
+
+        /// <summary>
+        /// Найти физическую сеть с интернетом, исключив VPN.
+        ///
+        /// Именно физическую: если взять «активную», ей может оказаться наш же
+        /// туннель, и исключённый трафик уйдёт в него по кругу.
+        /// </summary>
+        private static global::Android.Net.Network PickPhysicalNetwork(
+            global::Android.Net.ConnectivityManager cm)
+        {
+            if (cm == null) return null;
+
+            global::Android.Net.Network fallback = null;
+
+            foreach (global::Android.Net.Network network in cm.GetAllNetworks())
+            {
+                global::Android.Net.NetworkCapabilities caps = cm.GetNetworkCapabilities(network);
+
+                if (caps == null) continue;
+                if (!caps.HasCapability(global::Android.Net.NetCapability.Internet)) continue;
+
+                // VPN-сеть не годится ни при каких условиях: это наш туннель.
+                if (caps.HasTransport(global::Android.Net.TransportType.Vpn)) continue;
+
+                if (fallback == null) fallback = network;
+
+                // Wi-Fi и мобильная — то, что нужно; берём первую подходящую
+                if (caps.HasTransport(global::Android.Net.TransportType.Wifi) ||
+                    caps.HasTransport(global::Android.Net.TransportType.Cellular))
+                {
+                    return network;
+                }
+            }
+
+            return fallback;
         }
 
         /// <summary>

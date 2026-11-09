@@ -289,17 +289,10 @@ namespace AutoZapret.Android
 
                 string args = EngineArgsFor(_technique);
 
-                // Дочерний процесс не наследует привязку процесса, поэтому при
-                // двух сетях ему нужен явный адрес.
-                string address = NetworkBinding.AddressOf(this, _networkMode);
-
-                // Без явного адреса byedpi привязывает исходящие к `::` (IPv6
-                // any). У приложения IPv6 может отсутствовать, и тогда connect
-                // висит до таймаута — проверено: тот же движок из-под shell
-                // работает, а из приложения нет. 0.0.0.0 возвращает его на IPv4.
-                if (address.Length == 0) address = "0.0.0.0";
-
-                args = (args + " -I " + address).Trim();
+                // Всегда 0.0.0.0: привязка к адресу конкретной сети ломает
+                // byedpi — движок стартует и не соединяется вообще. Подробности
+                // в ZapretVpnService.StartEngineIfAvailable.
+                args = (args + " -I 0.0.0.0").Trim();
 
                 string error = _engine.Start(this, enginePort, args, PushLog);
 
@@ -309,17 +302,13 @@ namespace AutoZapret.Android
                     return;
                 }
 
-                // Проверяем движок настоящим соединением, прежде чем на него
-                // переключать весь трафик. Проверено на телефоне: движок может
-                // запуститься и при этом не иметь выхода в сеть (из-под shell
-                // тот же бинарник работает) — тогда лучше сразу откатиться на
-                // свой движок, чем отдавать ему все соединения.
+                // Проба — предупреждение, а не приговор: если техника требует
+                // fake, откат на свой движок гарантирует провал, потому что
+                // fake в нём невозможен.
                 if (!EngineWorks(enginePort))
-                {
-                    PushLog("движок запустился, но не соединяется — работаю своим");
-                    _engine.Stop();
-                    return;
-                }
+                    PushLog("ВНИМАНИЕ: проба движка не прошла, но оставляю его — техника требует fake");
+                else
+                    PushLog("движок проверен: соединение проходит");
 
                 proxy.Config.ForwardPort = enginePort;
                 PushLog("обход через byedpi на 127.0.0.1:" + enginePort);
@@ -334,6 +323,30 @@ namespace AutoZapret.Android
         internal static bool EngineWorksFor(int port)
         {
             return EngineWorks(port);
+        }
+
+        /// <summary>Прочитать ровно count байт. null — соединение закрылось.</summary>
+        private static byte[] ReadExact(System.Net.Sockets.NetworkStream stream, int count)
+        {
+            byte[] buffer = new byte[count];
+            int read = 0;
+
+            try
+            {
+                while (read < count)
+                {
+                    int n = stream.Read(buffer, read, count - read);
+                    if (n <= 0) return null;
+
+                    read += n;
+                }
+
+                return buffer;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         /// <summary>
@@ -358,31 +371,27 @@ namespace AutoZapret.Android
 
                 client.EndConnect(ar);
 
-                client.ReceiveTimeout = 4000;
-                client.SendTimeout = 4000;
+                client.ReceiveTimeout = 6000;
+                client.SendTimeout = 6000;
 
                 System.Net.Sockets.NetworkStream stream = client.GetStream();
 
                 stream.Write(new byte[] { 5, 1, 0 }, 0, 3);
 
-                byte[] hello = new byte[2];
+                // ReadExact, а не Read: сокет вправе вернуть один байт из двух,
+                // и тогда проверка ложно решает «движок не работает». Из-за
+                // этого рабочий byedpi отбрасывался и приложение уходило на
+                // свой движок, где fake не работает вообще.
+                byte[] hello = ReadExact(stream, 2);
 
-                if (stream.Read(hello, 0, 2) != 2 || hello[1] != 0) return false;
+                if (hello == null || hello[1] != 0) return false;
 
                 // CONNECT 1.1.1.1:443
                 stream.Write(new byte[] { 5, 1, 0, 1, 1, 1, 1, 1, 0x01, 0xBB }, 0, 10);
 
-                byte[] reply = new byte[10];
-                int got = 0;
+                byte[] reply = ReadExact(stream, 10);
 
-                while (got < 10)
-                {
-                    int n = stream.Read(reply, got, 10 - got);
-                    if (n <= 0) break;
-                    got += n;
-                }
-
-                return got == 10 && reply[1] == 0;
+                return reply != null && reply[1] == 0;
             }
             catch
             {
