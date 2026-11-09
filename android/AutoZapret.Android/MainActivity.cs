@@ -279,12 +279,9 @@ namespace AutoZapret.Android
             {
                 ISharedPreferences prefs = GetSharedPreferences("autozapret", FileCreationMode.Private);
 
-                // Основной движок — свой (C#). byedpi включается только по
-                // явному выбору: сейчас он резерв для сравнения, а не рабочий
-                // путь (из процесса приложения у него нет выхода в сеть).
-                if (prefs.GetString("engine_mode", "own") != "byedpi")
+                if (!ZapretVpnService.ShouldUseEngine(prefs, proxy.Config))
                 {
-                    PushLog("движок: свой (byedpi выключен)");
+                    PushLog("движок: свой");
                     return;
                 }
 
@@ -569,8 +566,30 @@ namespace AutoZapret.Android
 
                             technique = DesyncPreset.ById(technique).Id;
 
-                            bool changed = port != _port || technique != _technique ||
-                                           zapret != _zapretPreset || networkMode != _networkMode ||
+                            // Техника и профиль zapret — взаимоисключающие.
+                            //
+                            // Раньше они жили рядом, и профиль молча выигрывал:
+                            // в настройках было «Фейк + TTL 8», а работал
+                            // general-alt12 из выпадающего списка zapret.
+                            // Снаружи это выглядело как «обход не работает» и
+                            // «выбор не действует». Теперь выбор одного сбрасывает
+                            // другое, и в конфигурации всегда ровно один источник.
+                            bool techniqueChanged = technique != _technique;
+                            bool zapretChanged = (zapret ?? "") != _zapretPreset;
+
+                            if (zapretChanged && !string.IsNullOrEmpty(zapret))
+                            {
+                                technique = DesyncPreset.Off.Id;
+                                techniqueChanged = technique != _technique;
+                            }
+                            else if (techniqueChanged)
+                            {
+                                zapret = "";
+                                zapretChanged = true;
+                            }
+
+                            bool changed = port != _port || techniqueChanged || zapretChanged ||
+                                           networkMode != _networkMode ||
                                            delay != _delay || blockQuic != _blockQuic;
 
                             _port = port;

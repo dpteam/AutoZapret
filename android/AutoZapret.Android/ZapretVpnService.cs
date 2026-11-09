@@ -488,20 +488,7 @@ namespace AutoZapret.Android
 
                 args = (args + " -I " + address).Trim();
 
-                // Основной движок — свой (C#). byedpi включается только если
-                // явно выбран.
-                //
-                // Почему свой не умеет `fake`: send() копирует байты в очередь
-                // ядра, и после отправки их уже не переписать. byedpi делает
-                // иначе — отправляет фейк, затем восстанавливает буфер, и
-                // ретрансмиссия уносит на сервер настоящие байты. Без этого
-                // фейк ломает TLS. Поэтому там, где нужен fake, работает
-                // byedpi, а свой движок умеет split/disorder.
-                if (prefs.GetString("engine_mode", "own") != "byedpi")
-                {
-                    LogLine("движок: свой (byedpi выключен)");
-                    return;
-                }
+                if (!ShouldUseEngine(prefs, _proxy.Config)) return;
 
                 string error = _engine.Start(this, enginePort, args, LogLine);
 
@@ -531,6 +518,30 @@ namespace AutoZapret.Android
                 LogLine("движок: " + ex.GetType().Name + " — работаю своим");
                 _proxy.Config.ForwardPort = 0;
             }
+        }
+
+        /// <summary>
+        /// Нужен ли внешний движок для этой конфигурации.
+        ///
+        /// Режим auto (по умолчанию) выбирает по технике: `fake` наш движок
+        /// выполнить не может — send() копирует байты в очередь ядра, и после
+        /// отправки фейка их уже не переписать, а byedpi восстанавливает буфер
+        /// и ретрансмиссия уносит настоящие байты. Поэтому для fake включаем
+        /// byedpi, для split/disorder остаёмся на своём.
+        ///
+        /// Без этого правила выбор «Фейк + TTL 8» тихо не работал: движок был
+        /// свой, fake в нём ломал TLS, и снаружи это выглядело как «обход
+        /// перестал работать».
+        /// </summary>
+        internal static bool ShouldUseEngine(ISharedPreferences prefs, DesyncConfig config)
+        {
+            string mode = prefs.GetString("engine_mode", "auto");
+
+            if (mode == "own") return false;
+            if (mode == "byedpi") return true;
+
+            // auto
+            return config != null && config.Fake;
         }
 
         /// <summary>Перевод нашей техники в флаги byedpi.</summary>
