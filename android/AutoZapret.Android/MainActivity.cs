@@ -29,11 +29,13 @@ namespace AutoZapret.Android
     {
         private WebView _web;
         private Socks5Proxy _proxy;
+        private readonly CiadpiEngine _engine = new CiadpiEngine();
         private System.Threading.Timer _timer;
 
         private int _port = 1080;
         private string _technique = DesyncPreset.Split1.Id;
         private string _zapretPreset = "";
+        private string _networkMode = NetworkBinding.ModeAuto;
         private int _delay;
         private bool _blockQuic = true;
 
@@ -47,7 +49,6 @@ namespace AutoZapret.Android
         protected override void OnCreate(Bundle savedInstanceState)
         {
             base.OnCreate(savedInstanceState);
-
             LoadSettings();
 
             _web = new WebView(this);
@@ -80,6 +81,29 @@ namespace AutoZapret.Android
             DescribeEnvironment();
 
             RequestNotificationPermission();
+
+            // Обработчик headless-команд живёт, пока жив процесс, а не пока
+            // виден экран. Иначе `adb ... VPN.ON` работает только при открытом
+            // приложении: стоит экрану погаснуть, OnPause обнуляет Forward, и
+            // команда отвечает «приложение закрыто» — хотя оно живо.
+            CommandReceiver.Forward = delegate (string action, Intent intent)
+            {
+                RunOnUiThread(delegate
+                {
+                    if (action == CommandReceiver.ActionVpnOn) PrepareVpn();
+                    else if (action == CommandReceiver.ActionVpnOff) StopVpn();
+                    else if (action == CommandReceiver.ActionProxy)
+                    {
+                        bool enabled = intent != null && intent.GetBooleanExtra("enabled", false);
+
+                        if (enabled) StartProxy();
+                        else StopProxy();
+                    }
+                    else if (action == CommandReceiver.ActionTune) RunTune();
+
+                    PushLog("headless: " + action);
+                });
+            };
         }
 
         /// <summary>
@@ -145,6 +169,7 @@ namespace AutoZapret.Android
                 editor.PutInt("port", _port);
                 editor.PutString("technique", _technique);
                 editor.PutString("zapret_preset", _zapretPreset);
+                editor.PutString("network_mode", _networkMode);
                 editor.PutInt("delay", _delay);
                 editor.PutBoolean("block_quic", _blockQuic);
                 editor.Apply();
@@ -162,6 +187,10 @@ namespace AutoZapret.Android
             ApplyTechnique(_proxy);
             _proxy.Log = delegate (string line) { PushLog(line); };
 
+            // Внешний движок byedpi: если бинарник есть, desync делает он,
+            // наш прокси остаётся спереди ради честного DNS через DoH.
+            StartEngine(_proxy);
+
             string error = _proxy.Start();
 
             _busy = false;
@@ -172,12 +201,40 @@ namespace AutoZapret.Android
                 : "ОШИБКА: " + error);
         }
 
+        private static string NormalizeMode(string mode)
+        {
+            if (mode == NetworkBinding.ModeWifi) return NetworkBinding.ModeWifi;
+            if (mode == NetworkBinding.ModeMobile) return NetworkBinding.ModeMobile;
+
+            return NetworkBinding.ModeAuto;
+        }
+
         /// <summary>Перенести выбранную технику в конфигурацию прокси.</summary>
         private void ApplyTechnique(Socks5Proxy proxy)
         {
+            // Настройки читаем из SharedPreferences, а не из полей в памяти.
+            // Иначе headless-команда SET (adb) меняет файл, но запущенный
+            // прокси продолжает работать со старым значением из поля — и в
+            // логе видно «фейк TTL 8» в настройках и «разрез 1» в работе.
+            ISharedPreferences prefs = GetSharedPreferences("autozapret", FileCreationMode.Private);
+
+            _port = prefs.GetInt("port", _port);
+            _technique = DesyncPreset.ById(prefs.GetString("technique", _technique)).Id;
+            _zapretPreset = prefs.GetString("zapret_preset", _zapretPreset);
+            _networkMode = NormalizeMode(prefs.GetString("network_mode", _networkMode));
+            _delay = prefs.GetInt("delay", _delay);
+            _blockQuic = prefs.GetBoolean("block_quic", _blockQuic);
+
             proxy.Config.Port = _port;
             proxy.Config.DelayMs = _delay;
             proxy.Config.BlockQuic = _blockQuic;
+
+            // При двух активных сетях (Wi-Fi + мобильная) маршрут выбирает
+            // система, и не всегда тот, что нужен. Привязываем процесс.
+            string bindResult = NetworkBinding.BindProcess(this, _networkMode);
+
+            PushLog("сеть: " + bindResult +
+                    " · доступно: " + string.Join(", ", NetworkBinding.Describe(this).ToArray()));
 
             // Порядок важности:
             //   1. профиль, подобранный под ЭТУ сеть (точнее всего);
@@ -205,6 +262,138 @@ namespace AutoZapret.Android
             DesyncPreset.ById(_technique).ApplyTo(proxy.Config);
         }
 
+        /// <summary>Поднять движок byedpi и направить в него прокси.</summary>
+        private void StartEngine(Socks5Proxy proxy)
+        {
+            try
+            {
+                int enginePort = _port == 1081 ? 1082 : 1081;
+
+                string args = EngineArgsFor(_technique);
+
+                // Дочерний процесс не наследует привязку процесса, поэтому при
+                // двух сетях ему нужен явный адрес.
+                string address = NetworkBinding.AddressOf(this, _networkMode);
+
+                // Без явного адреса byedpi привязывает исходящие к `::` (IPv6
+                // any). У приложения IPv6 может отсутствовать, и тогда connect
+                // висит до таймаута — проверено: тот же движок из-под shell
+                // работает, а из приложения нет. 0.0.0.0 возвращает его на IPv4.
+                if (address.Length == 0) address = "0.0.0.0";
+
+                args = (args + " -I " + address).Trim();
+
+                string error = _engine.Start(this, enginePort, args, PushLog);
+
+                if (error != null)
+                {
+                    PushLog("движок недоступен, работаю своим: " + error);
+                    return;
+                }
+
+                // Проверяем движок настоящим соединением, прежде чем на него
+                // переключать весь трафик. Проверено на телефоне: движок может
+                // запуститься и при этом не иметь выхода в сеть (из-под shell
+                // тот же бинарник работает) — тогда лучше сразу откатиться на
+                // свой движок, чем отдавать ему все соединения.
+                if (!EngineWorks(enginePort))
+                {
+                    PushLog("движок запустился, но не соединяется — работаю своим");
+                    _engine.Stop();
+                    return;
+                }
+
+                proxy.Config.ForwardPort = enginePort;
+                PushLog("обход через byedpi на 127.0.0.1:" + enginePort);
+            }
+            catch (Exception ex)
+            {
+                PushLog("движок: " + ex.GetType().Name + " — работаю своим");
+            }
+        }
+
+        /// <summary>Проверка движка — общая для активности и сервиса.</summary>
+        internal static bool EngineWorksFor(int port)
+        {
+            return EngineWorks(port);
+        }
+
+        /// <summary>
+        /// Проверить, что движок действительно соединяется.
+        ///
+        /// Берём 1.1.1.1:443 — он доступен почти всегда и не зависит от
+        /// блокировок. Если движок не может до него достучаться, он не годится
+        /// для трафика вообще.
+        /// </summary>
+        private static bool EngineWorks(int port)
+        {
+            System.Net.Sockets.TcpClient client = null;
+
+            try
+            {
+                client = new System.Net.Sockets.TcpClient();
+                client.NoDelay = true;
+
+                IAsyncResult ar = client.BeginConnect(System.Net.IPAddress.Loopback, port, null, null);
+
+                if (!ar.AsyncWaitHandle.WaitOne(2000)) return false;
+
+                client.EndConnect(ar);
+
+                client.ReceiveTimeout = 4000;
+                client.SendTimeout = 4000;
+
+                System.Net.Sockets.NetworkStream stream = client.GetStream();
+
+                stream.Write(new byte[] { 5, 1, 0 }, 0, 3);
+
+                byte[] hello = new byte[2];
+
+                if (stream.Read(hello, 0, 2) != 2 || hello[1] != 0) return false;
+
+                // CONNECT 1.1.1.1:443
+                stream.Write(new byte[] { 5, 1, 0, 1, 1, 1, 1, 1, 0x01, 0xBB }, 0, 10);
+
+                byte[] reply = new byte[10];
+                int got = 0;
+
+                while (got < 10)
+                {
+                    int n = stream.Read(reply, got, 10 - got);
+                    if (n <= 0) break;
+                    got += n;
+                }
+
+                return got == 10 && reply[1] == 0;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                try { if (client != null) client.Close(); } catch { }
+            }
+        }
+
+        /// <summary>Перевод нашей техники в флаги byedpi.</summary>
+        private static string EngineArgsFor(string technique)
+        {
+            if (technique == "off") return "";
+
+            if (technique == "split1") return "--split 1";
+            if (technique == "split2") return "--split 1+s";
+            if (technique == "multisplit") return "--split 1+s --split 5+s";
+            if (technique == "disorder") return "--disorder 1";
+            if (technique == "oob") return "--oob 1";
+            if (technique == "disorder-oob") return "--disoob 1";
+            if (technique == "fake-split") return "--fake -1 --ttl 8 --split 1+s";
+            if (technique == "fake-disorder") return "--fake -1 --ttl 8 --disorder 1";
+
+            // fake8 и всё остальное: проверенная на живой сети комбинация
+            return "--fake -1 --ttl 8";
+        }
+
         private void StopProxy()
         {
             if (_proxy == null) return;
@@ -214,6 +403,8 @@ namespace AutoZapret.Android
 
             try { _proxy.Stop(); } catch { }
             _proxy = null;
+
+            try { _engine.Stop(); } catch { }
 
             _busy = false;
             PushState();
@@ -272,25 +463,10 @@ namespace AutoZapret.Android
         protected override void OnResume()
         {
             base.OnResume();
-
-            // Пока активность на экране — принимаем headless-команды из adb.
-            // VPN-сервис снаружи не запустить (BIND_VPN_SERVICE), а отсюда можно.
-            CommandReceiver.Forward = delegate (string action, Intent intent)
-            {
-                RunOnUiThread(delegate
-                {
-                    if (action == CommandReceiver.ActionVpnOn) PrepareVpn();
-                    else if (action == CommandReceiver.ActionVpnOff) StopVpn();
-
-                    PushLog("headless: " + action);
-                });
-            };
         }
 
         protected override void OnPause()
         {
-            CommandReceiver.Forward = null;
-
             base.OnPause();
         }
 
@@ -348,6 +524,7 @@ namespace AutoZapret.Android
                             string zapret = msg.OptString("zapretPreset", _zapretPreset);
                             int delay = msg.OptInt("delay", _delay);
                             bool blockQuic = msg.OptBoolean("blockQuic", _blockQuic);
+                            string networkMode = NormalizeMode(msg.OptString("networkMode", _networkMode));
 
                             if (port < 1024 || port > 65535) port = 1080;
                             if (delay < 0) delay = 0;
@@ -355,12 +532,13 @@ namespace AutoZapret.Android
                             technique = DesyncPreset.ById(technique).Id;
 
                             bool changed = port != _port || technique != _technique ||
-                                           zapret != _zapretPreset ||
+                                           zapret != _zapretPreset || networkMode != _networkMode ||
                                            delay != _delay || blockQuic != _blockQuic;
 
                             _port = port;
                             _technique = technique;
                             _zapretPreset = zapret ?? "";
+                            _networkMode = networkMode;
                             _delay = delay;
                             _blockQuic = blockQuic;
                             SaveSettings();
@@ -1007,6 +1185,7 @@ namespace AutoZapret.Android
             state.Put("port", _port);
             state.Put("technique", _technique);
             state.Put("zapretPreset", _zapretPreset);
+            state.Put("networkMode", _networkMode);
             state.Put("delay", _delay);
             state.Put("blockQuic", _blockQuic);
             state.Put("appMode", AppSelection.LoadMode(this));
@@ -1029,6 +1208,12 @@ namespace AutoZapret.Android
             // В кольцевой буфер: он уйдёт в архив поддержки. Без этого в ZIP
             // остался бы только logcat, который обычному приложению недоступен.
             AppLog.Add(line);
+
+            // И в logcat тоже. Раньше строка уходила только в WebView, из-за
+            // чего при разборе с adb было видно сообщения сервиса, но НЕ
+            // сообщения прокси — а именно там причина отказа. Полчаса
+            // диагностики ушли на то, чтобы понять: логов просто нет.
+            global::Android.Util.Log.Info("AutoZapret", line);
 
             Org.Json.JSONObject msg = new Org.Json.JSONObject();
             msg.Put("type", "log");

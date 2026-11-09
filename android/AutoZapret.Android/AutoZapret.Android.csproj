@@ -32,6 +32,27 @@
     <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
 
     <!--
+      Три ABI, а не две. По умолчанию .NET собирает arm64-v8a и x86_64, и
+      APK с такими библиотеками на 32-битном телефоне не ставится («пакет
+      недействителен») либо падает на первом P/Invoke. 32-битные устройства
+      на Android ещё в ходу, и armeabi-v7a стоит нам пары мегабайт.
+    -->
+    <RuntimeIdentifiers>android-arm64;android-arm;android-x64</RuntimeIdentifiers>
+
+    <!--
+      Подпись всеми тремя схемами.
+
+      По умолчанию .NET подписывает только v3, и этого достаточно по
+      спецификации (minSdk 29). Но установщики некоторых прошивок (старые
+      MIUI, EMUI, сторонние файловые менеджеры) с v3-only справляются не
+      всегда и выдают «пакет недействителен (например, повреждён)» — то есть
+      ругаются на подпись, а сообщение читается как «файл битый».
+
+      v1 и v2 не стоят ничего и снимают этот класс отказов целиком.
+    -->
+    <AndroidApkSignerAdditionalArguments>--v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true</AndroidApkSignerAdditionalArguments>
+
+    <!--
       Trimming выключен: у нас мало кода, а обрезатель любит выкидывать то,
       что вызывается только из Java (JS-интерфейс) или через рефлексию.
     -->
@@ -57,6 +78,18 @@
     <AndroidAsset Include="..\..\assets\strategies\strategies.v2.json">
       <Link>strategies.v2.json</Link>
     </AndroidAsset>
+
+    <!--
+      Движок обхода byedpi (ciadpi), MIT, github.com/hufrea/byedpi.
+
+      Лежит в libs\<abi>\libciadpi.so, а не в assets, и это не прихоть:
+      начиная с Android 10 приложению ЗАПРЕЩЕНО запускать файлы из своего
+      каталога данных (W^X, ExecuteNoWritableFile). Попытка даёт
+      "error=13, Permission denied". Каталог нативных библиотек — read-only
+      и исполняемый, оттуда запуск разрешён.
+
+      Собирается android\build-ciadpi.cmd.
+    -->
   </ItemGroup>
 
   <!--

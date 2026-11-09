@@ -30,9 +30,9 @@ if not exist "%SRC%\third-part\lwip\Android.mk" (
     popd
 )
 
-echo Building hev-socks5-tunnel for arm64-v8a and x86_64...
+echo Building hev-socks5-tunnel for arm64-v8a, armeabi-v7a and x86_64...
 pushd "%SRC%"
-call "%NDK%\ndk-build.cmd" APP_ABI="arm64-v8a x86_64" NDK_PROJECT_PATH=. APP_BUILD_SCRIPT=Android.mk NDK_APPLICATION_MK=Application.mk -j8
+call "%NDK%\ndk-build.cmd" APP_ABI="arm64-v8a armeabi-v7a x86_64" NDK_PROJECT_PATH=. APP_BUILD_SCRIPT=Android.mk NDK_APPLICATION_MK=Application.mk -j8
 set "RESULT=%ERRORLEVEL%"
 popd
 
@@ -41,8 +41,10 @@ if not "%RESULT%"=="0" (
     exit /b %RESULT%
 )
 
+rem armeabi-v7a is required: 32-bit Android devices still exist, and without
+rem this library the APK either fails to install or crashes on the first hev call.
 set "DST=android\AutoZapret.Android\libs"
-for %%A in (arm64-v8a x86_64) do (
+for %%A in (arm64-v8a armeabi-v7a x86_64) do (
     if not exist "%DST%\%%A" mkdir "%DST%\%%A"
     copy /Y "%SRC%\libs\%%A\libhev-socks5-tunnel.so" "%DST%\%%A\" >nul
     echo   %%A ^<- libhev-socks5-tunnel.so

@@ -48,6 +48,7 @@ namespace AutoZapret.Android
 
         private ParcelFileDescriptor _tun;
         private Socks5Proxy _proxy;
+        private readonly CiadpiEngine _engine = new CiadpiEngine();
         private Thread _thread;
         private volatile bool _running;
 
@@ -160,6 +161,12 @@ namespace AutoZapret.Android
             _proxy.Config.DelayMs = prefs.GetInt("delay", 0);
             _proxy.Config.BlockQuic = prefs.GetBoolean("block_quic", true);
 
+            // Та же привязка, что и в режиме прокси: при двух сетях маршрут
+            // выбирает система, и обход может уйти через заблокированную.
+            string networkMode = prefs.GetString("network_mode", NetworkBinding.ModeAuto);
+
+            LogLine("сеть: " + NetworkBinding.BindProcess(this, networkMode));
+
             // Профиль, подобранный под ЭТУ сеть, важнее ручного выбора: TTL
             // фейка зависит от числа хопов до DPI, и один и тот же на Wi-Fi и
             // в мобильной сети не работает. Если для текущей сети профиль есть
@@ -177,10 +184,23 @@ namespace AutoZapret.Android
                 DesyncPreset.ById(prefs.GetString("technique", DesyncPreset.Split1.Id)).ApplyTo(_proxy.Config);
             }
 
+            // Движок byedpi: если бинарник есть, desync делает он. Наш прокси
+            // остаётся спереди ради честного DNS через DoH.
+            StartEngineIfAvailable(prefs, port);
+
             // Лог прокси — в тот же журнал, что видит человек. Раньше Say()
             // уходил в пустоту (Log никто не выставил), и в logcat было видно
             // только «VPN включён», а что происходит с соединениями — нет.
             _proxy.Log = LogLine;
+
+            // Прогреть кэш настоящих ClientHello для основных доменов.
+            //
+            // Зачем: первый запрос к домену уходит с синтетическим фейком, а он
+            // отличается от настоящего по отпечатку — и на живой сети не
+            // сработал, хотя тот же TTL у byedpi работал. Снятие занимает до
+            // полутора секунд, поэтому делаем это в фоне ДО того, как пойдёт
+            // трафик, а не в момент первого соединения.
+            HelloCapture.WarmPopular();
 
             string error = _proxy.Start();
 
@@ -291,6 +311,84 @@ namespace AutoZapret.Android
             }
         }
 
+        /// <summary>
+        /// Поднять внешний движок byedpi и направить в него наш прокси.
+        ///
+        /// Порт движка внутренний (пользователь его не видит): снаружи слушает
+        /// наш SOCKS5, он же отвечает за DoH и перехват DNS.
+        /// </summary>
+        private void StartEngineIfAvailable(ISharedPreferences prefs, int userPort)
+        {
+            try
+            {
+                // Движок не должен занять пользовательский порт.
+                int enginePort = userPort == 1081 ? 1082 : 1081;
+
+                string technique = prefs.GetString("technique", "fake8");
+
+                string args = EngineArgsFor(technique);
+
+                // Дочерний процесс не наследует привязку процесса: при двух
+                // сетях ему нужен явный адрес исходящих.
+                string networkMode = prefs.GetString("network_mode", NetworkBinding.ModeAuto);
+
+                string address = NetworkBinding.AddressOf(this, networkMode);
+
+                // Без явного адреса byedpi привязывает исходящие к `::` (IPv6
+                // any). У приложения IPv6 может отсутствовать, и connect висит
+                // до таймаута. 0.0.0.0 возвращает движок на IPv4.
+                if (address.Length == 0) address = "0.0.0.0";
+
+                args = (args + " -I " + address).Trim();
+
+                string error = _engine.Start(this, enginePort, args, LogLine);
+
+                if (error != null)
+                {
+                    LogLine("движок недоступен, работаю своим: " + error);
+                    _proxy.Config.ForwardPort = 0;
+                    return;
+                }
+
+                // Проверяем движок настоящим соединением, прежде чем отдавать
+                // ему весь трафик: он может запуститься и при этом не иметь
+                // выхода в сеть.
+                if (!MainActivity.EngineWorksFor(enginePort))
+                {
+                    LogLine("движок запустился, но не соединяется — работаю своим");
+                    _engine.Stop();
+                    _proxy.Config.ForwardPort = 0;
+                    return;
+                }
+
+                _proxy.Config.ForwardPort = enginePort;
+                LogLine("обход через byedpi на 127.0.0.1:" + enginePort);
+            }
+            catch (Exception ex)
+            {
+                LogLine("движок: " + ex.GetType().Name + " — работаю своим");
+                _proxy.Config.ForwardPort = 0;
+            }
+        }
+
+        /// <summary>Перевод нашей техники в флаги byedpi.</summary>
+        private static string EngineArgsFor(string technique)
+        {
+            if (technique == "off") return "";
+
+            if (technique == "split1") return "--split 1";
+            if (technique == "split2") return "--split 1+s";
+            if (technique == "multisplit") return "--split 1+s --split 5+s";
+            if (technique == "disorder") return "--disorder 1";
+            if (technique == "oob") return "--oob 1";
+            if (technique == "disorder-oob") return "--disoob 1";
+            if (technique == "fake-split") return "--fake -1 --ttl 8 --split 1+s";
+            if (technique == "fake-disorder") return "--fake -1 --ttl 8 --disorder 1";
+
+            // fake8 и всё остальное: проверенная комбинация
+            return "--fake -1 --ttl 8";
+        }
+
         private void StopTunnel()
         {
             if (!_running && _tun == null) return;
@@ -307,6 +405,8 @@ namespace AutoZapret.Android
 
             try { if (_proxy != null) _proxy.Stop(); } catch { }
             _proxy = null;
+
+            try { _engine.Stop(); } catch { }
 
             try { StopForeground(StopForegroundFlags.Remove); } catch { }
 

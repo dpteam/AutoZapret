@@ -252,6 +252,19 @@
 
     <div class="row">
       <div>
+        <div class="label">Через какую сеть</div>
+        <div class="hint">Если включены и Wi-Fi, и мобильная, Android выбирает маршрут сам — и не всегда удачно</div>
+      </div>
+    </div>
+
+    <select id="network-mode" style="width:100%;padding:11px;background:var(--input);color:var(--text);border:1px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;margin-bottom:4px">
+      <option value="auto">Автоматически</option>
+      <option value="wifi">Только Wi-Fi</option>
+      <option value="mobile">Только мобильный интернет</option>
+    </select>
+
+    <div class="row">
+      <div>
         <div class="label">Пауза между частями, мс</div>
         <div class="hint">0 — отправлять подряд</div>
       </div>
@@ -404,6 +417,9 @@
       if (zapret && typeof s.zapretPreset === "string" && zapret.value !== s.zapretPreset) {
         if (hasOption(zapret, s.zapretPreset)) zapret.value = s.zapretPreset;
       }
+
+      var net = document.getElementById("network-mode");
+      if (net && s.networkMode && hasOption(net, s.networkMode)) net.value = s.networkMode;
     }
   }
 
@@ -691,6 +707,7 @@
       port: parseInt(document.getElementById("port").value, 10) || 1080,
       technique: document.getElementById("technique").value,
       zapretPreset: document.getElementById("zapret").value,
+      networkMode: document.getElementById("network-mode").value,
       delay: parseInt(document.getElementById("delay").value, 10) || 0,
       blockQuic: !!document.getElementById("block-quic").checked
     });
@@ -699,6 +716,7 @@
   document.getElementById("port").addEventListener("change", save);
   document.getElementById("delay").addEventListener("change", save);
   document.getElementById("block-quic").addEventListener("change", save);
+  document.getElementById("network-mode").addEventListener("change", save);
 
   document.getElementById("technique").addEventListener("change", function () {
     selectTechnique(document.getElementById("technique").value);

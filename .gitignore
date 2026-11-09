@@ -19,8 +19,12 @@ __refs/
 #            assets\ (with lists and hosts), tools\.
 # Verified by tools\check-artifact.js on every CI run - it opens the built zip
 # and fails if any of those files is missing.
-engine/
-engine-*/
+# Якорь / обязателен: без него `engine/` совпадает с ЛЮБОЙ папкой engine на
+# любом уровне — и однажды съел android/AutoZapret.Android/Engine/, из-за чего
+# CI падал с «namespace AutoZapret.Android.Engine не существует», а локальная
+# сборка работала (файлы были на диске, просто не в git).
+/engine/
+/engine-*/
 *.sys
 WinDivert*.dll
 cygwin1.dll
@@ -43,6 +47,10 @@ stage/
 android/AutoZapret.Android/libs/
 android/**/bin/
 android/**/obj/
+
+# Готовые APK для раздачи: собираются tools\android-package.ps1 и весят ~100 МБ.
+# В git им не место — это артефакт, а не исходник. Раздаются ссылкой на релиз.
+android/dist/
 *.rsp
 *.suo
 *.user
