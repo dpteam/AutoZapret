@@ -46,7 +46,12 @@ namespace AutoZapret.Android.Engine
         /// </summary>
         public string Start(Context context, int port, string extraArgs, Action<string> log)
         {
+            // Всегда останавливаем предыдущий экземпляр: второй процесс на том
+            // же порту падает с "accept: Invalid argument", и снаружи это
+            // выглядит как «движок не работает».
             Stop();
+
+            Thread.Sleep(200);
 
             try
             {

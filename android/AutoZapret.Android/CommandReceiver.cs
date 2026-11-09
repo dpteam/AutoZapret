@@ -184,7 +184,6 @@ namespace AutoZapret.Android
             }
 
             string requestedMode = intent.GetStringExtra("networkMode");
-
             if (!string.IsNullOrEmpty(requestedMode))
             {
                 if (requestedMode != NetworkBinding.ModeWifi &&
@@ -211,6 +210,10 @@ namespace AutoZapret.Android
                     string engineExtra = intent.GetStringExtra("engineExtra");
 
                     if (engineExtra != null) editor.PutString("engine_extra", engineExtra);
+
+                    string engineMode = intent.GetStringExtra("engineMode");
+
+                    if (!string.IsNullOrEmpty(engineMode)) editor.PutString("engine_mode", engineMode);
 
                     editor.Apply();
                 }

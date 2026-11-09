@@ -45,7 +45,7 @@ namespace AutoZapret.Android.Engine
         {
             string host = NormalizeHost(sni);
 
-            if (host.Length == 0) host = "www.google.com";
+            if (host.Length == 0) host = "www.wikipedia.org";
 
             RandomNumberGenerator rng = RandomNumberGenerator.Create();
 

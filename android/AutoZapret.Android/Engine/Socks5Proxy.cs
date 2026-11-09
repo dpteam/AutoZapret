@@ -79,8 +79,16 @@ namespace AutoZapret.Android.Engine
         /// <summary>TTL для фейка. 8 проверено на живой сети: 3 и 5 не хватает до DPI, 12 уже доходит до сервера.</summary>
         public int FakeTtl = 8;
 
-        /// <summary>SNI подставного ClientHello. Пусто — берём безобидный по умолчанию.</summary>
-        public string FakeSni = "www.google.com";
+        /// <summary>
+        /// SNI подставного ClientHello.
+        ///
+        /// Значение взято не с потолка: byedpi (проверенный движок) использует
+        /// в своём fake_tls именно www.wikipedia.org, и на живой сети это
+        /// работает. Google-домены брать нельзя: они сами могут быть под
+        /// блокировкой, и тогда DPI видит в фейке запрещённое имя — фейк не
+        /// только не помогает, но и подтверждает блокировку.
+        /// </summary>
+        public string FakeSni = "www.wikipedia.org";
 
         /// <summary>
         /// Снимать настоящий ClientHello с устройства вместо синтетики.
@@ -956,11 +964,12 @@ namespace AutoZapret.Android.Engine
                     break;
                 }
 
-                // new TcpClient() без семейства, как в DoH: на Android при двух
-                // активных сетях dual-mode сокет выбирает маршрут иначе, чем
-                // чистый IPv4-сокет, и именно первый вариант соединяется там,
-                // где второй висит до таймаута. Проверено на живой сети.
-                TcpClient client = new TcpClient();
+                // Сокет строго по семейству цели, как в byedpi
+                // (`nb_socket(dst->sa.sa_family, type)`). Dual-mode сокет
+                // (`new TcpClient()`) здесь вреден: для IPv4-цели он остаётся
+                // AF_INET6, и семейство сокета перестаёт соответствовать
+                // семейству пакета — а от этого зависит и TTL, и маршрут.
+                TcpClient client = new TcpClient(address.AddressFamily);
                 client.NoDelay = true;
 
                 try
@@ -1228,37 +1237,26 @@ namespace AutoZapret.Android.Engine
         {
             try
             {
-                // Сначала пробуем настоящий hello с этого же устройства — он
-                // неотличим от реального по отпечатку. Синтетика — резерв.
+                // Берём снятый hello ДЛЯ ФЕЙКОВОГО ДОМЕНА и используем как есть.
                 //
-                // Только из кэша: снятие занимает до 1,5 с, и делать это в
-                // потоке отправки нельзя (см. HelloCapture.Warm). Первое
-                // обращение к домену уходит с синтетикой, параллельно
-                // начинается снятие — следующие соединения уже с родным.
+                // Раньше делалось наоборот: снимался hello целевого домена и
+                // SNI в нём подменялся на безобидный с добивкой буквами 'a' до
+                // прежней длины. Получалось «www.google.comaaaaaa» — не
+                // существующий домен, и DPI такой SNI не считал своим. Фейк
+                // уходил, но не срабатывал.
                 //
-                // SNI в фейке — БЕЗОБИДНЫЙ (FakeSni), а не настоящий. Это и
-                // есть суть техники: DPI должен увидеть рукопожатие к домену,
-                // который он не блокирует, и пометить поток как проверенный.
-                // С настоящим SNI фейк был бы бесполезен.
+                // Длина при этом не подгоняется: byedpi тоже отправляет фейк
+                // фиксированного размера (295 байт) и это не мешает.
                 byte[] fake = null;
 
-                if (Config.UseRealHello && !string.IsNullOrEmpty(host))
+                if (Config.UseRealHello)
                 {
-                    byte[] real = HelloCapture.Cached(host);
+                    fake = HelloCapture.Cached(Config.FakeSni);
 
-                    if (real == null) HelloCapture.Warm(host);
-
-                    // Переставляем SNI на безобидный, сохраняя отпечаток
-                    // устройства (порядок расширений, шифры, key_share).
-                    if (real != null) fake = HelloCapture.Retarget(real, Config.FakeSni);
+                    if (fake == null) HelloCapture.Warm(Config.FakeSni);
                 }
 
-                if (fake == null) fake = FakeTls.ClientHello(Config.FakeSni, length);
-
-                // Размер подгоняем под настоящий пакет: фейк уходит в тот же
-                // поток, и заметно другой размер сам по себе выдаёт подделку.
-                if (fake != null && fake.Length != length)
-                    fake = FakeTls.ClientHello(Config.FakeSni, length);
+                if (fake == null) fake = FakeTls.ClientHello(Config.FakeSni, 0);
 
                 if (fake == null || fake.Length == 0) return;
 
@@ -1330,30 +1328,72 @@ namespace AutoZapret.Android.Engine
             }
         }
 
+        /// <summary>
+        /// Прочитать TTL. Читаем IPv4-значение: цели у нас IPv4 (IPv4 сортируется
+        /// первым), а на dual-mode сокете IPv6-значение к делу не относится —
+        /// именно из-за этого проверка «TTL применился» раньше врала.
+        /// </summary>
         private static int GetTtl(Socket socket)
         {
             try
             {
-                if (socket.AddressFamily == AddressFamily.InterNetworkV6)
-                    return (int)socket.GetSocketOption(SocketOptionLevel.IPv6, SocketOptionName.HopLimit);
-
                 return (int)socket.GetSocketOption(SocketOptionLevel.IP, SocketOptionName.IpTimeToLive);
             }
             catch
             {
-                return 64;
             }
+
+            try
+            {
+                return (int)socket.GetSocketOption(SocketOptionLevel.IPv6, SocketOptionName.HopLimit);
+            }
+            catch
+            {
+            }
+
+            return 64;
         }
 
+        /// <summary>
+        /// Поставить TTL.
+        ///
+        /// ВАЖНО: ставим И IPv4, И IPv6 — как делает byedpi. Сокет создаётся
+        /// dual-mode (`new TcpClient()`), и его AddressFamily == InterNetworkV6
+        /// даже когда пакет уходит по IPv4. Если выбрать уровень по семейству,
+        /// то для IPv4-пакета выставится только IPV6_UNICAST_HOPS, а IP_TTL
+        /// останется 64 — фейк дойдёт до сервера, тот получит два рукопожатия
+        /// подряд и оборвёт соединение.
+        ///
+        /// Симптом ровно такой: TCP встаёт за 40 мс, а TLS рвётся, и в логе
+        /// «TTL применился», потому что проверка читала то же IPv6-значение.
+        /// </summary>
         private static void SetTtl(Socket socket, int ttl)
         {
             if (ttl < 1) ttl = 1;
             if (ttl > 255) ttl = 255;
 
-            if (socket.AddressFamily == AddressFamily.InterNetworkV6)
-                socket.SetSocketOption(SocketOptionLevel.IPv6, SocketOptionName.HopLimit, ttl);
-            else
+            bool ok4 = false;
+            bool ok6 = false;
+
+            try
+            {
                 socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.IpTimeToLive, ttl);
+                ok4 = true;
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                socket.SetSocketOption(SocketOptionLevel.IPv6, SocketOptionName.HopLimit, ttl);
+                ok6 = true;
+            }
+            catch
+            {
+            }
+
+            if (!ok4 && !ok6) throw new SocketException((int)SocketError.OperationAborted);
         }
 
         /// <summary>Позиции разреза: только осмысленные, по возрастанию.</summary>

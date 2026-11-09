@@ -29,6 +29,20 @@ namespace AutoZapret.Android
         public const string ActionStart = "ru.autozapret.android.START";
         public const string ActionStop = "ru.autozapret.android.STOP";
 
+        /// <summary>
+        /// Режим «только прокси», без туннеля.
+        ///
+        /// Отдельные действия, потому что режим прокси ОБЯЗАН жить в
+        /// foreground-сервисе. Проверено на телефоне: без FGS система ставит
+        /// приложению `effective=APP_BACKGROUND` и firewall-правило
+        /// `10331-background-default` — весь фоновый трафик режется, и любое
+        /// соединение висит до таймаута. Снаружи это выглядело как «обход не
+        /// работает», хотя сеть в порядке: из-под shell тот же запрос отвечал
+        /// 200 за 0,5 с.
+        /// </summary>
+        public const string ActionProxyStart = "ru.autozapret.android.PROXY_START";
+        public const string ActionProxyStop = "ru.autozapret.android.PROXY_STOP";
+
         /// <summary>Broadcast из кнопки в уведомлении: остановить туннель.</summary>
         public const string ActionStopBroadcast = "ru.autozapret.android.STOP_FROM_NOTIFICATION";
 
@@ -88,6 +102,35 @@ namespace AutoZapret.Android
                 return StartCommandResult.NotSticky;
             }
 
+            if (action == ActionProxyStop)
+            {
+                StopProxyMode();
+                return StartCommandResult.NotSticky;
+            }
+
+            if (action == ActionProxyStart)
+            {
+                try
+                {
+                    StartForeground(NotificationId, BuildNotification("Обход включён (прокси)"));
+                }
+                catch (Exception ex)
+                {
+                    LogLine("StartForeground: " + ex.GetType().Name + ": " + ex.Message);
+                }
+
+                try
+                {
+                    StartProxyOnly();
+                }
+                catch (Exception ex)
+                {
+                    LogLine("запуск прокси: " + ex.GetType().Name + ": " + ex.Message);
+                }
+
+                return StartCommandResult.NotSticky;
+            }
+
             // StartForeground может бросить SecurityException (тип сервиса,
             // разрешения, политика прошивки). Раньше это убивало процесс
             // целиком и выглядело как «приложение вылетело». Теперь — в лог и
@@ -116,12 +159,14 @@ namespace AutoZapret.Android
         public override void OnRevoke()
         {
             // Пользователь отозвал разрешение VPN — обязаны остановиться сами
+            LogLine("VPN: разрешение отозвано системой");
             StopTunnel();
             base.OnRevoke();
         }
 
         public override void OnDestroy()
         {
+            LogLine("VPN: сервис уничтожается");
             StopTunnel();
             Current = null;
             base.OnDestroy();
@@ -151,6 +196,16 @@ namespace AutoZapret.Android
         private void StartTunnel()
         {
             if (_running) return;
+
+            // Предыдущий режим (прокси) должен быть полностью погашен, иначе
+            // два прокси и два движка борются за порты и падают.
+            if (_proxy != null)
+            {
+                try { _proxy.Stop(); } catch { }
+                _proxy = null;
+            }
+
+            try { _engine.Stop(); } catch { }
 
             ISharedPreferences prefs = GetSharedPreferences("autozapret", FileCreationMode.Private);
 
@@ -305,7 +360,7 @@ namespace AutoZapret.Android
             {
                 string error = HevTunnel.Run(fd, config);
                 if (error != null) LogLine(error);
-                else LogLine("туннель остановлен");
+                else LogLine("туннель остановлен сам");
             }
             catch (Exception ex)
             {
@@ -319,6 +374,96 @@ namespace AutoZapret.Android
         /// Порт движка внутренний (пользователь его не видит): снаружи слушает
         /// наш SOCKS5, он же отвечает за DoH и перехват DNS.
         /// </summary>
+        /// <summary>
+        /// Режим «только SOCKS5»: без tun, но в foreground-сервисе.
+        ///
+        /// Без сервиса система считает приложение фоновым и режет трафик
+        /// (см. комментарий у ActionProxyStart), поэтому прокси обязан жить
+        /// здесь, а не в активности.
+        /// </summary>
+        private void StartProxyOnly()
+        {
+            if (_proxy != null) return;
+
+            // Гасим туннель и движок от предыдущего режима.
+            try { if (_tun != null) { HevTunnel.Stop(); _tun.Close(); _tun = null; } } catch { }
+            try { _engine.Stop(); } catch { }
+
+            ISharedPreferences prefs = GetSharedPreferences("autozapret", FileCreationMode.Private);
+
+            int port = prefs.GetInt("port", 1080);
+
+            _proxy = new Socks5Proxy();
+            _proxy.Config.Port = port;
+            _proxy.Config.DelayMs = prefs.GetInt("delay", 0);
+            _proxy.Config.BlockQuic = prefs.GetBoolean("block_quic", true);
+            _proxy.Config.BindAddress = "";
+
+            string technique = prefs.GetString("technique", DesyncPreset.Split1.Id);
+
+            if (technique == "auto")
+            {
+                TuneProfile tuned = NetworkTuner.ForCurrent(this);
+
+                if (tuned != null) tuned.ApplyTo(_proxy.Config);
+                else DesyncPreset.Split1.ApplyTo(_proxy.Config);
+            }
+            else
+            {
+                DesyncPreset.ById(technique).ApplyTo(_proxy.Config);
+            }
+
+            _proxy.Log = LogLine;
+
+            HelloCapture.WarmPopular();
+
+            // Внешний движок: раньше он не работал из приложения, потому что
+            // без foreground-сервиса система резала фоновый трафик
+            // (effective=APP_BACKGROUND). Теперь сервис есть, и проверка
+            // покажет, снялось ли ограничение.
+            StartEngineIfAvailable(prefs, port);
+
+            string error = _proxy.Start();
+
+            if (error != null)
+            {
+                LogLine("SOCKS5 не запустился: " + error);
+                _proxy = null;
+                StopProxyMode();
+                return;
+            }
+
+            Running = _proxy;
+            IsRunning = true;
+
+            LogLine("прокси включён: " + _proxy.Config.Describe() + " на 127.0.0.1:" + _proxy.ActualPort);
+        }
+
+        private void StopProxyMode()
+        {
+            try { if (_proxy != null) _proxy.Stop(); } catch { }
+            _proxy = null;
+
+            try { _engine.Stop(); } catch { }
+
+            // Если поднят туннель, сервис НЕ останавливаем: он обслуживает
+            // VPN, а прокси здесь был лишь предыдущим режимом. Иначе остановка
+            // прокси убивает работающий VPN.
+            if (_tun != null)
+            {
+                LogLine("прокси выключен (VPN продолжает работать)");
+                return;
+            }
+
+            Running = null;
+            IsRunning = false;
+
+            try { StopForeground(StopForegroundFlags.Remove); } catch { }
+
+            LogLine("прокси выключен");
+            StopSelf();
+        }
+
         private void StartEngineIfAvailable(ISharedPreferences prefs, int userPort)
         {
             try
@@ -342,6 +487,21 @@ namespace AutoZapret.Android
                 if (address.Length == 0) address = "0.0.0.0";
 
                 args = (args + " -I " + address).Trim();
+
+                // Основной движок — свой (C#). byedpi включается только если
+                // явно выбран.
+                //
+                // Почему свой не умеет `fake`: send() копирует байты в очередь
+                // ядра, и после отправки их уже не переписать. byedpi делает
+                // иначе — отправляет фейк, затем восстанавливает буфер, и
+                // ретрансмиссия уносит на сервер настоящие байты. Без этого
+                // фейк ломает TLS. Поэтому там, где нужен fake, работает
+                // byedpi, а свой движок умеет split/disorder.
+                if (prefs.GetString("engine_mode", "own") != "byedpi")
+                {
+                    LogLine("движок: свой (byedpi выключен)");
+                    return;
+                }
 
                 string error = _engine.Start(this, enginePort, args, LogLine);
 
@@ -474,6 +634,11 @@ namespace AutoZapret.Android
 
         private Notification BuildNotification()
         {
+            return BuildNotification("Обход включён");
+        }
+
+        private Notification BuildNotification(string text)
+        {
             if (Build.VERSION.SdkInt >= BuildVersionCodes.O)
             {
                 NotificationManager manager = GetSystemService(NotificationService) as NotificationManager;
@@ -507,7 +672,7 @@ namespace AutoZapret.Android
 
             Notification.Builder builder = new Notification.Builder(this, ChannelId)
                 .SetContentTitle("AutoZapret")
-                .SetContentText("Обход включён")
+                .SetContentText(text)
                 .SetSmallIcon(Resource.Drawable.ic_stat_shield)
                 .SetContentIntent(pending)
                 .SetOngoing(true)

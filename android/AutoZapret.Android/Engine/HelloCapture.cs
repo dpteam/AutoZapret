@@ -135,8 +135,8 @@ namespace AutoZapret.Android.Engine
         {
             string[] hosts =
             {
-                "www.youtube.com", "youtube.com", "discord.com", "twitch.tv",
-                "www.google.com", "googlevideo.com", "api.telegram.org"
+                "www.wikipedia.org", "wikipedia.org", "www.youtube.com", "discord.com",
+                "twitch.tv", "api.telegram.org"
             };
 
             ThreadPool.QueueUserWorkItem(delegate

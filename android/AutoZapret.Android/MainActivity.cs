@@ -183,22 +183,19 @@ namespace AutoZapret.Android
             _busy = true;
             PushState();
 
-            _proxy = new Socks5Proxy();
-            ApplyTechnique(_proxy);
-            _proxy.Log = delegate (string line) { PushLog(line); };
+            // Прокси живёт в foreground-сервисе, а не здесь. Без сервиса
+            // система считает приложение фоновым и режет трафик
+            // (effective=APP_BACKGROUND) — любое соединение висит до таймаута.
+            Intent intent = new Intent(this, typeof(ZapretVpnService));
+            intent.SetAction(ZapretVpnService.ActionProxyStart);
 
-            // Внешний движок byedpi: если бинарник есть, desync делает он,
-            // наш прокси остаётся спереди ради честного DNS через DoH.
-            StartEngine(_proxy);
-
-            string error = _proxy.Start();
+            if (Build.VERSION.SdkInt >= BuildVersionCodes.O)
+                StartForegroundService(intent);
+            else
+                StartService(intent);
 
             _busy = false;
             PushState();
-
-            PushLog(error == null
-                ? "обход включён: SOCKS5 на 127.0.0.1:" + _proxy.ActualPort + " · " + _proxy.Config.Describe()
-                : "ОШИБКА: " + error);
         }
 
         private static string NormalizeMode(string mode)
@@ -280,6 +277,17 @@ namespace AutoZapret.Android
         {
             try
             {
+                ISharedPreferences prefs = GetSharedPreferences("autozapret", FileCreationMode.Private);
+
+                // Основной движок — свой (C#). byedpi включается только по
+                // явному выбору: сейчас он резерв для сравнения, а не рабочий
+                // путь (из процесса приложения у него нет выхода в сеть).
+                if (prefs.GetString("engine_mode", "own") != "byedpi")
+                {
+                    PushLog("движок: свой (byedpi выключен)");
+                    return;
+                }
+
                 int enginePort = _port == 1081 ? 1082 : 1081;
 
                 string args = EngineArgsFor(_technique);
@@ -409,18 +417,32 @@ namespace AutoZapret.Android
 
         private void StopProxy()
         {
-            if (_proxy == null) return;
-
             _busy = true;
             PushState();
 
-            try { _proxy.Stop(); } catch { }
-            _proxy = null;
+            Intent intent = new Intent(this, typeof(ZapretVpnService));
+            intent.SetAction(ZapretVpnService.ActionProxyStop);
 
-            try { _engine.Stop(); } catch { }
+            try { StartService(intent); } catch { }
+
+            try { if (_proxy != null) _proxy.Stop(); } catch { }
+            _proxy = null;
 
             _busy = false;
             PushState();
+        }
+
+        /// <summary>
+        /// Остановить только прокси, не трогая VPN. Используется кнопкой
+        /// «Включить обход», когда поднят VPN: иначе остановка прокси убивает
+        /// сервис вместе с туннелем.
+        /// </summary>
+        private void StopProxyOnly()
+        {
+            Intent intent = new Intent(this, typeof(ZapretVpnService));
+            intent.SetAction(ZapretVpnService.ActionProxyStop);
+
+            try { StartService(intent); } catch { }
         }
 
         // ------------------------------------------------------------- VPN
@@ -434,8 +456,11 @@ namespace AutoZapret.Android
         /// </summary>
         private void PrepareVpn()
         {
-            // Локальный SOCKS5 в активности и VPN-сервис не должны делить порт
-            StopProxy();
+            // НЕ останавливаем прокси отсюда: раньше здесь вызывался StopProxy(),
+            // который отправляет PROXY_STOP в сервис, а сервис делает StopSelf
+            // и убивает только что запущенный VPN. Гонка выглядела так: «VPN
+            // включён» в логе, следом «прокси выключен» и «VPN выключен».
+            // Сервис сам гасит прокси-режим в StartTunnel.
 
             Intent prepare = VpnService.Prepare(this);
 
