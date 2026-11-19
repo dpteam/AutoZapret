@@ -26,10 +26,10 @@ jobs:
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: '10.0.x'
 
       # Workload android тянет Android SDK-таргеты и JDK-обвязку. Без него
-      # net9.0-android не собирается вообще.
+      # net10.0-android не собирается вообще.
       - name: Install Android workload
         shell: pwsh
         run: |
@@ -64,18 +64,66 @@ jobs:
 
           Push-Location 'refs/hev-socks5-tunnel'
           try {
-            & "$ndk/ndk-build" "APP_ABI=arm64-v8a x86_64" "NDK_PROJECT_PATH=." `
+            & "$ndk/ndk-build" "APP_ABI=arm64-v8a armeabi-v7a x86_64" "NDK_PROJECT_PATH=." `
                 "APP_BUILD_SCRIPT=Android.mk" "NDK_APPLICATION_MK=Application.mk" "-j4"
             if ($LASTEXITCODE -ne 0) { throw "ndk-build failed" }
           } finally { Pop-Location }
 
           # .so кладём туда, откуда их ждёт csproj (libs/ в git не лежит).
+          # Все три ABI обязательны: csproj перечисляет android-arm64,
+          # android-arm и android-x64, и без .so для armeabi-v7a APK собирается,
+          # но на 32-битном устройстве падает на первом же P/Invoke.
           $dst = 'android/AutoZapret.Android/libs'
-          foreach ($abi in @('arm64-v8a', 'x86_64')) {
+          foreach ($abi in @('arm64-v8a', 'armeabi-v7a', 'x86_64')) {
             New-Item -ItemType Directory -Path "$dst/$abi" -Force | Out-Null
             Copy-Item "refs/hev-socks5-tunnel/libs/$abi/libhev-socks5-tunnel.so" "$dst/$abi/" -Force
             Write-Host "  $abi <- libhev-socks5-tunnel.so"
           }
+
+      # Движок byedpi (MIT). Раньше CI его вообще не собирал: APK получался
+      # рабочим на вид, но без libciadpi.so, то есть без движка desync —
+      # техники, которым он нужен, молча не работали бы.
+      #
+      # -Dmain=ciadpi_main  — в byedpi свой main(); переименование оставляет
+      #                       открытой и схему «вызвать в процессе».
+      # -Wl,-z,max-page-size=16384 — Android 16 требует страницы 16 КБ на части
+      #                       устройств. Сборка под 4 КБ грузится на 4 КБ ядре,
+      #                       но отвергается линкером на 16 КБ, и сборка честно
+      #                       предупреждает XA0141.
+      - name: Build byedpi (ciadpi)
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/hufrea/byedpi.git refs/byedpi
+          if ($LASTEXITCODE -ne 0) { throw "byedpi clone failed" }
+
+          $ndk = $env:ANDROID_NDK_LATEST_HOME
+          if (-not $ndk -or -not (Test-Path $ndk)) {
+            $ndk = Get-ChildItem "$env:ANDROID_HOME/ndk" -Directory -ErrorAction SilentlyContinue |
+                   Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $ndk -or -not (Test-Path $ndk)) { throw "Android NDK not found on runner" }
+
+          $bin = Join-Path $ndk 'toolchains/llvm/prebuilt/linux-x86_64/bin'
+          $dst = 'android/AutoZapret.Android/libs'
+          $sources = @('packets.c','main.c','conev.c','proxy.c','desync.c','mpool.c','extend.c')
+          $abi = @(
+            @{ cc = 'aarch64-linux-android29-clang'; dir = 'arm64-v8a' },
+            @{ cc = 'armv7a-linux-androideabi29-clang'; dir = 'armeabi-v7a' },
+            @{ cc = 'x86_64-linux-android29-clang'; dir = 'x86_64' }
+          )
+
+          Push-Location 'refs/byedpi'
+          try {
+            foreach ($a in $abi) {
+              New-Item -ItemType Directory -Path "../../$dst/$($a.dir)" -Force | Out-Null
+              $cc = Join-Path $bin $a.cc
+              $out = "../../$dst/$($a.dir)/libciadpi.so"
+              $flags = @('-D_DEFAULT_SOURCE','-I.','-std=c99','-O2','-fPIC','-shared','-Dmain=ciadpi_main','-Wl,-z,max-page-size=16384')
+              & $cc $flags $sources -o $out
+              if ($LASTEXITCODE -ne 0) { throw "ciadpi build failed for $($a.dir)" }
+              Write-Host "  $($a.dir) <- libciadpi.so"
+            }
+          } finally { Pop-Location }
 
       # Debug, а не Release: Release требует настроенного keystore, а для
       # тестового артефакта это лишняя возня с секретами в CI.
@@ -86,24 +134,33 @@ jobs:
             -c Debug -p:AndroidSdkDirectory="$env:ANDROID_HOME" -v minimal --nologo
           if ($LASTEXITCODE -ne 0) { throw "apk build failed" }
 
-          $apk = 'android/AutoZapret.Android/bin/Debug/net9.0-android/ru.autozapret.android-Signed.apk'
+          $apk = 'android/AutoZapret.Android/bin/Debug/net10.0-android/ru.autozapret.android-Signed.apk'
           if (-not (Test-Path $apk)) { throw "APK not produced" }
           $mb = [math]::Round((Get-Item $apk).Length / 1MB, 1)
           Write-Host "APK: $mb MB"
 
-          # Проверка, что нативная библиотека реально внутри: без неё VPN
-          # запускается и падает на первом вызове hev.
+          # Проверка, что нативные библиотеки реально внутри и для ВСЕХ трёх ABI.
+          # Без hev VPN падает на первом P/Invoke; без ciadpi молча не работают
+          # техники, которым нужен движок desync. Проверять только «файл есть»
+          # мало: APK без armeabi-v7a ставится на 64-битное устройство и падает
+          # на 32-битном.
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $apk))
           try {
-            $native = $zip.Entries | Where-Object { $_.FullName -like '*libhev-socks5-tunnel.so' }
-            if (-not $native) { throw "libhev-socks5-tunnel.so missing inside APK" }
-            Write-Host "native libs in APK: $($native.Count)"
+            $abis = @('arm64-v8a', 'armeabi-v7a', 'x86_64')
+
+            foreach ($name in @('libhev-socks5-tunnel.so', 'libciadpi.so')) {
+              foreach ($abi in $abis) {
+                $entry = $zip.Entries | Where-Object { $_.FullName -eq "lib/$abi/$name" }
+                if (-not $entry) { throw "$name missing for $abi inside APK" }
+              }
+              Write-Host "$name : $($abis.Count) ABI"
+            }
           } finally { $zip.Dispose() }
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: android-apk-${{ github.sha }}
-          path: android/AutoZapret.Android/bin/Debug/net9.0-android/ru.autozapret.android-Signed.apk
+          path: android/AutoZapret.Android/bin/Debug/net10.0-android/ru.autozapret.android-Signed.apk
           retention-days: 14

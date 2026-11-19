@@ -21,5 +21,5 @@ dotnet build -c Debug -p:AndroidSdkDirectory="%ANDROID_HOME%" -v minimal --nolog
 if errorlevel 1 exit /b 1
 
 echo.
-echo APK: %~dp0AutoZapret.Android\bin\Debug\net9.0-android\ru.autozapret.android-Signed.apk
-echo Install: adb install -r "%~dp0AutoZapret.Android\bin\Debug\net9.0-android\ru.autozapret.android-Signed.apk"
+echo APK: %~dp0AutoZapret.Android\bin\Debug\net10.0-android\ru.autozapret.android-Signed.apk
+echo Install: adb install -r "%~dp0AutoZapret.Android\bin\Debug\net10.0-android\ru.autozapret.android-Signed.apk"

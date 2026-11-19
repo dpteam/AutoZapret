@@ -1,6 +1,6 @@
 # AutoZapret для Android
 
-Отдельное приложение на **.NET 9 Android** (`net9.0-android`). Не часть
+Отдельное приложение на **.NET 9 Android** (`net10.0-android`). Не часть
 десктопной сборки и не влияет на `tools\ci-local.ps1`.
 
 ## Почему .NET, а не Kotlin
@@ -30,7 +30,7 @@ dotnet workload install android
 
 ```
 dotnet workload install android
-dotnet build -t:InstallAndroidDependencies -f net9.0-android ^
+dotnet build -t:InstallAndroidDependencies -f net10.0-android ^
     -p:AndroidSdkDirectory="C:\Android\sdk" -p:AcceptAndroidSDKLicenses=True
 ```
 
@@ -39,13 +39,13 @@ dotnet build -t:InstallAndroidDependencies -f net9.0-android ^
 APK:
 
 ```
-android\AutoZapret.Android\bin\Debug\net9.0-android\ru.autozapret.android-Signed.apk
+android\AutoZapret.Android\bin\Debug\net10.0-android\ru.autozapret.android-Signed.apk
 ```
 
 Установка на подключённый телефон:
 
 ```
-adb install -r android\AutoZapret.Android\bin\Debug\net9.0-android\ru.autozapret.android-Signed.apk
+adb install -r android\AutoZapret.Android\bin\Debug\net10.0-android\ru.autozapret.android-Signed.apk
 ```
 
 ## Что уже работает

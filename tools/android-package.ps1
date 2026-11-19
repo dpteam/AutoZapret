@@ -61,7 +61,7 @@ if (-not $NoBuild) {
 }
 
 if (-not $Apk) {
-    $Apk = Join-Path $project "bin\Debug\net9.0-android\ru.autozapret.android-Signed.apk"
+    $Apk = Join-Path $project "bin\Debug\net10.0-android\ru.autozapret.android-Signed.apk"
 }
 
 if (-not (Test-Path $Apk)) { Fail "APK не найден: $Apk" }

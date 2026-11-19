@@ -1137,12 +1137,12 @@ WinDivert + модификация пакетов. Вся «магия» — н�
 
 Проверено по коду: наш Telegram-прокси (`MtProtoHandshake`, `AesCtr`, `WsClient`,
 `WsTunnel`, `MtProtoSplitter`) — чистый BCL (`System.Net.Sockets`, `SslStream`,
-AES). Он **не требует WinDivert** и переносится на `net9.0-android` как есть.
+AES). Он **не требует WinDivert** и переносится на `net10.0-android` как есть.
 UI тоже: `web/` вшивается в APK, а `chrome.webview.postMessage` подменяется
 тонким шимом (`@JavascriptInterface`) — ровно ради этого мост и делался в двух
 функциях.
 
-Поэтому Android-версия = **отдельная папка `android/`** на `net9.0-android`:
+Поэтому Android-версия = **отдельная папка `android/`** на `net10.0-android`:
 
 ```
 web/ui.html + app.js + theme.css   (одни и те же файлы, без форка)
@@ -1234,7 +1234,7 @@ IP-пакеты, а нам нужны потоки. Это самая дорог
 
 | Наш компонент | На Android | Почему |
 |---|---|---|
-| .NET Framework 4.8 | ❌ | Только `net9.0-android` |
+| .NET Framework 4.8 | ❌ | Только `net10.0-android` |
 | WinForms | ❌ | Activity + WebView, без MAUI |
 | WebView2 | ❌ | `android.webkit.WebView` + шим моста |
 | **WinDivert** | ❌❌ | Нужен `VpnService` (ступень B) или сокет-уровень (ступень A) |
@@ -1268,7 +1268,7 @@ IP-пакеты, а нам нужны потоки. Это самая дорог
 
 | Наш компонент | На Android | Почему |
 |---|---|---|
-| .NET Framework 4.8 | ❌ | Только .NET 8/9 (`net9.0-android`). Это не «сложно», это просто другая платформа: нужен полный переезд |
+| .NET Framework 4.8 | ❌ | Только .NET 8/9 (`net10.0-android`). Это не «сложно», это просто другая платформа: нужен полный переезд |
 | WinForms | ❌ | Android UI — MAUI (XAML) или Blazor Hybrid. Переписывать все 6 экранов |
 | WebView2 | ❌ | Это Edge/Chromium для Windows. На Android — `android.webkit.WebView`. Наш мост `chrome.webview.postMessage` **не работает**, нужен `IJSRuntime` (Blazor) или JS-bridge руками |
 | **WinDivert** | ❌❌ | Драйвер ядра Windows. На Android перехват — это `VpnService` + tun fd, то есть **другой принцип целиком** |

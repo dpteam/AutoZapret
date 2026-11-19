@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net9.0-android</TargetFramework>
+    <TargetFramework>net10.0-android</TargetFramework>
     <!--
       hev-socks5-tunnel собран под android-29 (APP_PLATFORM в его Application.mk).
       Поэтому и приложение не может обещать меньше: на API 28 библиотека просто
