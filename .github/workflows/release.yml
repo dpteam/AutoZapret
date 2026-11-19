@@ -192,9 +192,14 @@ jobs:
             'Требуется: Windows 10 1607+ / Windows 11, x64.'
           ) -join "`r`n"
 
-          Set-Content -Path (Join-Path $stage 'ПРОЧТИ-МЕНЯ.txt') -Value $readme -Encoding UTF8
+          Set-Content -Path (Join-Path $stage 'READ-ME-FIRST.txt') -Value $readme -Encoding UTF8
 
-          Compress-Archive -Path "$stage/*" -DestinationPath 'AutoZapret-portable.zip' -Force
+          # Архив кладём ВМЕСТЕ с папкой, а не «содержимым папки»: с
+          # `-Path "$stage/*"` PowerShell раскладывает файлы в корень архива, и
+          # человек, распаковав, получает AutoZapret.exe вперемешку с assets.
+          # Проверка ниже ждёт префикс `AutoZapret/`, поэтому такой архив она
+          # отклоняет — и это правильно.
+          Compress-Archive -Path $stage -DestinationPath 'AutoZapret-portable.zip' -Force
           $mb = [int]((Get-Item 'AutoZapret-portable.zip').Length / 1MB)
           Write-Host "package: $mb MB"
           if ($mb -lt 20) { throw "package too small ($mb MB)" }

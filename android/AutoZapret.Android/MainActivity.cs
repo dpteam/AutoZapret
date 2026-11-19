@@ -305,8 +305,12 @@ namespace AutoZapret.Android
                 // Проба — предупреждение, а не приговор: если техника требует
                 // fake, откат на свой движок гарантирует провал, потому что
                 // fake в нём невозможен.
-                if (!EngineWorks(enginePort))
-                    PushLog("ВНИМАНИЕ: проба движка не прошла, но оставляю его — техника требует fake");
+                EngineProbe probe = EngineWorks(enginePort);
+
+                if (probe == EngineProbe.NotResponding)
+                    PushLog("ВНИМАНИЕ: движок не отвечает на SOCKS5, но оставляю его — техника требует fake");
+                else if (probe == EngineProbe.NoRoute)
+                    PushLog("движок отвечает, но тестовое соединение не прошло — это сеть или DPI, а не движок");
                 else
                     PushLog("движок проверен: соединение проходит");
 
@@ -320,9 +324,30 @@ namespace AutoZapret.Android
         }
 
         /// <summary>Проверка движка — общая для активности и сервиса.</summary>
+        /// <summary>Чем закончилась проба движка.</summary>
+        internal enum EngineProbe
+        {
+            /// <summary>Полный успех: SOCKS5 отвечает и тестовое соединение проходит.</summary>
+            Works,
+
+            /// <summary>
+            /// Движок жив, но тестовое соединение не установилось.
+            ///
+            /// Это НЕ признак поломки движка: тест идёт на 1.1.1.1:443, а дойти
+            /// туда может помешать сеть, DPI или ещё не поднятый туннель.
+            /// Раньше оба случая сливались в один bool, и в лог попадало
+            /// «проба движка не прошла» при полностью рабочем движке — а такое
+            /// предупреждение приучает не читать предупреждения.
+            /// </summary>
+            NoRoute,
+
+            /// <summary>Движок не отвечает: порт закрыт или рукопожатие не разобрано.</summary>
+            NotResponding
+        }
+
         internal static bool EngineWorksFor(int port)
         {
-            return EngineWorks(port);
+            return EngineWorks(port) == EngineProbe.Works;
         }
 
         /// <summary>Прочитать ровно count байт. null — соединение закрылось.</summary>
@@ -356,7 +381,7 @@ namespace AutoZapret.Android
         /// блокировок. Если движок не может до него достучаться, он не годится
         /// для трафика вообще.
         /// </summary>
-        private static bool EngineWorks(int port)
+        private static EngineProbe EngineWorks(int port)
         {
             System.Net.Sockets.TcpClient client = null;
 
@@ -367,7 +392,7 @@ namespace AutoZapret.Android
 
                 IAsyncResult ar = client.BeginConnect(System.Net.IPAddress.Loopback, port, null, null);
 
-                if (!ar.AsyncWaitHandle.WaitOne(2000)) return false;
+                if (!ar.AsyncWaitHandle.WaitOne(2000)) return EngineProbe.NotResponding;
 
                 client.EndConnect(ar);
 
@@ -384,18 +409,23 @@ namespace AutoZapret.Android
                 // свой движок, где fake не работает вообще.
                 byte[] hello = ReadExact(stream, 2);
 
-                if (hello == null || hello[1] != 0) return false;
+                if (hello == null || hello[1] != 0) return EngineProbe.NotResponding;
 
                 // CONNECT 1.1.1.1:443
                 stream.Write(new byte[] { 5, 1, 0, 1, 1, 1, 1, 1, 0x01, 0xBB }, 0, 10);
 
                 byte[] reply = ReadExact(stream, 10);
 
-                return reply != null && reply[1] == 0;
+                // Рукопожатие разобрано — движок жив. Дальше уже вопрос сети:
+                // не пустили, DPI оборвал, туннель ещё не поднят. Признавать
+                // движок сломанным из-за этого нельзя.
+                if (reply == null) return EngineProbe.NoRoute;
+
+                return reply[1] == 0 ? EngineProbe.Works : EngineProbe.NoRoute;
             }
             catch
             {
-                return false;
+                return EngineProbe.NotResponding;
             }
             finally
             {
