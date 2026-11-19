@@ -236,6 +236,24 @@ try {
             }
             if ($added -gt 0) { Write-Host "      bin\*.bin (+$added из бандла)" }
         }
+
+        # Фейки, которых нет у Flowseal, но которые нужны набору StressOzz.
+        # Список явный, а не «все .bin из blockcheck»: в blockcheck лежат
+        # фейки для чужих протоколов (isakmp, wireguard, http, dht, zero_*),
+        # наш валидатор их не знает и справедливо считает «не TLS/QUIC/STUN».
+        # Скопировать всё — значит завалить проверку «все фейки валидны».
+        $bundleFakes = Join-Path $bundleDir 'blockcheck\zapret\files\fake'
+        $extraFakes = @('tls_clienthello_gosuslugi_ru.bin', 'tls_clienthello_vk_com.bin')
+
+        if (Test-Path $bundleFakes) {
+            $added = 0
+            foreach ($f in $extraFakes) {
+                $src = Join-Path $bundleFakes $f
+                $dest = Join-Path $binDir $f
+                if ((Test-Path $src) -and -not (Test-Path $dest)) { Copy-Item $src $dest -Force; $added++ }
+            }
+            if ($added -gt 0) { Write-Host "      bin\*.bin (+$added для набора StressOzz)" }
+        }
     }
 
     # ---------------------------------------------------------------- utils

@@ -1564,11 +1564,19 @@ namespace AutoZapret.App
             Check("стратегии: v1 найдены", v1.Count >= 20, v1.Count + " шт.");
             Check("стратегии: v2 найдены", v2.Count >= 20, v2.Count + " шт.");
 
-            bool v1IdsOk = v1.TrueForAll(s => s.Id.StartsWith("flowseal.", StringComparison.Ordinal));
+            // id с префиксом автора набора: flowseal.* — штатный каталог,
+            // stressozz.* — импортированный из Zapret-Manager (73 стратегии
+            // другого автора, у них те же флаги winws, поэтому тот же движок v1).
+            bool v1IdsOk = v1.TrueForAll(s =>
+                s.Id.StartsWith("flowseal.", StringComparison.Ordinal) ||
+                s.Id.StartsWith("stressozz.", StringComparison.Ordinal));
             bool v2IdsOk = v2.TrueForAll(s => s.Id.StartsWith("zapret2.", StringComparison.Ordinal));
 
-            Check("стратегии: id v1 с префиксом flowseal", v1IdsOk, "ok");
+            Check("стратегии: id v1 с префиксом автора набора", v1IdsOk, "ok");
             Check("стратегии: id v2 с префиксом zapret2", v2IdsOk, "ok");
+
+            int stressozz = v1.FindAll(s => s.Id.StartsWith("stressozz.", StringComparison.Ordinal)).Count;
+            Check("стратегии: набор StressOzz на месте", stressozz >= 70, stressozz + " шт.");
 
             // пересечение id означало бы, что выбор стратегии неоднозначен
             HashSet<string> v1Set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
