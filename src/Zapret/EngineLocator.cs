@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using AutoZapret.Core;
 
 namespace AutoZapret.Zapret
@@ -135,6 +136,93 @@ namespace AutoZapret.Zapret
 
         /// <summary>Совместимость: путь к v1.</summary>
         public string WinwsPath { get { return ExePath(EngineKind.V1); } }
+
+        /// <summary>
+        /// Умеет ли движок данную опцию.
+        ///
+        /// Зачем это нужно: опции добавляются в новых сборках, а у
+        /// пользователя может остаться движок, скачанный раньше. Передать
+        /// незнакомый флаг — значит получить «движок не запустился» вместо
+        /// обхода, и виноватым будет выглядеть движок.
+        ///
+        /// Проверка — поиск литерала в самом exe. Это не гадание по версии
+        /// (номера версий zapret и сборок не совпадают) и не запуск бинарника
+        /// (он требует прав администратора). Опция попадает в exe строкой
+        /// в таблицу long-опций, поэтому её наличие — факт, а не догадка.
+        /// Результат кешируется: файл читается один раз за запуск.
+        /// </summary>
+        public bool SupportsOption(EngineKind kind, string option)
+        {
+            if (string.IsNullOrEmpty(option)) return false;
+
+            string path = ExePath(kind);
+            if (path == null) return false;
+
+            string key = path + "|" + option;
+
+            lock (_capabilityCache)
+            {
+                bool cached;
+
+                if (_capabilityCache.TryGetValue(key, out cached)) return cached;
+            }
+
+            bool result = false;
+
+            try
+            {
+                byte[] literal = Encoding.ASCII.GetBytes(option);
+
+                using (FileStream fs = new FileStream(path, FileMode.Open,
+                                                      FileAccess.Read, FileShare.ReadWrite))
+                {
+                    // Читаем целиком: winws2 ~640 КБ, это дешевле любого
+                    // потокового поиска с перекрытием границ буфера.
+                    byte[] data = new byte[fs.Length];
+                    int read = 0;
+
+                    while (read < data.Length)
+                    {
+                        int n = fs.Read(data, read, data.Length - read);
+                        if (n <= 0) break;
+                        read += n;
+                    }
+
+                    result = Contains(data, read, literal);
+                }
+            }
+            catch
+            {
+                result = false;
+            }
+
+            lock (_capabilityCache) _capabilityCache[key] = result;
+
+            return result;
+        }
+
+        private readonly Dictionary<string, bool> _capabilityCache =
+            new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
+        private static bool Contains(byte[] haystack, int length, byte[] needle)
+        {
+            if (needle.Length == 0 || length < needle.Length) return false;
+
+            int last = length - needle.Length;
+
+            for (int i = 0; i <= last; i++)
+            {
+                if (haystack[i] != needle[0]) continue;
+
+                int j = 1;
+
+                while (j < needle.Length && haystack[i + j] == needle[j]) j++;
+
+                if (j == needle.Length) return true;
+            }
+
+            return false;
+        }
 
         /// <summary>Доступен ли движок.</summary>
         public bool IsAvailable(EngineKind kind)

@@ -296,6 +296,14 @@ namespace AutoZapret.Android.Engine
 
             TcpClient upstream = null;
 
+            // Учёт по сессии объявляем ДО try: в finally нужны и хост, и точка
+            // отсчёта, а переменные из try там не видны.
+            string traceHost = null;
+            int tracePort = 0;
+            long up0 = 0;
+            long down0 = 0;
+            long started = 0;
+
             try
             {
                 client.NoDelay = true;
@@ -347,6 +355,15 @@ namespace AutoZapret.Android.Engine
 
                 Reply(fromClient, 0);
 
+                // Учёт по сессии. Без него снаружи видно только «соединения
+                // есть, страница пустая»: непонятно, сессия не открылась,
+                // открылась и умерла на первом байте, или качала мегабайты.
+                traceHost = host;
+                tracePort = port;
+                up0 = Interlocked.Read(ref _bytesUp);
+                down0 = Interlocked.Read(ref _bytesDown);
+                started = Environment.TickCount64;
+
                 NetworkStream toServer = upstream.GetStream();
 
                 // Первый кусок в сторону сервера проходит через desync: именно
@@ -377,6 +394,19 @@ namespace AutoZapret.Android.Engine
             {
                 try { if (upstream != null) upstream.Close(); } catch { }
                 try { client.Close(); } catch { }
+
+                // Итог сессии в журнал. Именно этого не хватало: по общим
+                // счётчикам видно «вниз 1,38 МБ», но не видно, какая из
+                // тридцати сессий дала ноль, а какая — всё остальное.
+                if (traceHost != null)
+                {
+                    long up = Interlocked.Read(ref _bytesUp) - up0;
+                    long down = Interlocked.Read(ref _bytesDown) - down0;
+                    long ms = Environment.TickCount64 - started;
+
+                    Say("сессия " + traceHost + ":" + tracePort + " → вверх " + up +
+                        " Б, вниз " + down + " Б, " + ms + " мс");
+                }
 
                 Interlocked.Decrement(ref _active);
             }
@@ -1100,6 +1130,7 @@ namespace AutoZapret.Android.Engine
             NetworkStream toServer = upstream.GetStream();
             byte[] buffer = new byte[32 * 1024];
             bool first = true;
+            int chunk = 0;
 
             try
             {
@@ -1107,6 +1138,23 @@ namespace AutoZapret.Android.Engine
                 {
                     int n = fromClient.Read(buffer, 0, buffer.Length);
                     if (n <= 0) break;
+
+                    // Диагностика размера первого куска.
+                    //
+                    // Через внешний движок desync делает byedpi, и ему нужен
+                    // ЦЕЛЫЙ ClientHello в одном write: он ищет TLS-запись и
+                    // подставляет фейк перед ней. Если hev отдаёт ClientHello
+                    // двумя-тремя кусками, движок видит обрывок, TLS не
+                    // распознаёт, фейка нет — и заблокированный сайт висит до
+                    // таймаута, хотя HTTP (который не блокируют) качается
+                    // мегабайтами. Ровно это и наблюдалось в VPN-режиме.
+                    chunk++;
+
+                    if (chunk <= 3)
+                    {
+                        Say("кусок #" + chunk + ": " + n + " Б" +
+                            (n > 0 ? ", начало " + Hex(data: buffer, offset: 0, count: Math.Min(n, 6)) : ""));
+                    }
 
                     if (first)
                     {
@@ -1127,6 +1175,22 @@ namespace AutoZapret.Android.Engine
             {
                 try { toServer.Close(); } catch { }
             }
+        }
+
+        /// <summary>Первые байты в hex — чтобы видеть, начинается ли кусок с TLS.</summary>
+        private static string Hex(byte[] data, int offset, int count)
+        {
+            if (data == null || count <= 0) return "";
+
+            System.Text.StringBuilder sb = new System.Text.StringBuilder(count * 3);
+
+            for (int i = 0; i < count && offset + i < data.Length; i++)
+            {
+                if (i > 0) sb.Append(' ');
+                sb.Append(data[offset + i].ToString("x2"));
+            }
+
+            return sb.ToString();
         }
 
         private void PumpDown(NetworkStream fromServer, NetworkStream toClient)

@@ -79,6 +79,7 @@ namespace AutoZapret.Android
         private Socks5Proxy _proxy;
         private readonly CiadpiEngine _engine = new CiadpiEngine();
         private Thread _thread;
+        private Thread _hevLogThread;
         private volatile bool _running;
 
         public static bool IsRunning { get; private set; }
@@ -326,6 +327,18 @@ namespace AutoZapret.Android
                 {
                     builder.SetUnderlyingNetworks(new[] { physical });
                     LogLine("подложная сеть выбрана (не VPN)");
+
+                    // BindProcessToNetwork здесь НЕ вызываем, и это важно.
+                    //
+                    // Пробовали: привязка процесса к физической сети чинит
+                    // дочерний движок (YouTube через прокси даёт 975 КБ под
+                    // VPN), но отрезает сам VPN-сервис от его же туннеля —
+                    // страница в браузере перестаёт загружаться вовсе
+                    // (чёрный экран без ошибки). Процессу нужны ОБА пути:
+                    // tun для hev и физическая сеть для движка.
+                    //
+                    // Поэтому выбор сети делаем только для движка — через его
+                    // собственный флаг -I, а не привязкой процесса.
                 }
                 else
                 {
@@ -404,7 +417,18 @@ namespace AutoZapret.Android
             // наш прокси качает мегабайты.
             StartEngineIfAvailable(prefs, port);
 
-            string config = HevTunnel.BuildConfig(TunnelAddress, tunnel6, port);
+            // Уровень логов hev задаётся настройкой: при разборе поломок нужен
+            // debug, в обычной работе — warn, иначе журнал забивается.
+            HevTunnel.LogLevel = prefs.GetString("hev_log", "warn");
+
+            // hev умеет писать только в файл или в stdout/stderr. В приложении
+            // stdout — это /dev/null, поэтому единственный способ увидеть его
+            // решения — файл, который мы сами и читаем.
+            string hevLog = System.IO.Path.Combine(FilesDir.AbsolutePath, "hev.log");
+
+            try { if (System.IO.File.Exists(hevLog)) System.IO.File.Delete(hevLog); } catch { }
+
+            string config = HevTunnel.BuildConfig(TunnelAddress, tunnel6, port, hevLog);
 
             _running = true;
             IsRunning = true;
@@ -417,6 +441,8 @@ namespace AutoZapret.Android
             };
 
             _thread.Start();
+
+            StartHevLogReader(hevLog);
 
             LogLine("VPN включён: tun → SOCKS5 127.0.0.1:" + port + ", " + _proxy.Config.Describe() +
                     ", режим приложений: " + mode +
@@ -435,6 +461,104 @@ namespace AutoZapret.Android
             {
                 LogLine("туннель упал: " + ex.GetType().Name + ": " + ex.Message);
             }
+        }
+
+        /// <summary>
+        /// Читать файл лога hev и отдавать строки в журнал приложения.
+        ///
+        /// Зачем это нужно: снаружи VPN-режим выглядит одинаково при десятке
+        /// разных причин — «соединения есть, страница пустая». hev знает
+        /// больше: он пишет, что прочитал из tun, какую сессию открыл и на
+        /// чём именно споткнулся. Но писать он умеет только в файл или в
+        /// stdout, а stdout в Android-приложении — /dev/null. Поэтому файл,
+        /// а рядом этот поток.
+        ///
+        /// Чтение инкрементальное: запоминаем смещение, дочитываем только
+        /// добавленное. Неполную последнюю строку держим до следующего круга.
+        /// </summary>
+        private void StartHevLogReader(string path)
+        {
+            _hevLogThread = new Thread(delegate ()
+            {
+                byte[] buffer = new byte[8192];
+                long offset = 0;
+                string pending = "";
+
+                while (_running)
+                {
+                    bool readSomething = false;
+
+                    try
+                    {
+                        if (System.IO.File.Exists(path))
+                        {
+                            using (System.IO.FileStream fs = new System.IO.FileStream(
+                                path, System.IO.FileMode.Open,
+                                System.IO.FileAccess.Read, System.IO.FileShare.ReadWrite))
+                            {
+                                // Файл пересоздали — читаем с начала, старое не мешаем.
+                                if (fs.Length < offset)
+                                {
+                                    offset = 0;
+                                    pending = "";
+                                }
+
+                                if (fs.Length > offset)
+                                {
+                                    fs.Seek(offset, System.IO.SeekOrigin.Begin);
+
+                                    int n;
+
+                                    while ((n = fs.Read(buffer, 0, buffer.Length)) > 0)
+                                    {
+                                        offset += n;
+                                        pending += System.Text.Encoding.UTF8.GetString(buffer, 0, n);
+                                        readSomething = true;
+
+                                        int nl;
+
+                                        while ((nl = pending.IndexOf('\n')) >= 0)
+                                        {
+                                            string line = pending.Substring(0, nl).TrimEnd('\r');
+
+                                            pending = pending.Substring(nl + 1);
+
+                                            if (line.Length == 0) continue;
+
+                                            // debug-строки hev пишутся по одной на
+                                            // каждый шаг рукопожатия — их сотни, и
+                                            // в logcat они вытесняют журнал самого
+                                            // приложения (а он и нужен для разбора).
+                                            // Поэтому в журнал идут только warn и
+                                            // error; полный поток остаётся в файле.
+                                            if (line.Contains(" [D] ")) continue;
+
+                                            LogLine("hev: " + line);
+                                        }
+
+                                        // Строка без перевода строки не должна расти
+                                        // бесконечно: hev пишет короткими строками,
+                                        // значит это мусор — выбрасываем.
+                                        if (pending.Length > 65536) pending = "";
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        // Файл могут удалить/пересоздать — это не повод падать.
+                    }
+
+                    Thread.Sleep(readSomething ? 100 : 300);
+                }
+            })
+            {
+                IsBackground = true,
+                Name = "hev-log"
+            };
+
+            _hevLogThread.Start();
         }
 
         /// <summary>
@@ -645,6 +769,7 @@ namespace AutoZapret.Android
             HevTunnel.Stop();
 
             try { if (_thread != null) _thread.Join(1500); } catch { }
+            try { if (_hevLogThread != null) _hevLogThread.Join(500); } catch { }
             try { if (_tun != null) _tun.Close(); } catch { }
             _tun = null;
 

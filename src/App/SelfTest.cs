@@ -706,11 +706,32 @@ namespace AutoZapret.App
                     System.IO.File.Exists(System.IO.Path.Combine(engine.LuaDir, "zapret-lib.lua")), "ok");
                 Check("v2: lua/zapret-antidpi.lua на месте",
                     System.IO.File.Exists(System.IO.Path.Combine(engine.LuaDir, "zapret-antidpi.lua")), "ok");
+
+                // Определитель возможностей обязан отличать есть опция или нет:
+                // проверяем на заведомо несуществующем имени, иначе «true всегда»
+                // выглядел бы как поддержка.
+                Check("v2: определитель опций не врёт",
+                    !engine.SupportsOption(AutoZapret.Zapret.EngineKind.V2, "--wf-priority-nonexistent"),
+                    "несуществующая опция не найдена");
+
+                if (engine.SupportsOption(AutoZapret.Zapret.EngineKind.V2, "--wf-priority"))
+                    Check("v2: --wf-priority известна", true, "ok");
+                else
+                    Skip("v2: --wf-priority", "движок старой сборки — приоритет фильтра не передаётся");
             }
             else
             {
                 Skip("v2: движок", engine.UnavailableReason(AutoZapret.Zapret.EngineKind.V2));
-            }            Check("версия прочитана", !string.IsNullOrEmpty(engine.Version), engine.Version);
+            }
+
+            // v1 никогда не знал этой опции, и передавать её нельзя: winws.exe
+            // на незнакомый флаг отказывается стартовать.
+            if (engine.WinwsPath != null)
+                Check("v1: --wf-priority отсутствует",
+                    !engine.SupportsOption(AutoZapret.Zapret.EngineKind.V1, "--wf-priority"),
+                    "в winws.exe такой опции нет — и не должно быть");
+
+            Check("версия прочитана", !string.IsNullOrEmpty(engine.Version), engine.Version);
             Check("WinDivert64.sys на месте",
                 System.IO.File.Exists(System.IO.Path.Combine(engine.BinDir, "WinDivert64.sys")), "ok");
 
@@ -1575,6 +1596,58 @@ namespace AutoZapret.App
                                            s.Profiles[0].Args.Exists(a => a.IndexOf("lua", StringComparison.OrdinalIgnoreCase) >= 0));
 
             Check("стратегии: v2 использует lua", v2HasLua, v2HasLua ? "ok" : "не найдено ни одной");
+
+            TestWinDivertPriority();
+        }
+
+        /// <summary>
+        /// Подстановка приоритета фильтра WinDivert.
+        ///
+        /// Проверяем чистую часть (без движка и без файлов): правила здесь
+        /// неочевидные и молчаливые — лишний флаг означает отказ запуска
+        /// движка, а его отсутствие там, где он нужен, оставляет нас
+        /// в равном приоритете с чужим перехватчиком.
+        /// </summary>
+        private static void TestWinDivertPriority()
+        {
+            List<string> baseArgs = new List<string> { "--wf-tcp-out=443", "--filter-tcp=443" };
+
+            bool added;
+
+            // Движок опцию знает — флаг ставится первым (глобальный параметр).
+            List<string> withFlag = AutoZapret.Zapret.WinwsSupervisor.AddPriorityFlag(
+                baseArgs, true, out added);
+
+            Check("приоритет: флаг добавлен", added && withFlag.Count == baseArgs.Count + 1,
+                withFlag.Count + " аргументов");
+
+            Check("приоритет: значение верное",
+                withFlag[0] == "--wf-priority=" + AutoZapret.Zapret.WinwsSupervisor.WinDivertPriority,
+                withFlag[0]);
+
+            Check("приоритет: остальные аргументы не тронуты",
+                withFlag[1] == "--wf-tcp-out=443" && withFlag[2] == "--filter-tcp=443",
+                withFlag[1] + " | " + withFlag[2]);
+
+            // Движок опцию не знает (v1 и старые сборки v2) — не трогаем вообще.
+            List<string> untouched = AutoZapret.Zapret.WinwsSupervisor.AddPriorityFlag(
+                baseArgs, false, out added);
+
+            Check("приоритет: без поддержки флага нет",
+                !added && ReferenceEquals(untouched, baseArgs), "не добавлен");
+
+            // Стратегия задала приоритет сама — второй раз не добавляем,
+            // иначе у одного параметра окажется два разных значения.
+            List<string> own = new List<string> { "--wf-priority=500", "--filter-tcp=443" };
+            List<string> kept = AutoZapret.Zapret.WinwsSupervisor.AddPriorityFlag(own, true, out added);
+
+            Check("приоритет: свой приоритет стратегии уважается",
+                !added && ReferenceEquals(kept, own), "не переопределён");
+
+            // null вместо списка не должен ронять запуск.
+            List<string> none = AutoZapret.Zapret.WinwsSupervisor.AddPriorityFlag(null, true, out added);
+
+            Check("приоритет: null-список не роняет", added && none.Count == 1, none.Count + " аргументов");
         }
 
         /// <summary>

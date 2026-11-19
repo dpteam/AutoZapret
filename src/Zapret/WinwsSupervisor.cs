@@ -103,7 +103,7 @@ namespace AutoZapret.Zapret
         /// второй раз не повторяем, иначе на чужом процессе получится цикл.
         /// </summary>
         private string StartCore(Strategy strategy, Dictionary<string, string> placeholders,
-                                 List<string> extraArgs, bool retried)
+                                 List<string> extraArgs, bool retried, bool noPriority = false)
         {
             if (strategy == null) return "Стратегия не выбрана.";
 
@@ -155,6 +155,8 @@ namespace AutoZapret.Zapret
 
             List<string> args = strategy.BuildArguments(placeholders);
             if (extraArgs != null && extraArgs.Count > 0) args = MergeArgs(args, extraArgs);
+
+            args = ApplyWinDivertPriority(kind, args, noPriority, out bool priorityAdded);
 
             Log.Info("WINWS", "старт " + kind + " стратегии '" + strategy.Name + "', аргументов: " + args.Count);
 
@@ -221,7 +223,23 @@ namespace AutoZapret.Zapret
 
                         // повторяем ровно один раз: если и теперь занято,
                         // значит это ЧУЖОЙ процесс, и его трогать нельзя
-                        return StartCore(strategy, placeholders, extraArgs, true);
+                        return StartCore(strategy, placeholders, extraArgs, true, noPriority);
+                    }
+
+                    // Приоритет фильтра — новая опция, и её совместимость с
+                    // конкретной сборкой движка ничем не гарантирована: наличие
+                    // строки в exe не значит, что комбинация запустится. Если
+                    // движок отказал сразу, повторяем БЕЗ приоритета: обход
+                    // важнее, чем защита от чужого перехватчика. Ровно один раз.
+                    if (priorityAdded && !noPriority)
+                    {
+                        Log.Warn("WINWS", "движок отказал с --wf-priority=" + WinDivertPriority +
+                                          " (код " + code + ") — пробую без него");
+
+                        lock (_gate) { _process = null; _trackedPids.Clear(); }
+                        ForgetOwn(proc.Id);
+
+                        return StartCore(strategy, placeholders, extraArgs, retried, true);
                     }
 
                     string msg = "winws завершился сразу (код " + code + "). Проверьте аргументы стратегии.";
@@ -254,6 +272,84 @@ namespace AutoZapret.Zapret
                 SetState(ProtectionState.Error, ex.Message);
                 return ex.Message;
             }
+        }
+
+        /// <summary>
+        /// Приоритет нашего фильтра WinDivert.
+        ///
+        /// Зачем он вообще нужен. WinDivert отдаёт пакет только ОДНОМУ
+        /// обработчику на каждом уровне приоритета: сначала самому высокому,
+        /// и только его инъекции уходят следующему. При равных приоритетах
+        /// («0» по умолчанию) порядок не определён — именно поэтому чужой
+        /// winws (служба zapret, забытый экземпляр) молча забирает трафик,
+        /// а наш движок при этом «работает» и ничего не делает.
+        ///
+        /// 2000 — не выдумка: столько же ставит штатный blockcheck zapret2
+        /// (`--wf-priority=2000` в blockcheck2.sh), и это внутри допустимого
+        /// диапазона -30000..30000. Значение меньше максимума намеренно:
+        /// инструмент, которому действительно нужен трафик раньше нас,
+        /// может подняться выше и забрать его.
+        /// </summary>
+        public const int WinDivertPriority = 2000;
+
+        /// <summary>
+        /// Подставить приоритет фильтра, если движок его понимает.
+        ///
+        /// Опция появилась в winws2 сравнительно недавно, поэтому сначала
+        /// спрашиваем сам бинарник (см. EngineLocator.SupportsOption):
+        /// передать незнакомый флаг — значит получить отказ запуска вместо
+        /// обхода. У v1 (winws.exe) такой опции нет никогда, поэтому там
+        /// ничего не трогаем.
+        ///
+        /// Если стратегия уже задаёт приоритет сама — уважаем её выбор.
+        /// </summary>
+        private List<string> ApplyWinDivertPriority(EngineKind kind, List<string> args,
+                                                   bool disabled, out bool added)
+        {
+            added = false;
+
+            if (disabled) return args;
+
+            bool supported = kind == EngineKind.V2 &&
+                             _engine.SupportsOption(EngineKind.V2, "--wf-priority");
+
+            List<string> result = AddPriorityFlag(args, supported, out added);
+
+            if (added) Log.Debug("WINWS", "фильтр WinDivert: приоритет " + WinDivertPriority);
+
+            return result;
+        }
+
+        /// <summary>
+        /// Чистая часть подстановки приоритета — без движка и без файлов,
+        /// чтобы её можно было проверить selftest-ом.
+        ///
+        /// Правила: флаг не ставится, если движок его не знает; не ставится,
+        /// если стратегия уже задала приоритет сама (иначе получится два
+        /// разных значения одного параметра); ставится первым, потому что
+        /// это глобальный параметр winws, а не свойство профиля.
+        /// </summary>
+        public static List<string> AddPriorityFlag(List<string> args, bool supported, out bool added)
+        {
+            added = false;
+
+            List<string> source = args ?? new List<string>();
+
+            if (!supported) return source;
+
+            foreach (string a in source)
+            {
+                if (a != null && a.StartsWith("--wf-priority", StringComparison.OrdinalIgnoreCase))
+                    return source;
+            }
+
+            List<string> result = new List<string>(source.Count + 1);
+            result.Add("--wf-priority=" + WinDivertPriority);
+            result.AddRange(source);
+
+            added = true;
+
+            return result;
         }
 
         /// <summary>

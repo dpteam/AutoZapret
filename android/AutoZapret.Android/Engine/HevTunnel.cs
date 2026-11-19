@@ -26,12 +26,24 @@ namespace AutoZapret.Android.Engine
         private const string Lib = "hev-socks5-tunnel";
 
         /// <summary>
-        /// MTU туннеля. Одно значение на всё приложение: его же передаёт
-        /// VpnService.Builder.SetMtu. Если значения разойдутся, крупные
-        /// пакеты (картинки, тела ответов) приходят битыми, и страница
-        /// остаётся со скелетом при живых соединениях.
+        /// MTU туннеля.
+        ///
+        /// 8500 — не опечатка и не «оптимизация». Это ровно то значение,
+        /// с которым работает ByeByeDPI (см. refs/byebyedpi
+        /// NativeSession.kt: `appendLine("  mtu: 8500")`).
+        ///
+        /// Почему это принципиально. ClientHello современного Chrome —
+        /// 1991 байт (снято с этого телефона: `split cancel: ... n=1991`).
+        /// При MTU 1500 он не влезает в один сегмент (1991 + 40 = 2031) и
+        /// уходит двумя: 1460 + 531. DPI собирает их обратно и видит SNI,
+        /// а все техники byedpi рассчитаны на целый hello в одном куске —
+        /// в логе это `split cancel`, то есть разрез ОТМЕНЁН. Снаружи
+        /// выглядит так: мелкие запросы (curl, hello 296 Б) проходят
+        /// мегабайтами, а браузер висит до ERR_TIMED_OUT.
+        ///
+        /// Значение обязано совпадать с builder.SetMtu и с конфигом hev.
         /// </summary>
-        public const int Mtu = 1500;
+        public const int Mtu = 8500;
 
         /// <summary>
         /// Запустить туннель. Блокирует поток до Stop(). 0 — успех, иначе -1.
@@ -47,8 +59,14 @@ namespace AutoZapret.Android.Engine
         private static extern void Stats(out IntPtr txPackets, out IntPtr txBytes,
                                          out IntPtr rxPackets, out IntPtr rxBytes);
 
-        /// <summary>Собрать YAML ровно в том виде, который ждёт hev.</summary>
+        /// <summary>Собрать YAML ровно в том виде, который ждёт hev (логи в /dev/null).</summary>
         public static string BuildConfig(string tunIpv4, string tunIpv6, int socksPort)
+        {
+            return BuildConfig(tunIpv4, tunIpv6, socksPort, "/dev/null");
+        }
+
+        /// <summary>Собрать YAML ровно в том виде, который ждёт hev.</summary>
+        public static string BuildConfig(string tunIpv4, string tunIpv6, int socksPort, string logPath)
         {
             // tunnel.ipv4/ipv6 обязаны совпадать с адресами, которые выдан
             // VpnService. mtu — ровно тот же, что в builder.SetMtu.
@@ -72,11 +90,32 @@ namespace AutoZapret.Android.Engine
                 "  ipv4: " + tunIpv4 + "\n" +
                 ipv6Line +
                 "  icmp: 'reply'\n" +
+                // offload НЕ задаём намеренно: у ByeByeDPI его тоже нет, и
+                // jumbo остаётся включённым по умолчанию. Вместе с mtu 8500
+                // это и есть рабочая комбинация: супер-сегмент уходит в tun
+                // целиком, а не дробится на 1460+531.
                 "socks5:\n" +
                 "  port: " + socksPort + "\n" +
                 "  address: 127.0.0.1\n" +
-                "  udp: 'udp'\n";
+                "  udp: 'udp'\n" +
+                "misc:\n" +
+                // Логи hev в файл, а не в stdout: в Android-приложении stdout
+                // уходит в /dev/null, и «log-file: stdout» означает «логов нет».
+                // Файл потом читает фоновый поток и отдаёт в журнал приложения.
+                "  log-file: " + logPath + "\n" +
+                // Как у ByeByeDPI: стек задачи под 64-КБ супер-сегмент.
+                // Меньше — hev не сможет отдать целый hello одним куском.
+                "  task-stack-size: 81920\n" +
+                "  log-level: " + LogLevel + "\n";
         }
+
+        /// <summary>
+        /// Уровень логов hev: debug / info / warn / error.
+        ///
+        /// debug включается флагом приложения и нужен для разбора поломок:
+        /// видно каждый прочитанный из tun пакет и каждое открытие сессии.
+        /// </summary>
+        public static string LogLevel = "warn";
 
         /// <summary>
         /// Блокирующий запуск. Возвращает текст ошибки или null.

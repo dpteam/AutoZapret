@@ -196,6 +196,23 @@ namespace AutoZapret.Android
                 changed = true;
             }
 
+            string requestedHevLog = intent.GetStringExtra("hevLog");
+
+            // Уровень логов hev — самостоятельная настройка. Раньше он
+            // сохранялся только внутри `if (changed)`, поэтому команда
+            // `SET --es hevLog debug` без других параметров молча ничего не
+            // делала: `changed` оставался false, и значение не записывалось.
+            if (!string.IsNullOrEmpty(requestedHevLog))
+            {
+                if (requestedHevLog != "debug" && requestedHevLog != "info" &&
+                    requestedHevLog != "warn" && requestedHevLog != "error")
+                {
+                    requestedHevLog = "warn";
+                }
+
+                changed = true;
+            }
+
             if (changed)
             {
                 using (ISharedPreferencesEditor editor = prefs.Edit())
@@ -214,6 +231,9 @@ namespace AutoZapret.Android
                     string engineMode = intent.GetStringExtra("engineMode");
 
                     if (!string.IsNullOrEmpty(engineMode)) editor.PutString("engine_mode", engineMode);
+
+                    if (!string.IsNullOrEmpty(requestedHevLog))
+                        editor.PutString("hev_log", requestedHevLog);
 
                     editor.Apply();
                 }
