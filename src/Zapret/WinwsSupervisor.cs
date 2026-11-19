@@ -796,7 +796,7 @@ namespace AutoZapret.Zapret
                             // службу zapret, которой нет.
                             if (IsOwn(pid) || IsOurEnginePath(p)) continue;
 
-                            descr.Add(name + " pid " + pid);
+                            descr.Add(name + " pid " + pid + OwnerSuffix(p));
                         }
                         catch { descr.Add(name + " pid ?"); }
                         finally { try { p.Dispose(); } catch { } }
@@ -809,6 +809,82 @@ namespace AutoZapret.Zapret
             {
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Откуда взят чужой winws — путь к exe, чтобы человек понимал, что
+        /// именно останавливать. «winws pid 1234» без пути бесполезен: служба
+        /// zapret, портативная сборка и случайно запущенный .bat выглядят
+        /// одинаково, а лечатся по-разному.
+        ///
+        /// Путь читается через MainModule, а он требует прав: у чужого процесса
+        /// из-под администратора без прав доступа будет отказ. Поэтому пусто,
+        /// а не исключение — сообщение о чужом winws важнее подробности.
+        /// </summary>
+        private static string OwnerSuffix(Process p)
+        {
+            try
+            {
+                string path = p.MainModule == null ? null : p.MainModule.FileName;
+
+                if (string.IsNullOrEmpty(path)) return "";
+
+                return " (" + path + ")";
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        /// <summary>
+        /// Другие известные перехватчики, которые тоже открывают WinDivert.
+        ///
+        /// Зачем: `DetectForeignWinws` ищет ровно `winws`/`winws2`, потому что
+        /// по имени их и надо останавливать. Но WinDivert — общий драйвер, и
+        /// его держат сторонние обходчики. При равных приоритетах пакет уходит
+        /// только одному из нас, и наш движок «работает», не получая трафика.
+        /// С `--wf-priority=2000` мы забираем пакеты первыми, но человеку всё
+        /// равно полезно знать, что рядом работает второй обходчик: он может
+        /// сам мешать, и его служба поднимется снова после перезагрузки.
+        ///
+        /// Список намеренно короткий и по точным именам процессов: любое
+        /// расширение списка — это риск ложного предупреждения, а
+        /// предупреждения, которые срабатывают зря, перестают читать.
+        /// </summary>
+        private static readonly string[] OtherDiverters =
+        {
+            "goodbyedpi",       // GoodbyeDPI — тот же WinDivert
+            "spoofdpi",
+            "byedpi",
+            "ciadpi"
+        };
+
+        /// <summary>
+        /// Найти работающие сторонние перехватчики. Пустая строка — никого нет.
+        /// Ничего не останавливает и не блокирует.
+        /// </summary>
+        public static string DetectOtherDiverters()
+        {
+            List<string> found = new List<string>();
+
+            foreach (string name in OtherDiverters)
+            {
+                try
+                {
+                    Process[] all = Process.GetProcessesByName(name);
+
+                    foreach (Process p in all)
+                    {
+                        try { found.Add(name + " pid " + p.Id + OwnerSuffix(p)); }
+                        catch { found.Add(name + " pid ?"); }
+                        finally { try { p.Dispose(); } catch { } }
+                    }
+                }
+                catch { }
+            }
+
+            return found.Count == 0 ? "" : string.Join(", ", found.ToArray());
         }
 
         /// <summary>
