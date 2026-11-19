@@ -190,6 +190,36 @@
           <div class="row-hint mono" id="tune-line"></div>
         </div>
 
+        <div class="row">
+          <div>
+            <div class="row-label">Файл для друга (.azconf.json)</div>
+            <div class="row-hint">
+              Одна стратегия одним файлом: это данные, а не программа — друг увидит
+              содержимое до добавления, и запустить файл нельзя
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="text" id="share-author" placeholder="подпись" style="width:120px" spellcheck="false">
+            <button class="btn primary" id="btn-share-strategy">Поделиться</button>
+            <button class="btn" id="btn-import-conf">Импорт файла</button>
+          </div>
+          <input type="file" id="file-import-conf" accept=".json,.azconf" multiple style="display:none">
+        </div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Выбранная стратегия</div>
+            <div class="row-hint">
+              Копия пригодится, чтобы поправить одну опцию и не потерять исходную.
+              Удалить можно только свою — стратегию набора вернёт обновление
+            </div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn" id="btn-copy-strategy">Копировать</button>
+            <button class="btn danger" id="btn-delete-strategy">Удалить свою</button>
+          </div>
+        </div>
+
         <div class="row-hint mono" id="custom-strategies-status"></div>
         <div class="mini-log" id="custom-strategies-log" style="display:none;max-height:200px"></div>
       </div>

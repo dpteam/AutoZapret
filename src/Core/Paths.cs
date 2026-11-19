@@ -82,6 +82,17 @@ namespace AutoZapret.Core
         }
 
         /// <summary>
+        /// Куда складывать `.azconf.json` — файлы для обмена с другим человеком.
+        ///
+        /// Отдельно от `.bat`: там папка на каждый движок, здесь одна общая,
+        /// потому что в самом файле уже написано, какой это движок.
+        /// </summary>
+        public static string SharedConfDir
+        {
+            get { return Path.Combine(ExportedStrategiesDir, "shared"); }
+        }
+
+        /// <summary>
         /// Создаёт каталоги, без которых приложение не может работать.
         /// Вызывать один раз на старте, до первого Log.Write.
         /// </summary>

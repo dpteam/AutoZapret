@@ -89,6 +89,9 @@ namespace AutoZapret.App
                 Section("свои стратегии и .bat");
                 TestCustomStrategies();
 
+                Section("обмен .azconf.json");
+                TestStrategyConf();
+
                 Section("квотирование аргументов");
                 TestCommandLine();
 
@@ -1246,6 +1249,235 @@ namespace AutoZapret.App
             }
         }
 
+        /// <summary>
+        /// Обмен одним файлом `.azconf.json`.
+        ///
+        /// Проверяем ровно то, ради чего формат и делался: файл — это данные,
+        /// которые нельзя заставить читать чужие файлы, ходить в сеть или
+        /// вылезать из каталога. Плюс круг export → import: свой файл обязан
+        /// приниматься обратно без потерь.
+        /// </summary>
+        private static void TestStrategyConf()
+        {
+            AutoZapret.Zapret.Strategy source = new AutoZapret.Zapret.Strategy
+            {
+                Id = "t.conf",
+                Name = "Обмен проверка",
+                Engine = "v1",
+                Note = "проверка формата",
+                Custom = true
+            };
+
+            source.GlobalArgs.Add("--wf-tcp=80,443");
+
+            source.Profiles.Add(new AutoZapret.Zapret.StrategyProfile
+            {
+                Name = "p1",
+                Label = "tls",
+                Args = new List<string>
+                {
+                    "--filter-tcp=443",
+                    "--dpi-desync=split2",
+                    "--dpi-desync-fake-tls=${BIN}/tls_clienthello_www_google_com.bin",
+                    "--hostlist=${LISTS}/list-general.txt"
+                }
+            });
+
+            string text = AutoZapret.Zapret.StrategyConf.Build(source, "Вася", "0.2.0");
+
+            Check("конфиг: текст собран", text != null && text.Length > 100, text == null ? "null" : text.Length + " байт");
+            Check("конфиг: kind = azconf", text.Contains("\"azconf\""), "ok");
+            Check("конфиг: schema указана", text.Contains("\"schema\":1") || text.Contains("\"schema\": 1"), "ok");
+            Check("конфиг: автор записан", text.Contains("Вася"), "ok");
+
+            AutoZapret.Zapret.ConfImportResult parsed =
+                AutoZapret.Zapret.StrategyConf.Parse(text, "shared.");
+
+            Check("конфиг: свой файл принимается", parsed.Ok,
+                parsed.Ok ? "ok" : parsed.Error);
+            Check("конфиг: id с префиксом",
+                parsed.Strategy != null && parsed.Strategy.Id.StartsWith("shared.", StringComparison.Ordinal),
+                parsed.Strategy == null ? "-" : parsed.Strategy.Id);
+            Check("конфиг: помечен как своя",
+                parsed.Strategy != null && parsed.Strategy.Custom, "ok");
+            Check("конфиг: профилей столько же",
+                parsed.Strategy != null && parsed.Strategy.Profiles.Count == 1,
+                parsed.Strategy == null ? "-" : parsed.Strategy.Profiles.Count.ToString());
+            Check("конфиг: аргументов столько же",
+                parsed.Strategy != null && parsed.Strategy.Profiles[0].Args.Count == source.Profiles[0].Args.Count,
+                parsed.Strategy == null ? "-" : parsed.Strategy.Profiles[0].Args.Count.ToString());
+            Check("конфиг: автор попал в заметку",
+                parsed.Strategy != null && parsed.Strategy.Note.Contains("Вася"),
+                parsed.Strategy == null ? "-" : parsed.Strategy.Note);
+
+            // ---- что обязано быть отклонено
+            //
+            // Каждый случай — это способ заставить чужой компьютер читать то,
+            // что выбрал автор файла. Принимать «частично» нельзя: профиль
+            // останется, а списка, на который он ссылается, не будет.
+            string[] dangerous =
+            {
+                "--hostlist=C:\\Windows\\System32\\drivers\\etc\\hosts",
+                "--hostlist=\\\\server\\share\\list.txt",
+                "--hostlist=../../secret.txt",
+                "--hostlist=https://example.com/list.txt",
+                "--hostlist=%BIN%\\list.txt",
+                "--ipset=file:///C:/lists/ipset.txt"
+            };
+
+            int rejected = 0;
+            string firstAccepted = "";
+
+            foreach (string arg in dangerous)
+            {
+                string why = AutoZapret.Zapret.StrategyConf.Unsafe(arg);
+
+                if (why == null) { firstAccepted = arg; continue; }
+
+                rejected++;
+            }
+
+            Check("конфиг: опасные аргументы отклонены", rejected == dangerous.Length,
+                rejected + " из " + dangerous.Length + (firstAccepted.Length > 0 ? ", пропущен: " + firstAccepted : ""));
+
+            Check("конфиг: плейсхолдер разрешён",
+                AutoZapret.Zapret.StrategyConf.Unsafe("--hostlist=${LISTS}/list.txt") == null, "ok");
+            Check("конфиг: обычный флаг разрешён",
+                AutoZapret.Zapret.StrategyConf.Unsafe("--dpi-desync=multisplit") == null, "ok");
+
+            // ---- испорченный файл
+            AutoZapret.Zapret.ConfImportResult empty =
+                AutoZapret.Zapret.StrategyConf.Parse("", "shared.");
+            Check("конфиг: пустой файл отклонён", !empty.Ok && empty.Error.Length > 0, empty.Error);
+
+            AutoZapret.Zapret.ConfImportResult notJson =
+                AutoZapret.Zapret.StrategyConf.Parse("{это не json", "shared.");
+            Check("конфиг: мусор отклонён", !notJson.Ok, notJson.Error);
+
+            AutoZapret.Zapret.ConfImportResult wrongKind =
+                AutoZapret.Zapret.StrategyConf.Parse(
+                    "{\"schema\":1,\"kind\":\"something\",\"strategy\":{\"name\":\"x\"}}", "shared.");
+            Check("конфиг: чужой вид отклонён", !wrongKind.Ok, wrongKind.Error);
+
+            AutoZapret.Zapret.ConfImportResult futureSchema =
+                AutoZapret.Zapret.StrategyConf.Parse(
+                    "{\"schema\":99,\"kind\":\"azconf\",\"strategy\":{\"name\":\"x\"}}", "shared.");
+            Check("конфиг: будущая версия отклонена", !futureSchema.Ok, futureSchema.Error);
+
+            AutoZapret.Zapret.ConfImportResult noProfiles =
+                AutoZapret.Zapret.StrategyConf.Parse(
+                    "{\"schema\":1,\"kind\":\"azconf\",\"strategy\":{\"name\":\"x\",\"profiles\":[]}}", "shared.");
+            Check("конфиг: без профилей отклонён", !noProfiles.Ok, noProfiles.Error);
+
+            // ---- экспорт не должен выносить абсолютные пути наружу
+            //
+            // В каталоге могут быть стратегии, разобранные из чужого .bat с
+            // абсолютными путями (импорт .bat такие допускает осознанно).
+            // В файл для друга они попасть не должны.
+            AutoZapret.Zapret.Strategy leaky = new AutoZapret.Zapret.Strategy
+            {
+                Id = "t.leaky",
+                Name = "утечка путей",
+                Engine = "v1"
+            };
+
+            leaky.Profiles.Add(new AutoZapret.Zapret.StrategyProfile
+            {
+                Name = "p1",
+                Args = new List<string> { "--hostlist=C:\\Users\\Вася\\list.txt" }
+            });
+
+            string leakyText = AutoZapret.Zapret.StrategyConf.Build(leaky, "", "0.2.0");
+
+            Check("конфиг: абсолютный путь заменён плейсхолдером",
+                leakyText.Contains("${BIN}/list.txt"), "ok");
+            Check("конфиг: имени пользователя в файле нет",
+                leakyText.IndexOf("Вася", StringComparison.Ordinal) < 0, "ok");
+
+            // ---- имя файла безопасно
+            string fileName = AutoZapret.Zapret.StrategyConf.FileName(source);
+
+            Check("конфиг: имя файла с расширением",
+                fileName.EndsWith(".azconf.json", StringComparison.Ordinal), fileName);
+            Check("конфиг: в имени нет запрещённых символов",
+                fileName.IndexOfAny(new[] { '/', '\\', ':', '*', '?', '"', '<', '>', '|' }) < 0, fileName);
+
+            // Две стратегии с русскими именами обязаны дать РАЗНЫЕ файлы.
+            // Иначе второй экспорт молча затирает первый, и человек этого не
+            // видит: он смотрит на имя стратегии, а не на имя файла.
+            string otherName = AutoZapret.Zapret.StrategyConf.FileName(
+                new AutoZapret.Zapret.Strategy { Name = "Другое название" });
+
+            Check("конфиг: разные имена — разные файлы", fileName != otherName,
+                fileName + " / " + otherName);
+
+            // ---- импорт через сервис: id не должен затирать существующий
+            using (AutoZapret.Zapret.ZapretService service = new AutoZapret.Zapret.ZapretService())
+            {
+                List<string> warnings = new List<string>();
+
+                string first = service.ImportConf(text, "shared.", warnings);
+                string second = service.ImportConf(text, "shared.", warnings);
+
+                Check("конфиг: импорт дал id", first != null, first ?? warnings.Count.ToString() + " предупр.");
+                Check("конфиг: повторный импорт не затирает первый",
+                    first != null && second != null && !string.Equals(first, second, StringComparison.OrdinalIgnoreCase),
+                    first + " / " + second);
+
+                // Убираем за собой: свои стратегии в selftest не должны оставаться.
+                if (first != null) service.DeleteCustom(first);
+                if (second != null) service.DeleteCustom(second);
+
+                // Удалить стратегию набора нельзя: её вернёт обновление, и
+                // «удаление» было бы ложью. Проверяем отказ, а не молчание.
+                AutoZapret.Zapret.Strategy setStrategy = service.Strategies.Find("flowseal.general");
+
+                if (setStrategy != null)
+                {
+                    string refused = service.DeleteCustom(setStrategy.Id);
+
+                    Check("конфиг: стратегию набора удалить нельзя",
+                        refused != null && refused.IndexOf("набора", StringComparison.Ordinal) >= 0,
+                        refused ?? "удалилась (!)");
+
+                    Check("конфиг: стратегия набора осталась",
+                        service.Strategies.Find(setStrategy.Id) != null, "ok");
+                }
+                else
+                {
+                    Skip("конфиг: удаление набора", "нет flowseal.general — кэш не загружен");
+                }
+
+                // Копия: нужна, чтобы поправить одну опцию и не потерять исходную.
+                string copySource = service.ImportConf(text, "shared.", warnings);
+
+                if (copySource != null)
+                {
+                    string copyId = service.DuplicateCustom(copySource, "копия проверки");
+
+                    Check("конфиг: копия создана",
+                        copyId != null && copyId.StartsWith("custom.", StringComparison.OrdinalIgnoreCase),
+                        copyId ?? "нет");
+
+                    AutoZapret.Zapret.Strategy original = service.Strategies.Find(copySource);
+                    AutoZapret.Zapret.Strategy duplicate = service.Strategies.Find(copyId);
+
+                    Check("конфиг: копия отличается id",
+                        duplicate != null && !string.Equals(copyId, copySource, StringComparison.OrdinalIgnoreCase),
+                        copyId ?? "-");
+                    Check("конфиг: у копии те же аргументы",
+                        original != null && duplicate != null &&
+                        original.Profiles.Count == duplicate.Profiles.Count,
+                        duplicate == null ? "-" : duplicate.Profiles.Count.ToString());
+                    Check("конфиг: копия помечена как своя",
+                        duplicate != null && duplicate.Custom, "ok");
+
+                    service.DeleteCustom(copyId);
+                    service.DeleteCustom(copySource);
+                }
+            }
+        }
+
         private static void TestCommandLine()
         {
             // правила квотирования Windows
@@ -1915,13 +2147,35 @@ namespace AutoZapret.App
             // id с префиксом автора набора: flowseal.* — штатный каталог,
             // stressozz.* — импортированный из Zapret-Manager (73 стратегии
             // другого автора, у них те же флаги winws, поэтому тот же движок v1).
-            bool v1IdsOk = v1.TrueForAll(s =>
+            //
+            // Свои стратегии (custom.*, shared.*) сюда НЕ входят: они живут в
+            // том же хранилище и с тем же движком, но их id выбирает человек
+            // или имя файла, а не автор набора. Проверять их на «префикс
+            // автора» — значит требовать, чтобы у чужой стратегии было наше имя.
+            List<AutoZapret.Zapret.Strategy> v1Sets = v1.FindAll(s => !s.Custom);
+            List<AutoZapret.Zapret.Strategy> v2Sets = v2.FindAll(s => !s.Custom);
+
+            bool v1IdsOk = v1Sets.TrueForAll(s =>
                 s.Id.StartsWith("flowseal.", StringComparison.Ordinal) ||
                 s.Id.StartsWith("stressozz.", StringComparison.Ordinal));
-            bool v2IdsOk = v2.TrueForAll(s => s.Id.StartsWith("zapret2.", StringComparison.Ordinal));
+            bool v2IdsOk = v2Sets.TrueForAll(s => s.Id.StartsWith("zapret2.", StringComparison.Ordinal));
 
             Check("стратегии: id v1 с префиксом автора набора", v1IdsOk, "ok");
             Check("стратегии: id v2 с префиксом zapret2", v2IdsOk, "ok");
+
+            // Своя стратегия не должна выдавать себя за набор: иначе в списке
+            // нельзя понять, откуда она, и обновление набора выглядит как
+            // «моя стратегия изменилась».
+            int impostors = 0;
+
+            foreach (AutoZapret.Zapret.Strategy s in v1)
+                if (s.Custom &&
+                    (s.Id.StartsWith("flowseal.", StringComparison.Ordinal) ||
+                     s.Id.StartsWith("stressozz.", StringComparison.Ordinal) ||
+                     s.Id.StartsWith("zapret2.", StringComparison.Ordinal)))
+                    impostors++;
+
+            Check("стратегии: свои не выдают себя за набор", impostors == 0, impostors + " шт.");
 
             int stressozz = v1.FindAll(s => s.Id.StartsWith("stressozz.", StringComparison.Ordinal)).Count;
             Check("стратегии: набор StressOzz на месте", stressozz >= 70, stressozz + " шт.");

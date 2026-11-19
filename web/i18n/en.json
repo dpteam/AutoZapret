@@ -368,5 +368,13 @@
   "Перебрать файлы того же вида, что в выбранной стратегии, и оставить рабочий. Занимает время: каждый вариант — запуск движка и проверка": "Try files of the same kind as in the selected strategy and keep the working one. Takes time: every variant is an engine start and a probe",
   "Перезапустить": "Restart",
   "Применять стратегию сразу": "Apply strategy immediately",
-  "Перезапускать службу при смене стратегии. Выключено: перезапуск рвёт все соединения на несколько секунд": "Restart the service when the strategy changes. Off by default: a restart drops every connection for a few seconds"
+  "Перезапускать службу при смене стратегии. Выключено: перезапуск рвёт все соединения на несколько секунд": "Restart the service when the strategy changes. Off by default: a restart drops every connection for a few seconds",
+  "Файл для друга (.azconf.json)": "File for a friend (.azconf.json)",
+  "Одна стратегия одним файлом: это данные, а не программа — друг увидит содержимое до добавления, и запустить файл нельзя": "One strategy in one file: this is data, not a program - the other person sees the contents before adding it, and the file cannot be executed",
+  "Поделиться": "Share",
+  "Импорт файла": "Import file",
+  "Выбранная стратегия": "Selected strategy",
+  "Копия пригодится, чтобы поправить одну опцию и не потерять исходную. Удалить можно только свою — стратегию набора вернёт обновление": "A copy is handy when you want to change one option without losing the original. Only your own can be deleted - a set strategy comes back on update",
+  "Копировать": "Copy",
+  "Удалить свою": "Delete mine"
 }

@@ -562,6 +562,137 @@ namespace AutoZapret.Zapret
             return copy.Id;
         }
 
+        // ------------------------------------------------------- обмен файлами
+
+        /// <summary>
+        /// Записать стратегию в `.azconf.json` для другого человека.
+        /// Возвращает путь или текст ошибки.
+        /// </summary>
+        public string ExportConf(string strategyId, string author, string appVersion, string dir)
+        {
+            EnsureStrategies();
+
+            Strategy strategy = _store.Find(strategyId);
+
+            if (strategy == null) return "стратегия не найдена: " + strategyId;
+
+            if (string.IsNullOrEmpty(dir)) dir = Paths.SharedConfDir;
+
+            return StrategyConf.Write(strategy, author, appVersion, dir);
+        }
+
+        /// <summary>
+        /// Принять `.azconf.json` из текста.
+        ///
+        /// Текст, а не путь: файл выбирает человек в окне, и до моста доезжает
+        /// содержимое. Это же делает импорт возможным на Android.
+        ///
+        /// Возвращает id добавленной стратегии или null; причина — в warnings.
+        /// </summary>
+        public string ImportConf(string text, string prefix, List<string> warnings)
+        {
+            EnsureStrategies();
+
+            ConfImportResult parsed = StrategyConf.Parse(text, prefix);
+
+            if (!parsed.Ok)
+            {
+                if (warnings != null) warnings.Add(parsed.Error);
+                return null;
+            }
+
+            if (warnings != null) warnings.AddRange(parsed.Warnings);
+
+            // Одноимённый id не должен молча затирать уже существующую свою
+            // стратегию: человек импортирует файл друга, а теряет свою.
+            string id = parsed.Strategy.Id;
+            int suffix = 2;
+
+            while (_store.Find(id) != null)
+            {
+                id = parsed.Strategy.Id + "-" + suffix;
+                suffix++;
+            }
+
+            parsed.Strategy.Id = id;
+
+            _store.AddOrReplace(parsed.Strategy);
+
+            try
+            {
+                Directory.CreateDirectory(Paths.StrategiesDir);
+                _store.SaveCustom(Paths.CustomStrategiesFile);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("WINWS", "импортированный конфиг не сохранился: " + ex.Message);
+            }
+
+            Log.Info("WINWS", "импортирован конфиг: " + id + " (" + parsed.Strategy.Profiles.Count + " профилей)");
+
+            return id;
+        }
+
+        /// <summary>
+        /// Удалить свою стратегию.
+        ///
+        /// Только свою: набор движка переимпортируется при обновлении, и
+        /// удалять из него запись значит врать самому себе — она вернётся.
+        /// </summary>
+        public string DeleteCustom(string strategyId)
+        {
+            EnsureStrategies();
+
+            Strategy strategy = _store.Find(strategyId);
+
+            if (strategy == null) return "стратегия не найдена: " + strategyId;
+
+            if (!strategy.Custom)
+                return "это стратегия набора движка: её удалит только обновление набора";
+
+            _store.RemoveByIds(new[] { strategyId });
+
+            try
+            {
+                Directory.CreateDirectory(Paths.StrategiesDir);
+                _store.SaveCustom(Paths.CustomStrategiesFile);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("WINWS", "удаление своей стратегии не сохранилось: " + ex.Message);
+                return "не сохранил: " + ex.Message;
+            }
+
+            Log.Info("WINWS", "удалена своя стратегия: " + strategyId);
+
+            return null;
+        }
+
+        /// <summary>Скопировать стратегию как свою. Возвращает новый id или ошибку.</summary>
+        public string DuplicateCustom(string strategyId, string newName)
+        {
+            EnsureStrategies();
+
+            Strategy source = _store.Find(strategyId);
+
+            if (source == null) return "стратегия не найдена: " + strategyId;
+
+            string name = string.IsNullOrWhiteSpace(newName) ? source.Name + " (копия)" : newName.Trim();
+
+            string id = "custom." + StrategyConf.IdPart(name);
+
+            int suffix = 2;
+            string baseId = id;
+
+            while (_store.Find(id) != null)
+            {
+                id = baseId + "-" + suffix;
+                suffix++;
+            }
+
+            return SaveCustomStrategy(source, id, name, source.Note);
+        }
+
         public List<Dictionary<string, object>> DescribeStrategies(string engine = null)
         {
             EnsureStrategies();

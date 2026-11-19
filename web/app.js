@@ -795,6 +795,13 @@
         // (список только что перестроен) — то, что прислало ядро.
         var wanted = sel.value || state.strategyId || "";
 
+        // Список запоминаем здесь же, а не только в обработчике сообщения:
+        // по нему ищет выбранную стратегию selectedStrategy(), и кнопки
+        // «Копировать»/«Удалить свою»/«Поделиться» включаются именно по ней.
+        // Держать копию списка в двух местах — значит однажды получить
+        // «кнопка не нажимается, хотя стратегия выбрана».
+        strategyItems = items || [];
+
         sel.innerHTML = "";
 
         if (!items || items.length === 0) {
@@ -830,6 +837,7 @@
         }
 
         updateStrategyNote(items);
+        updateCustomButtons();
     }
 
     function hasOption(select, value) {
@@ -837,6 +845,36 @@
             if (select.options[i].value === value) return true;
         }
         return false;
+    }
+
+    /**
+     * Найти выбранную стратегию в последнем списке.
+     *
+     * Нужно кнопкам «Копировать»/«Удалить свою»/«Поделиться»: они работают с
+     * тем, что выбрано, и должны быть недоступны, когда не выбрано ничего.
+     * Флаг `custom` приходит с сервера — по нему и решается, можно ли удалять.
+     */
+    function selectedStrategy() {
+        var sel = document.getElementById("strategy-select");
+        if (!sel || !sel.value) return null;
+
+        for (var i = 0; i < strategyItems.length; i++)
+            if (strategyItems[i].id === sel.value) return strategyItems[i];
+
+        return null;
+    }
+
+    function updateCustomButtons() {
+        var found = selectedStrategy();
+
+        var del = document.getElementById("btn-delete-strategy");
+        if (del) del.disabled = !found || !found.custom;
+
+        var copy = document.getElementById("btn-copy-strategy");
+        if (copy) copy.disabled = !found;
+
+        var share = document.getElementById("btn-share-strategy");
+        if (share) share.disabled = !found;
     }
 
     function updateStrategyNote(items) {
@@ -926,6 +964,137 @@
             text("custom-strategies-status", "Подбираю фейк: это долго, до нескольких минут");
             send("strategy.tuneFakes", { id: id, max: 30, save: true });
         });
+
+        // ---- обмен одним файлом
+        var share = document.getElementById("btn-share-strategy");
+
+        if (share) share.addEventListener("click", function () {
+            var found = selectedStrategy();
+
+            if (!found) {
+                text("custom-strategies-status", "Сначала выберите стратегию");
+                return;
+            }
+
+            var authorField = document.getElementById("share-author");
+            var author = authorField ? authorField.value.trim() : "";
+
+            share.disabled = true;
+            text("custom-strategies-status", "Готовлю файл…");
+
+            send("strategy.share", { id: found.id, author: author });
+        });
+
+        var importConf = document.getElementById("btn-import-conf");
+        var confFile = document.getElementById("file-import-conf");
+
+        if (importConf && confFile) {
+            importConf.addEventListener("click", function () { confFile.click(); });
+
+            confFile.addEventListener("change", function () {
+                var chosen = confFile.files ? Array.prototype.slice.call(confFile.files) : [];
+                confFile.value = "";
+                if (!chosen.length) return;
+
+                // Больше 50 файлов — это уже архив. Читать его в интерфейсе
+                // незачем, а каждый файл проверяется отдельно.
+                if (chosen.length > 50) chosen = chosen.slice(0, 50);
+
+                // Чистим ДО чтения: readTexts пишет в этот же журнал «файл
+                // больше 512 КБ, пропущен», и очистка после чтения стирала бы
+                // именно те строки, ради которых журнал и нужен.
+                clearCustomLog();
+                text("custom-strategies-status", "Читаю файлов: " + chosen.length + "…");
+
+                readTexts(chosen, 0, [], function (files) {
+                    if (!files.length) {
+                        text("custom-strategies-status", "Ни один файл не прочитался");
+                        return;
+                    }
+
+                    text("custom-strategies-status", "Проверяю файлов: " + files.length + "…");
+                    send("strategy.importConf", { files: files });
+                });
+            });
+        }
+
+        // ---- копия и удаление
+        var copy = document.getElementById("btn-copy-strategy");
+
+        if (copy) copy.addEventListener("click", function () {
+            var found = selectedStrategy();
+
+            if (!found) {
+                text("custom-strategies-status", "Сначала выберите стратегию");
+                return;
+            }
+
+            copy.disabled = true;
+            text("custom-strategies-status", "Копирую…");
+
+            send("strategy.duplicate", { id: found.id, name: found.name + " (копия)" });
+        });
+
+        var remove = document.getElementById("btn-delete-strategy");
+
+        if (remove) remove.addEventListener("click", function () {
+            var found = selectedStrategy();
+
+            if (!found) {
+                text("custom-strategies-status", "Сначала выберите стратегию");
+                return;
+            }
+
+            if (!found.custom) {
+                text("custom-strategies-status",
+                     "Это стратегия набора движка: её вернёт обновление набора");
+                return;
+            }
+
+            if (!window.confirm(
+                "Удалить свою стратегию «" + found.name + "»?\n\n" +
+                "Она исчезнет из списка. Стратегии набора движка останутся.\n" +
+                "Если она уже сохранена файлом — файл не тронется.")) return;
+
+            remove.disabled = true;
+            text("custom-strategies-status", "Удаляю…");
+
+            send("strategy.delete", { id: found.id });
+        });
+
+        updateCustomButtons();
+    }
+
+    /**
+     * Прочитать выбранные файлы как текст (UTF-8).
+     *
+     * `.azconf.json` — это JSON, и кодировка у него одна. Ограничение размера
+     * не «на всякий случай»: файл на 100 МБ от чужого человека подвесит окно.
+     */
+    function readTexts(list, index, acc, done) {
+        if (index >= list.length) { done(acc); return; }
+
+        var file = list[index];
+
+        if (file.size > 512 * 1024) {
+            appendCustomLog("! " + file.name + ": файл больше 512 КБ, пропущен");
+            readTexts(list, index + 1, acc, done);
+            return;
+        }
+
+        var reader = new FileReader();
+
+        reader.onload = function () {
+            acc.push({ name: file.name, text: String(reader.result || "") });
+            readTexts(list, index + 1, acc, done);
+        };
+
+        reader.onerror = function () {
+            appendCustomLog("! " + file.name + ": не прочитался");
+            readTexts(list, index + 1, acc, done);
+        };
+
+        reader.readAsText(file, "utf-8");
     }
 
     var tuneRunning = false;
@@ -1075,8 +1244,69 @@
         (msg.warnings || []).forEach(function (w) { appendCustomLog("! " + w); });
     }
 
-    function renderTuned(msg) {
-        setTuneRunning(false);
+    function renderShared(msg) {
+        var share = document.getElementById("btn-share-strategy");
+        if (share) share.disabled = false;
+
+        if (!msg.ok) {
+            text("custom-strategies-status", "Не получилось: " + (msg.error || "неизвестная причина"));
+            return;
+        }
+
+        text("custom-strategies-status", "Файл готов: " + msg.file);
+        appendCustomLog("файл: " + msg.path);
+    }
+
+    function renderImportedConf(msg) {
+        var added = msg.added || 0;
+        var warnings = msg.warnings || [];
+
+        if (!added) {
+            text("custom-strategies-status",
+                 warnings.length ? "Не принят: " + warnings[0] : "Нечего добавлять");
+        } else {
+            text("custom-strategies-status",
+                 "Добавлено стратегий: " + added + ", всего своих: " + (msg.total || 0));
+        }
+
+        warnings.forEach(function (w) { appendCustomLog("! " + w); });
+    }
+
+    function renderDeleted(msg) {
+        var remove = document.getElementById("btn-delete-strategy");
+        if (remove) remove.disabled = false;
+
+        if (!msg.ok) {
+            text("custom-strategies-status", "Не удалилось: " + (msg.error || "неизвестная причина"));
+            return;
+        }
+
+        text("custom-strategies-status", "Стратегия удалена");
+    }
+
+    function renderDuplicated(msg) {
+        var copy = document.getElementById("btn-copy-strategy");
+        if (copy) copy.disabled = false;
+
+        if (!msg.ok) {
+            text("custom-strategies-status", "Не скопировалось: " + (msg.error || "неизвестная причина"));
+            return;
+        }
+
+        text("custom-strategies-status", "Скопировано — выберите копию в списке, чтобы поправить");
+
+        // Выбираем копию сразу: иначе человек ищет её в списке из сотни строк
+        // и не находит, потому что имя отличается одним словом.
+        var select = document.getElementById("strategy-select");
+        if (select && hasOption(select, msg.id)) {
+            select.value = msg.id;
+            send("strategy.select", { id: msg.id });
+            updateStrategyNote(strategyItems);
+            updateCustomButtons();
+        }
+    }
+
+    function renderTuned(msg) {        setTuneRunning(false);
 
         (msg.warnings || []).forEach(function (w) { appendCustomLog("! " + w); });
 
@@ -1439,6 +1669,7 @@
             strategy.addEventListener("change", function () {
                 send("strategy.select", { id: strategy.value });
                 updateStrategyNote(strategyItems);
+                updateCustomButtons();
             });
         }
 
@@ -3726,6 +3957,22 @@
                 renderTuned(msg);
                 break;
 
+            case "strategy.shared":
+                renderShared(msg);
+                break;
+
+            case "strategy.importedConf":
+                renderImportedConf(msg);
+                break;
+
+            case "strategy.deleted":
+                renderDeleted(msg);
+                break;
+
+            case "strategy.duplicated":
+                renderDuplicated(msg);
+                break;
+
             case "engine.result":
                 renderEngineResult(msg);
                 break;
@@ -4069,6 +4316,12 @@
         renderImportedBats: renderImportedBats,
         renderExportedBats: renderExportedBats,
         renderTuned: renderTuned,
+        renderShared: renderShared,
+        renderImportedConf: renderImportedConf,
+        renderDeleted: renderDeleted,
+        renderDuplicated: renderDuplicated,
+        updateCustomButtons: updateCustomButtons,
+        selectedStrategy: selectedStrategy,
         setTuneRunning: setTuneRunning,
         showTuneProgress: showTuneProgress,
         appendCustomLog: appendCustomLog,

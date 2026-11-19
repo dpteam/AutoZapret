@@ -400,6 +400,128 @@ namespace AutoZapret.App
                 });
             });
 
+            // ---- обмен одним файлом (.azconf.json)
+            //
+            // Отдельно от .bat: .bat — это программа, .azconf.json — данные.
+            // Файл для друга не должен быть исполняемым.
+            bridge.Register("strategy.share", msg =>
+            {
+                string id = Json.GetString(msg, "id", _settings.StrategyId);
+                string author = Json.GetString(msg, "author", "");
+
+                if (string.IsNullOrEmpty(id)) return;
+
+                RunInBackground("strategy-share", () =>
+                {
+                    string path = _zapret.ExportConf(id, author, AppInfo.Version, null);
+
+                    bool ok = path != null && path.EndsWith(StrategyConf.Extension,
+                                                            StringComparison.OrdinalIgnoreCase);
+
+                    _form.Bridge.Send(WebBridge.Msg("strategy.shared",
+                        "ok", ok,
+                        "path", ok ? path : "",
+                        "file", ok ? System.IO.Path.GetFileName(path) : "",
+                        "error", ok ? "" : (path ?? "не записал файл")));
+
+                    if (ok) OpenPath(Paths.SharedConfDir);
+                });
+            });
+
+            bridge.Register("strategy.importConf", msg =>
+            {
+                List<string> texts = new List<string>();
+
+                List<object> raw = Json.GetArray(msg, "files");
+
+                if (raw != null)
+                {
+                    foreach (object item in raw)
+                    {
+                        Dictionary<string, object> map = item as Dictionary<string, object>;
+                        if (map == null) continue;
+
+                        string text = Json.GetString(map, "text", "");
+                        if (text.Length > 0) texts.Add(text);
+                    }
+                }
+
+                if (texts.Count == 0) return;
+
+                RunInBackground("strategy-import-conf", () =>
+                {
+                    List<string> warnings = new List<string>();
+                    List<string> added = new List<string>();
+
+                    foreach (string text in texts)
+                    {
+                        string id = _zapret.ImportConf(text, "shared.", warnings);
+
+                        if (id != null) added.Add(id);
+                    }
+
+                    _form.Bridge.Send(WebBridge.Msg("strategy.importedConf",
+                        "added", (long)added.Count,
+                        "ids", ToObjects(added),
+                        "total", (long)_zapret.Strategies.CustomCount,
+                        "warnings", ToObjects(warnings)));
+
+                    PushStrategies();
+                    PushState();
+                });
+            });
+
+            bridge.Register("strategy.delete", msg =>
+            {
+                string id = Json.GetString(msg, "id", "");
+
+                if (string.IsNullOrEmpty(id)) return;
+
+                RunInBackground("strategy-delete", () =>
+                {
+                    string error = _zapret.DeleteCustom(id);
+
+                    _form.Bridge.Send(WebBridge.Msg("strategy.deleted",
+                        "ok", error == null,
+                        "id", id,
+                        "error", error ?? ""));
+
+                    // Удалили выбранную — выбор больше не существует, и список
+                    // показал бы первую попавшуюся, выдав её за выбранную.
+                    if (error == null && string.Equals(_settings.StrategyId, id, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _settings.StrategyId = "";
+                        _settings.Save();
+                    }
+
+                    PushStrategies();
+                    PushState();
+                });
+            });
+
+            bridge.Register("strategy.duplicate", msg =>
+            {
+                string id = Json.GetString(msg, "id", "");
+                string name = Json.GetString(msg, "name", "");
+
+                if (string.IsNullOrEmpty(id)) return;
+
+                RunInBackground("strategy-duplicate", () =>
+                {
+                    string result = _zapret.DuplicateCustom(id, name);
+
+                    bool ok = result != null && result.StartsWith("custom.", StringComparison.OrdinalIgnoreCase);
+
+                    _form.Bridge.Send(WebBridge.Msg("strategy.duplicated",
+                        "ok", ok,
+                        "id", ok ? result : "",
+                        "error", ok ? "" : (result ?? "не скопировал")));
+
+                    PushStrategies();
+                    PushState();
+                });
+            });
+
             bridge.Register("strategy.tuneFakes", msg =>
             {
                 string id = Json.GetString(msg, "id", _settings.StrategyId);

@@ -2185,6 +2185,141 @@ namespace AutoZapret.Diag
         }
 
         /// <summary>
+        /// --share-strategy &lt;id&gt; [--author "текст"] [--dir &lt;каталог&gt;]
+        ///
+        /// Одна стратегия одним файлом `.azconf.json` — то же, что кнопка
+        /// «Поделиться». Нужно, чтобы можно было проверить обмен без окна.
+        /// </summary>
+        public static int RunShareStrategy(string[] args)
+        {
+            string id = null;
+            string author = null;
+            string dir = null;
+
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], "--share-strategy", StringComparison.OrdinalIgnoreCase) &&
+                    i + 1 < args.Length && !args[i + 1].StartsWith("--"))
+                {
+                    id = args[i + 1];
+                }
+                else if (string.Equals(args[i], "--author", StringComparison.OrdinalIgnoreCase) &&
+                         i + 1 < args.Length)
+                {
+                    author = args[i + 1];
+                }
+                else if (string.Equals(args[i], "--dir", StringComparison.OrdinalIgnoreCase) &&
+                         i + 1 < args.Length && !args[i + 1].StartsWith("--"))
+                {
+                    dir = args[i + 1];
+                }
+            }
+
+            if (string.IsNullOrEmpty(id))
+            {
+                Console.WriteLine("нужен id стратегии: --share-strategy <id> [--author <текст>] [--dir <каталог>]");
+                return 2;
+            }
+
+            using (ZapretService svc = new ZapretService())
+            {
+                svc.EnsureStrategies();
+
+                string path = svc.ExportConf(id, author, AppInfo.Version, dir);
+
+                if (path == null || !path.EndsWith(StrategyConf.Extension, StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.WriteLine(path ?? "не записал файл");
+                    return 1;
+                }
+
+                Console.WriteLine("файл: " + path);
+
+                return 0;
+            }
+        }
+
+        /// <summary>
+        /// --import-conf &lt;файл или каталог&gt;
+        ///
+        /// Принимает `.azconf.json` так же, как окно: проверяет и добавляет
+        /// как свою стратегию.
+        /// </summary>
+        public static int RunImportConf(string[] args)
+        {
+            string target = null;
+
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], "--import-conf", StringComparison.OrdinalIgnoreCase) &&
+                    i + 1 < args.Length && !args[i + 1].StartsWith("--"))
+                {
+                    target = args[i + 1];
+                }
+            }
+
+            if (string.IsNullOrEmpty(target))
+            {
+                Console.WriteLine("нужен файл или каталог: --import-conf <путь>");
+                return 2;
+            }
+
+            List<string> files = new List<string>();
+
+            if (Directory.Exists(target))
+            {
+                files.AddRange(Directory.GetFiles(target, "*" + StrategyConf.Extension));
+                Array.Sort(files.ToArray(), StringComparer.OrdinalIgnoreCase);
+            }
+            else if (File.Exists(target))
+            {
+                files.Add(target);
+            }
+            else
+            {
+                Console.WriteLine("не найдено: " + target);
+                return 2;
+            }
+
+            using (ZapretService svc = new ZapretService())
+            {
+                svc.EnsureStrategies();
+
+                int added = 0;
+
+                foreach (string file in files)
+                {
+                    List<string> warnings = new List<string>();
+
+                    string text;
+
+                    try { text = File.ReadAllText(file); }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("  [FAIL] " + Path.GetFileName(file) + ": " + ex.Message);
+                        continue;
+                    }
+
+                    string id = svc.ImportConf(text, "shared.", warnings);
+
+                    if (id == null)
+                    {
+                        Console.WriteLine("  [skip] " + Path.GetFileName(file) + ": " +
+                                          (warnings.Count > 0 ? warnings[0] : "не принят"));
+                        continue;
+                    }
+
+                    Console.WriteLine("  [ok]   " + Path.GetFileName(file) + " -> " + id);
+                    added++;
+                }
+
+                Console.WriteLine("добавлено: " + added + ", всего своих: " + svc.Strategies.CustomCount);
+
+                return added > 0 ? 0 : 1;
+            }
+        }
+
+        /// <summary>
         /// --strategies: список стратегий с идентификаторами (для отладки и для --only).
         /// Заодно создаёт кэш strategies.v1.json.
         /// </summary>
