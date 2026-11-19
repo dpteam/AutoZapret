@@ -376,5 +376,7 @@
   "Выбранная стратегия": "Selected strategy",
   "Копия пригодится, чтобы поправить одну опцию и не потерять исходную. Удалить можно только свою — стратегию набора вернёт обновление": "A copy is handy when you want to change one option without losing the original. Only your own can be deleted - a set strategy comes back on update",
   "Копировать": "Copy",
-  "Удалить свою": "Delete mine"
+  "Удалить свою": "Delete mine",
+  "Проверять по своим доменам": "Check against my own domains",
+  "Цели берутся из списка «Свои домены — обходить» на экране «Списки», а не из встроенного набора. Для тех, у кого не открывается конкретный сайт": "Targets come from the \"My domains to bypass\" list on the Lists screen instead of the built-in set. For those whose problem is one specific site"
 }

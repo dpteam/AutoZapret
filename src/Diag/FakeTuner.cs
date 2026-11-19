@@ -151,7 +151,8 @@ namespace AutoZapret.Diag
             // Снимок сети до перебора: он же задаёт цели проверки. Без него
             // tester берёт цели по умолчанию, и они могут не совпадать с тем,
             // что реально заблокировано у человека.
-            Baseline.Snapshot baseline = Baseline.Measure(new ConnectivityProbe(), 10, false, token);
+            Baseline.Snapshot baseline = Baseline.Measure(new ConnectivityProbe(), 10, false, token,
+                                                           ProbeTargets.ForSettings());
 
             if (baseline == null)
             {

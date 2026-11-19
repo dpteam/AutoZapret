@@ -92,6 +92,9 @@ namespace AutoZapret.App
                 Section("обмен .azconf.json");
                 TestStrategyConf();
 
+                Section("цели проверки из своего списка");
+                TestProbeTargets();
+
                 Section("квотирование аргументов");
                 TestCommandLine();
 
@@ -1478,6 +1481,114 @@ namespace AutoZapret.App
             }
         }
 
+        /// <summary>
+        /// Отбор целей из своего списка.
+        ///
+        /// Проверяем не «прочиталось ли», а ПРАВИЛА ОТБОРА: именно они решают,
+        /// что человек увидит в отчёте. Ошибка здесь не падает, а тихо
+        /// проверяет не то: например, `!domain` (исключение) попадёт в цели, и
+        /// стратегия получит провал за сайт, который и не должен обходиться.
+        /// </summary>
+        private static void TestProbeTargets()
+        {
+            string path = AutoZapret.Lists.HostlistManager.GeneralPath;
+            string backup = AtomicFile.ReadAllTextOrNull(path);
+
+            string dir = Path.GetDirectoryName(path);
+
+            try
+            {
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+
+                string[] lines =
+                {
+                    "# свой список для проверки",
+                    "example.com",
+                    "example.org   # с комментарием",
+                    "#disabled.com",
+                    "!exception.com",
+                    "*.wildcard.com",
+                    "1.2.3.4",
+                    "10.0.0.0/8",
+                    "example.com",
+                    "sub.example.net:8443"
+                };
+
+                File.WriteAllText(path, string.Join("\r\n", lines));
+
+                string note;
+                List<AutoZapret.Diag.ProbeTarget> targets = AutoZapret.Diag.ProbeTargets.Own(20, out note);
+
+                List<string> names = new List<string>();
+                foreach (AutoZapret.Diag.ProbeTarget t in targets) names.Add(t.Name);
+
+                Check("цели: домены прочитаны", names.Contains("example.com"), string.Join(", ", names.ToArray()));
+                Check("цели: комментарий не сломал домен", names.Contains("example.org"), "ok");
+                Check("цели: выключенная запись пропущена", !names.Contains("disabled.com"), "ok");
+                Check("цели: исключение не стало целью", !names.Contains("exception.com"), "ok");
+                Check("цели: шаблон не стал целью", names.TrueForAll(n => n.IndexOf('*') < 0), "ok");
+                Check("цели: адрес не стал целью", !names.Contains("1.2.3.4"), "ok");
+                Check("цели: подсеть не стала целью", !names.Contains("10.0.0.0/8"), "ok");
+                Check("цели: повтор не удвоил", names.FindAll(n => n == "example.com").Count == 1,
+                    names.FindAll(n => n == "example.com").Count.ToString());
+                Check("цели: порт остался в URL",
+                    targets.Exists(t => t.Name == "sub.example.net" && t.Url.EndsWith(":8443")),
+                    targets.Find(t => t.Name == "sub.example.net") != null
+                        ? targets.Find(t => t.Name == "sub.example.net").Url : "нет");
+                Check("цели: URL по https", targets.TrueForAll(t => t.Url.StartsWith("https://", StringComparison.Ordinal)), "ok");
+                Check("цели: в отчёте сказано, что пропущено", note.Length > 0, note);
+
+                // Потолок: человек с сотней доменов не должен ждать часы.
+                List<AutoZapret.Diag.ProbeTarget> capped = AutoZapret.Diag.ProbeTargets.Own(2, out note);
+                Check("цели: потолок соблюдён", capped.Count == 2, capped.Count.ToString());
+
+                Check("цели: пустой список не ломает",
+                    AutoZapret.Diag.ProbeTargets.Own(5, out note).Count >= 0, "ok");
+
+                // Снапшот обязан помнить, чем мерили: иначе перебор сравнит
+                // свои домены с результатами замера по встроенным.
+                AutoZapret.Diag.Baseline.Snapshot snapshot = new AutoZapret.Diag.Baseline.Snapshot();
+                snapshot.Targets = targets;
+                snapshot.Blocked.Add("example.com");
+                snapshot.Blocked.Add("example.org");
+
+                Check("цели: снапшот помнит цели", snapshot.Targets.Count == targets.Count,
+                    snapshot.Targets.Count + " из " + targets.Count);
+                Check("цели: перебор берёт цели из снапшота",
+                    snapshot.BlockedTargets().Exists(t => t.Name == "example.com"), "ok");
+                Check("цели: совпадение набора распознано",
+                    AutoZapret.Diag.Baseline.MatchesTargets(snapshot, targets), "ok");
+
+                List<AutoZapret.Diag.ProbeTarget> other = new List<AutoZapret.Diag.ProbeTarget>
+                {
+                    new AutoZapret.Diag.ProbeTarget("youtube", "https://www.youtube.com")
+                };
+
+                Check("цели: другой набор не считается совпадением",
+                    !AutoZapret.Diag.Baseline.MatchesTargets(snapshot, other), "ok");
+
+                // Снапшот через JSON: цели должны пережить запись и чтение.
+                AutoZapret.Diag.Baseline.Snapshot back =
+                    AutoZapret.Diag.Baseline.Snapshot.FromJson(snapshot.ToJson());
+
+                Check("цели: снапшот переживает JSON",
+                    back != null && back.Targets.Count == targets.Count,
+                    back == null ? "null" : back.Targets.Count + " шт.");
+                Check("цели: имя и URL сохранились",
+                    back != null && back.Targets.Exists(t => t.Name == "sub.example.net" && t.Url.EndsWith(":8443")),
+                    "ok");
+            }
+            finally
+            {
+                try
+                {
+                    if (backup != null) File.WriteAllText(path, backup);
+                    else File.Delete(path);
+                }
+                catch { }
+            }
+        }
+
         private static void TestCommandLine()
         {
             // правила квотирования Windows
@@ -2145,8 +2256,11 @@ namespace AutoZapret.App
             Check("стратегии: v2 найдены", v2.Count >= 20, v2.Count + " шт.");
 
             // id с префиксом автора набора: flowseal.* — штатный каталог,
-            // stressozz.* — импортированный из Zapret-Manager (73 стратегии
-            // другого автора, у них те же флаги winws, поэтому тот же движок v1).
+            // stressozz.* — импортированный из Zapret-Manager (другой автор,
+            // те же флаги winws, поэтому тот же движок v1),
+            // mods.* — игровые моды peshk0v/Zapret-Mods (Dota, Minecraft, EA,
+            // shizapret), ganwo.* — набор DNS GANWO (форк Flowseal с ALT14/ALT15
+            // и профилями под Steam). Другая школа, те же флаги winws.
             //
             // Свои стратегии (custom.*, shared.*) сюда НЕ входят: они живут в
             // том же хранилище и с тем же движком, но их id выбирает человек
@@ -2157,7 +2271,9 @@ namespace AutoZapret.App
 
             bool v1IdsOk = v1Sets.TrueForAll(s =>
                 s.Id.StartsWith("flowseal.", StringComparison.Ordinal) ||
-                s.Id.StartsWith("stressozz.", StringComparison.Ordinal));
+                s.Id.StartsWith("stressozz.", StringComparison.Ordinal) ||
+                s.Id.StartsWith("mods.", StringComparison.Ordinal) ||
+                s.Id.StartsWith("ganwo.", StringComparison.Ordinal));
             bool v2IdsOk = v2Sets.TrueForAll(s => s.Id.StartsWith("zapret2.", StringComparison.Ordinal));
 
             Check("стратегии: id v1 с префиксом автора набора", v1IdsOk, "ok");
@@ -2179,6 +2295,32 @@ namespace AutoZapret.App
 
             int stressozz = v1.FindAll(s => s.Id.StartsWith("stressozz.", StringComparison.Ordinal)).Count;
             Check("стратегии: набор StressOzz на месте", stressozz >= 70, stressozz + " шт.");
+
+            // Дубли по содержимому — это две строки в списке, между которыми
+            // человек выбирает наугад, и обе дают одинаковый результат.
+            // Каталог собирается из четырёх наборов, и совпадения между ними
+            // неизбежны; ловить их надо здесь, а не глазами.
+            HashSet<string> content = new HashSet<string>(StringComparer.Ordinal);
+            int contentDupes = 0;
+
+            foreach (AutoZapret.Zapret.Strategy s in v1Sets)
+            {
+                List<string> all = new List<string>();
+
+                foreach (string a in s.GlobalArgs)
+                    if (!a.StartsWith("--wf-tcp=", StringComparison.Ordinal) &&
+                        !a.StartsWith("--wf-udp=", StringComparison.Ordinal))
+                        all.Add(a.Replace('\\', '/'));
+
+                foreach (AutoZapret.Zapret.StrategyProfile p in s.Profiles)
+                    foreach (string a in p.Args) all.Add(a.Replace('\\', '/'));
+
+                all.Sort(StringComparer.Ordinal);
+
+                if (!content.Add(string.Join(" ", all.ToArray()))) contentDupes++;
+            }
+
+            Check("стратегии: нет дублей по содержимому", contentDupes == 0, contentDupes + " шт.");
 
             // пересечение id означало бы, что выбор стратегии неоднозначен
             HashSet<string> v1Set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

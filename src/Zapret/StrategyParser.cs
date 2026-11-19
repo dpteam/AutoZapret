@@ -207,6 +207,22 @@ namespace AutoZapret.Zapret
             List<string> tokens = Tokenize(expanded);
             if (tokens.Count == 0) return null;
 
+            // `%GameFilter%` раскрывается ПО ОПЦИИ, в которой стоит.
+            //
+            // В наборах Flowseal переменных две — `%GameFilterTCP%` и
+            // `%GameFilterUDP%`, и по имени видно, что куда. В наборах
+            // Zapret-Mods одна `%GameFilter%`, и она стоит и в `--wf-tcp`,
+            // и в `--wf-udp`, и в `--filter-tcp`, и в `--filter-udp`.
+            //
+            // Без раскрытия winws получает литерал `%GameFilter%` в списке
+            // портов, не может его разобрать и падает при старте — либо,
+            // что хуже, молча не ловит игровой трафик. Снаружи это «стратегия
+            // не работает», и искать причину будут в стратегии.
+            //
+            // Контекст опции — единственное честное прочтение: в tcp-опции
+            // это TCP-порты, в udp-опции — UDP.
+            tokens = ExpandGameFilter(tokens);
+
             Strategy strategy = new Strategy
             {
                 Id = (sourcePrefix != null ? sourcePrefix : (isV2 ? "zapret2." : "flowseal.")) +
@@ -343,6 +359,55 @@ namespace AutoZapret.Zapret
         }
 
         /// <summary>
+        /// Раскрыть `%GameFilter%` по опции, в которой он стоит.
+        ///
+        /// Одна переменная на TCP и UDP (так в наборах Zapret-Mods) — значит
+        /// значение зависит от места. В `--wf-tcp`/`--filter-tcp` это TCP-порты,
+        /// в `--wf-udp`/`--filter-udp` — UDP. Другого осмысленного прочтения нет.
+        ///
+        /// Если переменная оказалась в опции, которая не про порты, заменяем на
+        /// пусто: оставить литерал `%GameFilter%` значит отдать движку строку,
+        /// которую он не разберёт.
+        /// </summary>
+        private static List<string> ExpandGameFilter(List<string> tokens)
+        {
+            List<string> result = new List<string>(tokens.Count);
+
+            foreach (string token in tokens)
+            {
+                if (token.IndexOf("%GameFilter%", StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    result.Add(token);
+                    continue;
+                }
+
+                string placeholder = null;
+
+                if (StartsOption(token, "--wf-tcp=") || StartsOption(token, "--filter-tcp="))
+                    placeholder = "${GAME_TCP}";
+                else if (StartsOption(token, "--wf-udp=") || StartsOption(token, "--filter-udp="))
+                    placeholder = "${GAME_UDP}";
+
+                string replaced = Regex.Replace(token, "%GameFilter%",
+                                                placeholder ?? "", RegexOptions.IgnoreCase);
+
+                // `,` перед пустым значением даёт хвостовую запятую в списке
+                // портов. winws её терпит, но аргумент перестаёт совпадать с
+                // исходным, и круг export -> import в selftest это ловит.
+                if (placeholder == null) replaced = replaced.Replace(",,", ",").TrimEnd(',');
+
+                result.Add(replaced);
+            }
+
+            return result;
+        }
+
+        private static bool StartsOption(string token, string option)
+        {
+            return token.StartsWith(option, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
         /// Заменить `%BIN%`/`%LISTS%`/`%LUA%` на плейсхолдер, съев следующий за
         /// переменной разделитель.
         ///
@@ -398,6 +463,19 @@ namespace AutoZapret.Zapret
             // служебные переменные Flowseal, которые мы считаем сами
             result = result.Replace("%GameFilterTCP%", "${GAME_TCP}");
             result = result.Replace("%GameFilterUDP%", "${GAME_UDP}");
+
+            // `%BIN_PATH%` — синоним `%BIN%`.
+            //
+            // В наборах Zapret-Mods (игровые моды peshk0v) файл объявляет
+            // `set "BIN=%~dp0bin\"`, а в аргументах пишет `%BIN_PATH%`. В cmd
+            // неопределённая переменная остаётся ЛИТЕРАЛОМ, то есть winws
+            // получает путь `%BIN_PATH%tls_clienthello_...bin`, которого не
+            // существует, и молча ничего не делает.
+            //
+            // Намерение однозначно (BIN_PATH = каталог bin), поэтому считаем
+            // его тем же, что BIN. Это не догадка о содержимом: оба имени
+            // означают один каталог, и другого осмысленного прочтения нет.
+            result = CollapseDirVar(result, "%BIN_PATH%", "${BIN}/");
 
             // каталоги движка -> плейсхолдеры (см. комментарий выше)
             //
@@ -491,9 +569,18 @@ namespace AutoZapret.Zapret
         /// плейсхолдеры). Здесь — только подстраховка для случаев, когда в .bat
         /// путь прописан буквально.
         ///
-        /// ВАЖНО: заменяем ТОЛЬКО когда токен начинается с пути (буква диска или
-        /// два слеша), иначе жадный regex съест имя опции:
+        /// ВАЖНО: заменяем ТОЛЬКО когда путь начинается с буквы диска или двух
+        /// слешей, иначе жадный regex съест имя опции:
         /// "--hostlist=C:\...\lists\x.txt" не должен стать "${LISTS}/x.txt".
+        /// Поэтому опция и её значение обрабатываются ОТДЕЛЬНО: имя опции
+        /// остаётся как есть, нормализуется только значение.
+        ///
+        /// Раньше форма `--hostlist=C:\...` не обрабатывалась вовсе (regex был
+        /// привязан к началу токена), и путь оставался прибитым к машине автора
+        /// набора. Нашлось на наборе Zapret-Mods: файл пишет
+        /// `--hostlist="%~dp0lists\list-general.txt"`, после раскрытия `%~dp0`
+        /// это абсолютный путь, и в каталог попадала стратегия, которая ищет
+        /// список на чужом диске.
         /// </summary>
         private static List<string> NormalizePaths(List<string> tokens, string binDir, string listsDir, string luaDir)
         {
@@ -501,26 +588,49 @@ namespace AutoZapret.Zapret
 
             foreach (string token in tokens)
             {
-                string t = token;
+                if (string.IsNullOrEmpty(token)) { result.Add(token); continue; }
 
-                if (IsAbsolutePath(t))
+                // Форма "опция=значение": нормализуем только значение.
+                int eq = token.IndexOf('=');
+
+                if (eq > 0 && token[0] == '-')
                 {
-                    t = Regex.Replace(t, @"^([A-Za-z]:[\\/]|\\\\)(.+[\\/])?lua[\\/]", "${LUA}/", RegexOptions.IgnoreCase);
-                    t = Regex.Replace(t, @"^([A-Za-z]:[\\/]|\\\\)(.+[\\/])?lists[\\/]", "${LISTS}/", RegexOptions.IgnoreCase);
-                    t = Regex.Replace(t, @"^([A-Za-z]:[\\/]|\\\\)(.+[\\/])?bin[\\/]", "${BIN}/", RegexOptions.IgnoreCase);
-                    t = t.Replace('\\', '/');
-                }
-                else
-                {
-                    // опция с путём внутри: заменяем только сам путь, не трогая префикс
-                    t = ReplacePathInside(t, binDir, "${BIN}/");
-                    t = ReplacePathInside(t, listsDir, "${LISTS}/");
-                    t = ReplacePathInside(t, luaDir, "${LUA}/");
+                    string option = token.Substring(0, eq + 1);
+                    string value = token.Substring(eq + 1);
+
+                    result.Add(option + NormalizeOne(value, binDir, listsDir, luaDir));
+                    continue;
                 }
 
-                result.Add(t);
+                result.Add(NormalizeOne(token, binDir, listsDir, luaDir));
             }
+
             return result;
+        }
+
+        /// <summary>Нормализовать один путь (или оставить как есть, если это не путь).</summary>
+        private static string NormalizeOne(string value, string binDir, string listsDir, string luaDir)
+        {
+            if (string.IsNullOrEmpty(value)) return value;
+
+            if (IsAbsolutePath(value))
+            {
+                string t = value;
+
+                t = Regex.Replace(t, @"^([A-Za-z]:[\\/]|\\\\)(.+[\\/])?lua[\\/]", "${LUA}/", RegexOptions.IgnoreCase);
+                t = Regex.Replace(t, @"^([A-Za-z]:[\\/]|\\\\)(.+[\\/])?lists[\\/]", "${LISTS}/", RegexOptions.IgnoreCase);
+                t = Regex.Replace(t, @"^([A-Za-z]:[\\/]|\\\\)(.+[\\/])?bin[\\/]", "${BIN}/", RegexOptions.IgnoreCase);
+
+                return t.Replace('\\', '/');
+            }
+
+            // Не абсолютный путь: возможно, это имя каталога движка внутри
+            // относительного пути — заменяем только сам каталог.
+            string r = ReplacePathInside(value, binDir, "${BIN}/");
+            r = ReplacePathInside(r, listsDir, "${LISTS}/");
+            r = ReplacePathInside(r, luaDir, "${LUA}/");
+
+            return r;
         }
 
         private static bool IsAbsolutePath(string value)

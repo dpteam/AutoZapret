@@ -33,6 +33,19 @@ namespace AutoZapret.Diag
             public int OkCount;
             public int Total;
 
+            /// <summary>
+            /// Чем именно меряли.
+            ///
+            /// Хранится в снапшоте, а не пересобирается из настроек при каждом
+            /// обращении. Причина: настройка может измениться между замером и
+            /// перебором (человек переключил «свои домены» после замера), и
+            /// тогда перебор проверит ОДНИ цели, а сравнит с результатами
+            /// ДРУГИХ. Снаружи это «стратегия прошла 0 из 6», хотя мерили 3.
+            ///
+            /// Пусто — старый снапшот: тогда берём встроенный набор, как раньше.
+            /// </summary>
+            public List<ProbeTarget> Targets = new List<ProbeTarget>();
+
             public string ToJson()
             {
                 Dictionary<string, object> root = new Dictionary<string, object>(StringComparer.Ordinal)
@@ -50,6 +63,21 @@ namespace AutoZapret.Diag
                 List<object> working = new List<object>();
                 foreach (string s in Working) working.Add(s);
                 root["working"] = working;
+
+                List<object> targets = new List<object>();
+
+                foreach (ProbeTarget t in Targets)
+                {
+                    targets.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                    {
+                        { "name", t.Name },
+                        { "url", t.Url },
+                        { "critical", t.Critical },
+                        { "engine", t.Engine }
+                    });
+                }
+
+                root["targets"] = targets;
 
                 return Json.Stringify(root);
             }
@@ -82,13 +110,37 @@ namespace AutoZapret.Diag
                         if (str != null) s.Working.Add(str);
                     }
 
+                List<object> targets = Json.GetArray(root, "targets");
+
+                if (targets != null)
+                    foreach (object item in targets)
+                    {
+                        Dictionary<string, object> map = item as Dictionary<string, object>;
+                        if (map == null) continue;
+
+                        string name = Json.GetString(map, "name", "");
+                        string url = Json.GetString(map, "url", "");
+
+                        if (name.Length == 0 || url.Length == 0) continue;
+
+                        s.Targets.Add(new ProbeTarget(name, url,
+                            Json.GetBool(map, "critical", false),
+                            Json.GetString(map, "engine", "zapret")));
+                    }
+
                 return s;
             }
 
             /// <summary>Список целей, которые имеет смысл тестировать (заблокированные, лечащиеся zapret'ом).</summary>
             public List<ProbeTarget> BlockedTargets()
             {
-                List<ProbeTarget> all = ConnectivityProbe.ZapretTargets();
+                // Цели берём из самого снапшота: он помнит, чем мерили.
+                // Иначе «свои домены» в замере и встроенные в переборе дают
+                // сравнение разных вещей.
+                List<ProbeTarget> all = Targets.Count > 0
+                    ? Targets.FindAll(t => string.Equals(t.Engine, "zapret", StringComparison.OrdinalIgnoreCase))
+                    : ConnectivityProbe.ZapretTargets();
+
                 List<ProbeTarget> result = new List<ProbeTarget>();
 
                 foreach (ProbeTarget t in all)
@@ -104,8 +156,12 @@ namespace AutoZapret.Diag
             public List<string> ProxyOnly()
             {
                 List<string> result = new List<string>();
-                foreach (ProbeTarget t in ConnectivityProbe.DefaultTargets())
+
+                List<ProbeTarget> all = Targets.Count > 0 ? Targets : ConnectivityProbe.DefaultTargets();
+
+                foreach (ProbeTarget t in all)
                     if (t.Engine == "proxy" && Blocked.Contains(t.Name)) result.Add(t.Name);
+
                 return result;
             }
         }
@@ -128,11 +184,49 @@ namespace AutoZapret.Diag
         }
 
         /// <summary>
+        /// Совпадает ли снапшот с набором целей, которым собираемся мерить.
+        ///
+        /// Нужно, потому что настройка «свои домены» может измениться между
+        /// замером и перебором. Старый снапшот тогда говорит про youtube, а
+        /// перебор проверяет свои домены — и сравнение врёт: «стратегия прошла
+        /// 0 из 3», хотя мерили 6 других целей.
+        ///
+        /// Сравниваем по именам: это то, что попадает в Blocked/Working.
+        /// </summary>
+        public static bool MatchesTargets(Snapshot snapshot, List<ProbeTarget> targets)
+        {
+            if (snapshot == null) return false;
+            if (snapshot.Targets.Count == 0) return false;      // старый снапшот: целей не знает
+
+            if (targets == null || targets.Count == 0) return true;
+
+            if (snapshot.Targets.Count != targets.Count) return false;
+
+            foreach (ProbeTarget t in targets)
+            {
+                bool found = false;
+
+                foreach (ProbeTarget saved in snapshot.Targets)
+                    if (string.Equals(saved.Name, t.Name, StringComparison.OrdinalIgnoreCase)) { found = true; break; }
+
+                if (!found) return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
         /// Замеряет базовую линию. Требует, чтобы обход НЕ был запущен —
         /// иначе получим не «что блокируют», а «что пробивает текущая стратегия».
+        ///
+        /// targets — чем мерить. null означает встроенный набор. Свой список
+        /// передаётся сюда, а не подставляется внутри: иначе нельзя ни
+        /// проверить оба варианта в selftest, ни показать человеку, что
+        /// именно проверялось.
         /// </summary>
         public static Snapshot Measure(ConnectivityProbe probe, int timeoutSec, bool verbose,
-                                       CancellationToken cancel = default(CancellationToken))
+                                       CancellationToken cancel = default(CancellationToken),
+                                       List<ProbeTarget> targets = null)
         {
             Snapshot snapshot = new Snapshot();
 
@@ -143,10 +237,14 @@ namespace AutoZapret.Diag
                 if (verbose) Console.WriteLine("ВНИМАНИЕ: winws уже запущен (" + foreign + "), замер будет неточным.");
             }
 
-            List<ProbeTarget> targets = ConnectivityProbe.DefaultTargets();
-            snapshot.Total = targets.Count;
+            List<ProbeTarget> list = targets != null && targets.Count > 0
+                ? targets
+                : ConnectivityProbe.DefaultTargets();
 
-            ProbeReport report = probe.CheckAll(targets, timeoutSec, 4, cancel);
+            snapshot.Targets = new List<ProbeTarget>(list);
+            snapshot.Total = list.Count;
+
+            ProbeReport report = probe.CheckAll(list, timeoutSec, 4, cancel);
 
             // Отменённый замер не сохраняем: иначе «наполовину заблокировано»
             // станет базовой линией и подбор стратегий будет гоняться за призраками.

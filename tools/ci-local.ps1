@@ -115,6 +115,16 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
     # причину пойдут в HTML, хотя её там нет.
     $code = Invoke-Step 'node' @('tools\check-bridge.js')
     Record 'мост: обработчики' ($code -eq 0) ''
+
+    # Каждая опция из каталога обязана существовать в winws.exe.
+    #
+    # Это не замена --dry-run (он проверяет и значения), а дешёвая проверка
+    # на класс ошибок, который иначе всплывает у человека: опция из чужой
+    # версии движка или склеенная с значением через пробел
+    # (`--dpi-desync-autottl 2:2-12` вместо `=`). winws такую строку не
+    # разбирает и отказывается стартовать, а виноватой выглядит стратегия.
+    $code = Invoke-Step 'node' @('tools\check-options.js')
+    Record 'опции стратегий в движке' ($code -eq 0) ''
 } else {
     Write-Host '  [skip] node не найден — проверки UI и переводов пропущены'
     Record 'проверки UI' $true 'skip: нет node'

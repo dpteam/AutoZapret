@@ -74,6 +74,7 @@ namespace AutoZapret.App
             if (HasFlag(args, "--probe")) return Diag.DiagCommand.RunProbe(args);
             if (HasFlag(args, "--strategies")) return Diag.DiagCommand.RunStrategies(args);
             if (HasFlag(args, "--import-strategies")) return Diag.DiagCommand.RunImportStrategies(args);
+            if (HasFlag(args, "--check-bats")) return Diag.DiagCommand.RunCheckBats(args);
             if (HasFlag(args, "--export-strategies")) return Diag.DiagCommand.RunExportStrategies(args);
             if (HasFlag(args, "--share-strategy")) return Diag.DiagCommand.RunShareStrategy(args);
             if (HasFlag(args, "--import-conf")) return Diag.DiagCommand.RunImportConf(args);

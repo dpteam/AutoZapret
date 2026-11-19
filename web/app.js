@@ -736,6 +736,10 @@
         // приходит вместе с настройками, а не отдельным сообщением.
         setSwitch("service-apply-toggle", s.serviceRestartOnStrategy === true);
 
+        // Цели проверки: переключатель + сколько доменов реально проверятся.
+        setSwitch("diag-own-targets", s.probeOwnList === true);
+        send("diag.targets");
+
         // о программе
         text("about-version", s.version);
         text("about-os", s.os);
@@ -1828,6 +1832,24 @@
             send("diag.test", { count: count });
         });
 
+        // Цели для проверки: свои домены или встроенный набор.
+        //
+        // Настройка сохраняется сразу, но замер при этом не сбрасывается вручную:
+        // перебор сам увидит, что сохранённая базовая линия меряла другие цели,
+        // и замерит заново. Так человек не получит сравнение разных вещей.
+        var ownTargets = document.getElementById("diag-own-targets");
+
+        if (ownTargets) ownTargets.addEventListener("click", function () {
+            var next = !ownTargets.classList.contains("on");
+
+            ownTargets.classList.toggle("on", next);
+            queueSave({ probeOwnList: next });
+
+            // Спрашиваем заново: число доменов и предупреждения считает C#,
+            // и после переключения они другие.
+            send("diag.targets");
+        });
+
         var netcap = document.getElementById("btn-diag-netcap");
         if (netcap) netcap.addEventListener("click", function () {
             netcap.disabled = true;
@@ -2192,6 +2214,53 @@
         "btn-diag-sys", "btn-diag-bundle", "btn-diag-bundle-deep",
         "btn-diag-probe", "btn-diag-deep", "btn-diag-tcp16", "btn-diag-test"
     ];
+
+    /**
+     * Подсказка «по каким целям проверяем».
+     *
+     * Число доменов приходит из C#, а не считается здесь: правила отбора
+     * (исключения `!`, шаблоны `*.`, адреса) живут в одном месте. Посчитай
+     * мы здесь второй раз — цифра в подсказке разошлась бы с тем, что реально
+     * проверяется.
+     */
+    function renderDiagTargets(msg) {
+        var hint = document.getElementById("diag-own-targets-hint");
+
+        if (!hint) return;
+
+        if (!msg.own) {
+            hint.textContent = "Цели — встроенный набор: youtube, discord, google, twitch";
+            return;
+        }
+
+        if (!msg.count) {
+            hint.textContent = "Своих доменов нет — проверятся встроенные цели. " +
+                               "Добавьте их на экране «Списки»";
+            return;
+        }
+
+        var line = "Проверю " + msg.count + " " + plural(msg.count, "домен", "домена", "доменов");
+
+        // «usable» — сколько всего пригодно. Если больше, чем проверим, говорим
+        // прямо: иначе человек считает, что проверен весь список.
+        if (msg.usable > msg.count)
+            line += " из " + msg.usable + " в списке (потолок " + msg.max + ")";
+
+        if (msg.note) line += " · " + msg.note;
+
+        hint.textContent = line;
+    }
+
+    /** Русское склонение: 1 домен, 2 домена, 5 доменов. */
+    function plural(n, one, few, many) {
+        var mod10 = n % 10;
+        var mod100 = n % 100;
+
+        if (mod10 === 1 && mod100 !== 11) return one;
+        if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few;
+
+        return many;
+    }
 
     function setDiagBusy(running, title) {
         var card = document.getElementById("diag-run-card");
@@ -4028,6 +4097,10 @@
                 setDiagBusy(!!msg.running, msg.title || "");
                 break;
 
+            case "diag.targets":
+                renderDiagTargets(msg);
+                break;
+
             case "browser.doh":
                 renderBrowserDoh(msg);
                 break;
@@ -4331,6 +4404,8 @@
         renderSystemDns: renderSystemDns,
         // карточка службы: проверяется, что все четыре кнопки на месте
         renderService: renderService,
+        renderDiagTargets: renderDiagTargets,
+        plural: plural,
         renderServiceStale: renderServiceStale,
         renderServiceResult: renderServiceResult,
         // список фиксов hosts: проверяется, что наборы и счётчики видны

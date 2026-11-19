@@ -1885,6 +1885,7 @@ namespace AutoZapret.Diag
         {
             string dir = null;
             string prefix = null;
+            bool intoCatalog = false;
 
             for (int i = 0; i < args.Length; i++)
             {
@@ -1898,11 +1899,15 @@ namespace AutoZapret.Diag
                 {
                     prefix = args[i + 1];
                 }
+                else if (string.Equals(args[i], "--into-catalog", StringComparison.OrdinalIgnoreCase))
+                {
+                    intoCatalog = true;
+                }
             }
 
             if (string.IsNullOrEmpty(dir) || !System.IO.Directory.Exists(dir))
             {
-                Console.WriteLine("нужен существующий каталог: --import-strategies <путь> [--as <префикс>]");
+                Console.WriteLine("нужен существующий каталог: --import-strategies <путь> [--as <префикс>] [--into-catalog]");
                 return 2;
             }
 
@@ -1919,6 +1924,9 @@ namespace AutoZapret.Diag
             Console.WriteLine("== импорт набора ==");
             Console.WriteLine("каталог: " + dir);
             Console.WriteLine("префикс: " + prefix);
+            Console.WriteLine("куда:    " + (intoCatalog ? "каталог поставки (strategies.v1.json)" : "свои стратегии"));
+
+            if (intoCatalog) return ImportIntoCatalog(dir, prefix);
 
             using (ZapretService svc = new ZapretService())
             {
@@ -1942,6 +1950,46 @@ namespace AutoZapret.Diag
 
                 return 0;
             }
+        }
+
+        /// <summary>
+        /// Импорт набора В КАТАЛОГ ПОСТАВКИ, а не в «свои стратегии».
+        ///
+        /// Разница принципиальная. Свои стратегии — это данные человека:
+        /// он их добавил, он их и удалит, обновление движка их не трогает.
+        /// Каталог поставки — это то, что едет с программой у всех: набор
+        /// автора, проверенный нами и попавший в релиз.
+        ///
+        /// Складывать чужой набор в «свои» значит показывать человеку 30
+        /// стратегий, которых он не добавлял, и которые он «не может» удалить
+        /// без удивления.
+        /// </summary>
+        private static int ImportIntoCatalog(string dir, string prefix)
+        {
+            string cache = Path.Combine(Paths.StrategiesDir, "strategies.v1.json");
+
+            StrategyStore store = new StrategyStore();
+
+            if (File.Exists(cache)) store.Load(cache);
+
+            int before = store.Count;
+
+            int added = store.ImportFromDirectory(dir, Paths.EngineBinDir, Paths.EngineListsDir,
+                                                  null, prefix, true);
+
+            Console.WriteLine("было: " + before + ", добавлено: " + added + ", стало: " + store.Count);
+
+            if (added == 0)
+            {
+                Console.WriteLine("ничего не добавлено: набор пуст или не содержит winws");
+                return 1;
+            }
+
+            store.Save(cache, "imported");
+
+            Console.WriteLine("сохранено: " + cache);
+
+            return 0;
         }
 
         /// <summary>
@@ -2317,6 +2365,147 @@ namespace AutoZapret.Diag
 
                 return added > 0 ? 0 : 1;
             }
+        }
+
+        /// <summary>
+        /// --check-bats &lt;каталог&gt; [--as &lt;префикс&gt;]
+        ///
+        /// Разобрать набор .bat и сказать, что с ним будет: сколько стратегий,
+        /// чего не хватает, что не разобралось. Ничего не сохраняет.
+        ///
+        /// Зачем отдельно от импорта. Импорт пишет в каталог стратегий сразу,
+        /// и «половина не работает, потому что нет файла фейка» выясняется
+        /// позже — при запуске, когда виноватой выглядит стратегия. Здесь то
+        /// же самое видно ДО, и решение принимает человек.
+        /// </summary>
+        public static int RunCheckBats(string[] args)
+        {
+            string dir = null;
+            string prefix = null;
+
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], "--check-bats", StringComparison.OrdinalIgnoreCase) &&
+                    i + 1 < args.Length && !args[i + 1].StartsWith("--"))
+                {
+                    dir = args[i + 1];
+                }
+                else if (string.Equals(args[i], "--as", StringComparison.OrdinalIgnoreCase) &&
+                         i + 1 < args.Length && !args[i + 1].StartsWith("--"))
+                {
+                    prefix = args[i + 1];
+                }
+            }
+
+            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+            {
+                Console.WriteLine("нужен каталог: --check-bats <каталог> [--as <префикс>]");
+                return 2;
+            }
+
+            if (string.IsNullOrEmpty(prefix)) prefix = "check.";
+
+            string[] files = Directory.GetFiles(dir, "*.bat");
+            Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+
+            Console.WriteLine("== проверка набора ==");
+            Console.WriteLine("каталог: " + dir);
+            Console.WriteLine("файлов:  " + files.Length);
+            Console.WriteLine();
+
+            int parsed = 0;
+            int skipped = 0;
+            int missingTotal = 0;
+
+            HashSet<string> missingFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            Dictionary<string, string> placeholders = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                { "BIN", Paths.EngineBinDir },
+                { "LISTS", Paths.EngineListsDir },
+                { "LUA", Path.Combine(Paths.EngineDir, "lua") },
+                { "FAKES", Paths.FakesDir },
+                { "GAME_TCP", "" },
+                { "GAME_UDP", "" }
+            };
+
+            foreach (string file in files)
+            {
+                string name = Path.GetFileName(file);
+
+                if (name.StartsWith("service", StringComparison.OrdinalIgnoreCase)) continue;
+
+                Strategy strategy = StrategyParser.ParseBat(file, Paths.EngineBinDir, Paths.EngineListsDir,
+                                                           Path.Combine(Paths.EngineDir, "lua"), prefix);
+
+                if (strategy == null)
+                {
+                    Console.WriteLine("  [skip] " + name + ": не нашёл запуск winws");
+                    skipped++;
+                    continue;
+                }
+
+                if (strategy.Profiles.Count == 0)
+                {
+                    Console.WriteLine("  [skip] " + name + ": ни одного профиля");
+                    skipped++;
+                    continue;
+                }
+
+                parsed++;
+
+                List<string> built = strategy.BuildArguments(placeholders);
+                List<string> missing = new List<string>();
+
+                foreach (string arg in built)
+                {
+                    int eq = arg.IndexOf('=');
+
+                    string value = eq > 0 ? arg.Substring(eq + 1) : arg;
+
+                    if (!value.EndsWith(".bin", StringComparison.OrdinalIgnoreCase) &&
+                        !value.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    if (value.IndexOf("${", StringComparison.Ordinal) >= 0)
+                    {
+                        missing.Add(value + " (плейсхолдер не раскрылся)");
+                        continue;
+                    }
+
+                    if (!File.Exists(value)) missing.Add(Path.GetFileName(value));
+                }
+
+                if (missing.Count == 0)
+                {
+                    Console.WriteLine("  [ok]   " + name + "  (" + strategy.Profiles.Count + " профилей)");
+                    continue;
+                }
+
+                missingTotal += missing.Count;
+
+                foreach (string m in missing) missingFiles.Add(m);
+
+                Console.WriteLine("  [нет]  " + name + "  нет файлов: " + string.Join(", ", missing.ToArray()));
+            }
+
+            Console.WriteLine();
+            Console.WriteLine("разобрано:  " + parsed);
+            Console.WriteLine("пропущено:  " + skipped);
+            Console.WriteLine("нет файлов: " + missingTotal);
+
+            if (missingFiles.Count > 0)
+            {
+                Console.WriteLine();
+                Console.WriteLine("чего не хватает (уникальных: " + missingFiles.Count + "):");
+
+                List<string> sorted = new List<string>(missingFiles);
+                sorted.Sort(StringComparer.OrdinalIgnoreCase);
+
+                foreach (string m in sorted) Console.WriteLine("  " + m);
+            }
+
+            return missingTotal == 0 ? 0 : 1;
         }
 
         /// <summary>

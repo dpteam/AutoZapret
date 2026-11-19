@@ -242,8 +242,17 @@ try {
         # фейки для чужих протоколов (isakmp, wireguard, http, dht, zero_*),
         # наш валидатор их не знает и справедливо считает «не TLS/QUIC/STUN».
         # Скопировать всё — значит завалить проверку «все фейки валидны».
+        #
+        # quic_initial_4pda.to.bin и quic_initial_dbankcloud_ru.bin нужны
+        # набору Zapret-Mods (игровые моды peshk0v): без них его QUIC-профили
+        # ссылаются на несуществующие файлы, и winws молча ничего не делает.
         $bundleFakes = Join-Path $bundleDir 'blockcheck\zapret\files\fake'
-        $extraFakes = @('tls_clienthello_gosuslugi_ru.bin', 'tls_clienthello_vk_com.bin')
+        $extraFakes = @(
+            'tls_clienthello_gosuslugi_ru.bin',
+            'tls_clienthello_vk_com.bin',
+            'quic_initial_4pda.to.bin',
+            'quic_initial_dbankcloud_ru.bin'
+        )
 
         if (Test-Path $bundleFakes) {
             $added = 0
@@ -252,7 +261,25 @@ try {
                 $dest = Join-Path $binDir $f
                 if ((Test-Path $src) -and -not (Test-Path $dest)) { Copy-Item $src $dest -Force; $added++ }
             }
-            if ($added -gt 0) { Write-Host "      bin\*.bin (+$added для набора StressOzz)" }
+            if ($added -gt 0) { Write-Host "      bin\*.bin (+$added для наборов StressOzz и Zapret-Mods)" }
+        }
+
+        # 4pda.bin — псевдоним, а не отдельный фейк.
+        #
+        # Набор Zapret-Mods (игровые моды) ссылается на `%BIN%4pda.bin`, а файла
+        # с таким именем нет ни в одном бандле: автор держал его у себя. По роли
+        # это TLS ClientHello к 4pda.to в `--dpi-desync-split-seqovl-pattern`,
+        # то есть ровно `tls_clienthello_4pda_to.bin`. StressOzz подставлял то же
+        # самое, и это записано в tools\import-stressozz.js.
+        #
+        # Делаем копию с ожидаемым именем, а не правим чужие .bat: правка .bat
+        # разошлась бы с оригиналом, а псевдоним виден в каталоге фейков.
+        $alias4pda = Join-Path $binDir '4pda.bin'
+        $real4pda = Join-Path $binDir 'tls_clienthello_4pda_to.bin'
+
+        if ((Test-Path $real4pda) -and -not (Test-Path $alias4pda)) {
+            Copy-Item $real4pda $alias4pda -Force
+            Write-Host "      bin\4pda.bin (псевдоним tls_clienthello_4pda_to.bin, нужен Zapret-Mods)"
         }
     }
 

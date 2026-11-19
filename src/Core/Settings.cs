@@ -54,6 +54,16 @@ namespace AutoZapret.Core
         public bool AutoPilot = false;             // автоподбор стратегии в фоне
         public bool ProcessPresets = false;        // переключать стратегию под запущенное приложение
 
+        /// <summary>
+        /// Проверять стратегии по доменам из своего списка, а не по встроенным.
+        ///
+        /// По умолчанию выключено: встроенный набор (youtube, discord, google)
+        /// — то, с чего начинает большинство, и он же даёт сравнимый результат
+        /// между людьми. Включают те, у кого проблема с конкретным сайтом,
+        /// которого в наборе нет.
+        /// </summary>
+        public bool ProbeOwnList = false;
+
         // ---- proxy
         public bool ProxyEnabled = false;
         public string ProxyHost = "127.0.0.1";
@@ -209,6 +219,7 @@ namespace AutoZapret.Core
                 s.ServiceMode = Json.GetBool(zapret, "serviceMode", s.ServiceMode);
                 s.AutoPilot = Json.GetBool(zapret, "autoPilot", s.AutoPilot);
                 s.ProcessPresets = Json.GetBool(zapret, "processPresets", s.ProcessPresets);
+                s.ProbeOwnList = Json.GetBool(zapret, "probeOwnList", s.ProbeOwnList);
                 s.StrategyIdV1 = Json.GetString(zapret, "strategyIdV1", s.StrategyIdV1);
                 s.StrategyIdV2 = Json.GetString(zapret, "strategyIdV2", s.StrategyIdV2);
 
@@ -298,7 +309,8 @@ namespace AutoZapret.Core
                 "systemDns", SystemDns,
                 "serviceMode", ServiceMode,
                 "autoPilot", AutoPilot,
-                "processPresets", ProcessPresets);
+                "processPresets", ProcessPresets,
+                "probeOwnList", ProbeOwnList);
 
             root["proxy"] = Map(
                 "enabled", ProxyEnabled,

@@ -758,6 +758,30 @@ namespace AutoZapret.App
                 RunDiag("test", "подбор стратегий", ct => RunTestUi(count, ct), true);
             });
 
+            // Сколько целей будет проверяться и по какому списку.
+            //
+            // Нужно ДО запуска: человек с 200 доменами в своём списке должен
+            // знать, что проверятся первые 8, а не все 200. Иначе «программа
+            // проверила не всё» выяснится после двадцати минут ожидания.
+            bridge.Register("diag.targets", msg =>
+            {
+                string note;
+
+                List<ProbeTarget> targets = ProbeTargets.ForSettings(out note);
+
+                List<object> names = new List<object>();
+
+                foreach (ProbeTarget t in targets) names.Add(t.Name);
+
+                _form.Bridge.Send(WebBridge.Msg("diag.targets",
+                    "own", _settings.ProbeOwnList,
+                    "count", (long)targets.Count,
+                    "usable", (long)ProbeTargets.CountUsable(),
+                    "max", (long)ProbeTargets.MaxOwn,
+                    "note", note,
+                    "names", names));
+            });
+
             // Отладочный прогон одной стратегии: winws рассказывает, что делает
             // с пакетами. Нужен, когда подбор даёт нули и непонятно почему.
             bridge.Register("diag.explain", msg =>
@@ -3113,7 +3137,8 @@ namespace AutoZapret.App
             {
                 DiagProgress("замеряю, что заблокировано (это ~20–40 с)…");
 
-                baseline = Baseline.Measure(new ConnectivityProbe(), 10, true, token);
+                baseline = Baseline.Measure(new ConnectivityProbe(), 10, true, token,
+                                            ProbeTargets.ForSettings());
 
                 if (token.IsCancellationRequested)
                 {
@@ -4439,6 +4464,20 @@ namespace AutoZapret.App
 
             Baseline.Snapshot baseline = Baseline.Load();
 
+            // Чем мерить сейчас. Если снапшот мерили другим набором целей
+            // (например, человек включил «свои домены» после прошлого замера),
+            // старый снапшот не годится: он говорит про youtube, а перебор
+            // будет проверять свои домены — и сравнение соврёт.
+            List<ProbeTarget> targets = ProbeTargets.ForSettings();
+
+            bool stale = baseline != null && !Baseline.MatchesTargets(baseline, targets);
+
+            if (stale)
+            {
+                Log.Info("DIAG", "базовая линия от другого набора целей — замеряю заново");
+                baseline = null;
+            }
+
             // Замера нет или он пуст — не отфутболиваем человека «сначала нажмите
             // Проверить сеть», а замеряем сами. Пустой бывает и после hosts-правок:
             // сайт «открывается» через захардкоженный IP, значит «ничего не
@@ -4457,7 +4496,7 @@ namespace AutoZapret.App
 
                 DiagProgress("замеряю, что заблокировано (это ~20–40 с)…");
 
-                baseline = Baseline.Measure(new ConnectivityProbe(), 10, true, token);
+                baseline = Baseline.Measure(new ConnectivityProbe(), 10, true, token, targets);
             }
 
             if (token.IsCancellationRequested)
@@ -5227,6 +5266,7 @@ namespace AutoZapret.App
                 "autoStartProtect", _settings.AutoStart,
                 "reconnectOnStrategy", _settings.ReconnectOnStrategy,
                 "serviceRestartOnStrategy", _settings.ServiceRestartOnStrategy,
+                "probeOwnList", _settings.ProbeOwnList,
                 "processPresets", _settings.ProcessPresets,
                 "logFile", Log.CurrentFile ?? "",
                 // служба держит обход: наша кнопка питания должна это знать
@@ -5285,6 +5325,7 @@ namespace AutoZapret.App
             _settings.AutoStart = Json.GetBool(msg, "autoStart", _settings.AutoStart);
             _settings.ReconnectOnStrategy = Json.GetBool(msg, "reconnectOnStrategy", _settings.ReconnectOnStrategy);
             _settings.ServiceRestartOnStrategy = Json.GetBool(msg, "serviceRestartOnStrategy", _settings.ServiceRestartOnStrategy);
+            _settings.ProbeOwnList = Json.GetBool(msg, "probeOwnList", _settings.ProbeOwnList);
             _settings.Language = NormalizeLanguage(Json.GetString(msg, "language", _settings.Language));
             _settings.UpdateEngine = Json.GetBool(msg, "updateEngine", _settings.UpdateEngine);
             _settings.UpdateApp = Json.GetBool(msg, "updateApp", _settings.UpdateApp);

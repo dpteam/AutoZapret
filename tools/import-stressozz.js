@@ -145,10 +145,21 @@ function buildStrategy(section, meta) {
     let dropped = 0;
 
     for (const a of section.args) {
+        // Опция, склеенная со значением через ПРОБЕЛ, — это не одна опция.
+        //
+        // В исходниках StressOzz встречается `--dpi-desync-autottl 2:2-12`
+        // (вместо `=`). Мы передаём аргументы массивом, поэтому такая строка
+        // уходит в winws одним куском, он видит имя опции
+        // `--dpi-desync-autottl 2:2-12`, не находит его и отказывается
+        // стартовать. Стратегия выглядит «нерабочей», а причина — пробел.
+        const fixed = a.startsWith('--') && a.indexOf(' ') > 0 && a.indexOf('=') < 0
+            ? a.replace(/^(\S+)\s+(\S.*)$/, '$1=$2')
+            : a;
+
         // Путь встречается как значение опции: --hostlist=/opt/...
-        const eq = a.indexOf('=');
+        const eq = fixed.indexOf('=');
         if (eq > 0) {
-            const value = a.slice(eq + 1);
+            const value = fixed.slice(eq + 1);
 
             if (value.startsWith('/opt/zapret/')) {
                 const mapped = mapPath(value);
@@ -158,12 +169,12 @@ function buildStrategy(section, meta) {
                     continue;
                 }
 
-                args.push(a.slice(0, eq + 1) + mapped);
+                args.push(fixed.slice(0, eq + 1) + mapped);
                 continue;
             }
         }
 
-        args.push(a);
+        args.push(fixed);
     }
 
     const tcp = portsOf(args, '--filter-tcp');

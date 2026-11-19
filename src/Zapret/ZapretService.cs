@@ -484,6 +484,13 @@ namespace AutoZapret.Zapret
 
             int count = 0;
 
+            // Имя файла — это имя стратегии, а имена у разных наборов совпадают:
+            // `general (ALT9)` есть и у Flowseal, и у Zapret-Mods (вариант для
+            // Fortnite). Без этой проверки второй файл молча затирает первый, и
+            // в папке остаётся 123 файла вместо 124 — при этом человек видит
+            // «записано 124» и не понимает, куда делся один.
+            HashSet<string> used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
             foreach (Strategy s in list)
             {
                 // Файлы разных движков в одну папку — это два general.bat с
@@ -491,7 +498,27 @@ namespace AutoZapret.Zapret
                 // каталог на движок.
                 string target = Path.Combine(dir, s.Engine);
 
-                string path = Path.Combine(target, StrategyBatWriter.FileName(s));
+                string name = StrategyBatWriter.FileName(s);
+
+                if (!used.Add(Path.Combine(target, name).ToLowerInvariant()))
+                {
+                    string baseName = name.Substring(0, name.Length - ".bat".Length);
+                    int suffix = 2;
+
+                    while (!used.Add(Path.Combine(target, baseName + "-" + suffix + ".bat")
+                                                .ToLowerInvariant()))
+                        suffix++;
+
+                    string unique = baseName + "-" + suffix + ".bat";
+
+                    if (warnings != null)
+                        warnings.Add(name + " уже занято другой стратегией — эта записана как " +
+                                     unique + " (" + s.Id + ")");
+
+                    name = unique;
+                }
+
+                string path = Path.Combine(target, name);
 
                 string error = StrategyBatWriter.Write(s, placeholders, path);
 
