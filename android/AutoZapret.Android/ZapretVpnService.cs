@@ -270,6 +270,18 @@ namespace AutoZapret.Android
             // только «VPN включён», а что происходит с соединениями — нет.
             _proxy.Log = LogLine;
 
+            // Вывести исходящие сокеты прокси из-под VPN.
+            //
+            // Без этого приложение, исключённое из туннеля, вообще не имеет
+            // маршрута наружу: в таблице `main` только локальная подсеть, а
+            // `default` живёт в таблице физической сети, куда ведёт fwmark.
+            // Симптом: connect падает за 6 мс с SocketException, ни одного
+            // пакета не уходит. protect() ставит этот fwmark.
+            Socks5Proxy.ProtectFd = delegate (int fd)
+            {
+                try { return Protect(fd); } catch { return false; }
+            };
+
             // Прогреть кэш настоящих ClientHello для основных доменов.
             //
             // Зачем: первый запрос к домену уходит с синтетическим фейком, а он
@@ -608,6 +620,11 @@ namespace AutoZapret.Android
 
             _proxy.Log = LogLine;
 
+            // В режиме «только SOCKS5» VPN нет, и protect() вызывать не на что:
+            // сокеты и так идут через обычный маршрут. Явно снимаем делегат,
+            // чтобы он не остался от предыдущего VPN-запуска.
+            Socks5Proxy.ProtectFd = null;
+
             HelloCapture.WarmPopular();
 
             // Внешний движок: раньше он не работал из приложения, потому что
@@ -767,6 +784,10 @@ namespace AutoZapret.Android
             Running = null;
 
             HevTunnel.Stop();
+
+            // Снимаем protect вместе с туннелем: после Stop() VPN больше нет, а
+            // делегат остался бы ссылаться на мёртвый сервис.
+            Socks5Proxy.ProtectFd = null;
 
             try { if (_thread != null) _thread.Join(1500); } catch { }
             try { if (_hevLogThread != null) _hevLogThread.Join(500); } catch { }

@@ -51,6 +51,16 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "submodule init failed" }
           } finally { Pop-Location }
 
+      # JNI-обёртку из сборки убрать: он ищет Java-класс hev/htproxy/TProxyService,
+      # которого у нас нет (зовём hev через P/Invoke), и падает на
+      # ClassNotFoundException -> SIGABRT при загрузке библиотеки. Приложение
+      # просто не запускается, а причина видна только в logcat -b crash.
+      - name: Exclude hev JNI wrapper
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File tools/patch-hev.ps1 -Source refs/hev-socks5-tunnel
+          if ($LASTEXITCODE -ne 0) { throw "patch-hev failed" }
+
       - name: Build tun2socks (ndk-build)
         shell: pwsh
         run: |
@@ -68,6 +78,17 @@ jobs:
                 "APP_BUILD_SCRIPT=Android.mk" "NDK_APPLICATION_MK=Application.mk" "-j4"
             if ($LASTEXITCODE -ne 0) { throw "ndk-build failed" }
           } finally { Pop-Location }
+
+          # Проверка, что JNI-обёртки в библиотеке не осталось. Если она есть,
+          # приложение падает при старте на ClassNotFoundException, и увидеть
+          # это можно только в logcat на устройстве.
+          $nm = Get-ChildItem "$ndk/toolchains/llvm/prebuilt/*/bin/llvm-nm*" |
+                Select-Object -First 1 -ExpandProperty FullName
+          if ($nm) {
+            $syms = & $nm -D --defined-only 'refs/hev-socks5-tunnel/libs/arm64-v8a/libhev-socks5-tunnel.so'
+            if ($syms -match 'JNI_OnLoad') { throw "libhev-socks5-tunnel.so still exports JNI_OnLoad" }
+            Write-Host "JNI_OnLoad absent - correct"
+          }
 
           # .so кладём туда, откуда их ждёт csproj (libs/ в git не лежит).
           # Все три ABI обязательны: csproj перечисляет android-arm64,

@@ -9,11 +9,13 @@ rem   (W^X, ExecuteNoWritableFile): "error=13, Permission denied". Files in the
 rem   native library directory are read-only and executable, so the engine is
 rem   shipped as libs\<abi>\libciadpi.so.
 rem
-rem WHY -Dmain=ciadpi_main
-rem   byedpi has its own main(). Renaming it lets the library be loaded and
-rem   called in-process later; today we still start it as a separate process
-rem   from nativeLibraryDir, but the rename costs nothing and keeps both paths
-rem   open.
+rem WHY IT IS A NORMAL EXECUTABLE, NOT -shared
+rem   The file is named libciadpi.so only to live in nativeLibraryDir (the one
+rem   place Android allows exec from). Inside it must be a real ELF executable.
+rem   A -shared build has ELF type DYN and no crt _start, so executing it
+rem   segfaults immediately - and the app log still says "engine started",
+rem   because ProcessBuilder.Start() succeeded. Verified on the device:
+rem   running the -shared build gives "Segmentation fault".
 rem
 rem WHY -Wl,-z,max-page-size=16384
 rem   Android 16 requires 16 KB page sizes on some devices. A .so built for
@@ -47,7 +49,7 @@ set "DST=android\AutoZapret.Android\libs"
 
 rem Sources are the same for every ABI; only the compiler prefix changes.
 set "SOURCES=packets.c main.c conev.c proxy.c desync.c mpool.c extend.c"
-set "CFLAGS=-D_DEFAULT_SOURCE -I. -std=c99 -O2 -fPIC -shared -Dmain=ciadpi_main"
+set "CFLAGS=-D_DEFAULT_SOURCE -I. -std=c99 -O2"
 set "LDFLAGS=-Wl,-z,max-page-size=16384"
 
 pushd "%SRC%"
@@ -69,9 +71,42 @@ if not "%RESULT%"=="0" (
     exit /b 1
 )
 
+rem VERIFY the engine is a real executable. Two ways this silently breaks:
+rem   * no "main" symbol (renamed) - nothing to run;
+rem   * built with -shared - no PT_INTERP and no crt _start, segfaults on exec.
+rem Both leave ProcessBuilder.Start() succeeding, so the app thinks the engine
+rem is running while it is already dead.
+rem
+rem NOTE on the ELF type: Android executables are PIE, so their type is DYN,
+rem exactly like a shared library. The distinguishing mark is PT_INTERP
+rem ("Requesting program interpreter: /system/bin/linker64") - a shared library
+rem has none.
+set "NM=%NDK%\toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-nm.exe"
+set "RE=%NDK%\toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-readelf.exe"
+if exist "%NM%" (
+    rem no -D: in an executable "main" lives in the regular symbol table,
+    rem not in the dynamic one.
+    "%NM%" --defined-only "%DST%\arm64-v8a\libciadpi.so" 2>nul | findstr /R /C:" T main" >nul
+    if errorlevel 1 (
+        echo [FAIL] libciadpi.so has no "main" symbol - it cannot be executed
+        exit /b 1
+    )
+    echo   main present - ok
+)
+if exist "%RE%" (
+    "%RE%" -l "%DST%\arm64-v8a\libciadpi.so" 2>nul | findstr /C:"program interpreter" >nul
+    if errorlevel 1 (
+        echo [FAIL] libciadpi.so has no PT_INTERP - built with -shared^?
+        exit /b 1
+    )
+    echo   PT_INTERP present - ok
+)
+
 echo.
 echo Done. Engine libraries:
 dir /b /s "%DST%\libciadpi.so"
+rem reset the error level left by findstr/dir so the caller sees success
+ver >nul
 exit /b 0
 
 :build

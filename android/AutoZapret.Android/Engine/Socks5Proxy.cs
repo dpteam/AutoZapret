@@ -1002,6 +1002,22 @@ namespace AutoZapret.Android.Engine
                 TcpClient client = new TcpClient(address.AddressFamily);
                 client.NoDelay = true;
 
+                // Вывести сокет из-под VPN.
+                //
+                // Зачем это обязательно. Android маршрутизирует трафик по
+                // таблицам на UID. Для нашего приложения действует таблица
+                // `main`, а в ней только локальная подсеть — `default` там нет
+                // вовсе (default живёт в таблице физической сети, 1033).
+                // Поэтому первое же `connect()` к внешнему адресу падает
+                // мгновенно: `SocketException`, 6 мс, ни одного пакета.
+                //
+                // `VpnService.protect()` помечает конкретный сокет как «мимо
+                // VPN», и ядро выдаёт ему маршрут физической сети. Это ровно то,
+                // что делают ByeByeDPI и Zapret-Android. Привязывать процесс
+                // (`BindProcessToNetwork`) нельзя: тогда сервис теряет доступ
+                // к собственному tun — проверено, страница перестаёт грузиться.
+                ProtectSocket(client);
+
                 try
                 {
                     IAsyncResult ar = client.BeginConnect(address, port, null, null);
@@ -1032,13 +1048,69 @@ namespace AutoZapret.Android.Engine
                 }
                 catch (Exception ex)
                 {
-                    tried += " " + address + ":" + ex.GetType().Name;
+                    // Код ошибки — не украшение: `NetworkUnreachable` и
+                    // `ConnectionRefused` лечатся совершенно по-разному, а
+                    // снаружи оба выглядят как «не удалось подключиться».
+                    SocketException se = ex as SocketException;
+
+                    tried += " " + address + ":" +
+                             (se != null ? se.SocketErrorCode.ToString() : ex.GetType().Name);
+
                     try { client.Close(); } catch { }
                 }
             }
 
             error = addresses.Length + " адрес(ов):" + tried;
             return null;
+        }
+
+        /// <summary>
+        /// Куда сообщать о необходимости вывести сокет из-под VPN.
+        ///
+        /// Ставит VpnService при старте: `VpnService.protect(fd)`. Через делегат,
+        /// а не прямой ссылкой, потому что Socks5Proxy работает и в режиме
+        /// «только SOCKS5», где VPN нет вовсе — там protect не нужен и его нет.
+        ///
+        /// Принимает файловый дескриптор: на Android .NET сокет — это обычный
+        /// fd, и `VpnService.Protect(int)` работает с ним напрямую.
+        /// </summary>
+        public static Func<int, bool> ProtectFd;
+
+        /// <summary>Сколько сокетов вывели из-под VPN и сколько раз это не удалось.</summary>
+        public static int ProtectedCount;
+        public static int ProtectFailures;
+
+        /// <summary>
+        /// Пометить сокет как «мимо VPN».
+        ///
+        /// Без этого исходящее соединение из приложения, исключённого из VPN,
+        /// падает мгновенно: у него нет маршрута наружу (в таблице `main`
+        /// только локальная подсеть, а `default` живёт в таблице физической
+        /// сети, куда ведёт fwmark). `protect()` и ставит этот fwmark.
+        ///
+        /// Ошибку не считаем фатальной: в режиме без VPN делегата нет вовсе, а
+        /// если protect не сработал, соединение просто пойдёт как раньше —
+        /// падать из-за этого нельзя, иначе прокси перестанет работать совсем.
+        /// </summary>
+        private static void ProtectSocket(TcpClient client)
+        {
+            Func<int, bool> protect = ProtectFd;
+
+            if (protect == null) return;
+
+            try
+            {
+                int fd = (int)client.Client.Handle;
+
+                if (fd < 0) return;
+
+                if (protect(fd)) Interlocked.Increment(ref ProtectedCount);
+                else Interlocked.Increment(ref ProtectFailures);
+            }
+            catch
+            {
+                Interlocked.Increment(ref ProtectFailures);
+            }
         }
 
         /// <summary>

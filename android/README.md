@@ -59,6 +59,15 @@ adb install -r android\AutoZapret.Android\bin\Debug\net10.0-android\ru.autozapre
   **hev-socks5-tunnel** (MIT) превращает его в TCP/UDP и ведёт в наш SOCKS5,
   где и делается обход. Архитектура как у ByeByeDPI, но без JNI: hev вызывается
   из C# через P/Invoke (`Engine/HevTunnel.cs`).
+
+  **Важно при сборке hev:** в исходниках есть `src/hev-jni.c` — мост для Java
+  с `JNI_OnLoad`, который ищет класс `hev/htproxy/TProxyService`. У нас такого
+  класса нет, и загрузка библиотеки падает с `ClassNotFoundException` →
+  `SIGABRT`: приложение не запускается, в UI пусто, причина только в
+  `logcat -b crash`. Файл исключается из сборки (`tools\patch-hev.ps1`), после
+  чего **обязательно** удалить `refs/hev-socks5-tunnel/obj` и `libs` — иначе
+  ndk-build возьмёт старый объектный файл из кеша. `android\build-hev.cmd`
+  проверяет результат через `llvm-nm` и падает, если `JNI_OnLoad` остался.
 * **Выбор приложений** (`AppSelection.cs` + карточка в интерфейсе): весь телефон,
   «только выбранные», «все, кроме выбранных». Список — только приложения из
   лончера (`ACTION_MAIN` + `CATEGORY_LAUNCHER`), без системной мелочи.
