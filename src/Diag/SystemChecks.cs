@@ -68,6 +68,7 @@ namespace AutoZapret.Diag
             results.Add(Safe("Время системы", CheckSystemTime, progress));
             results.Add(Safe("Маршрут в интернет", CheckDefaultRoute, progress));
             results.Add(Safe("DNS-ответы", CheckDns, progress));
+            results.Add(Safe("Сетевые адаптеры", CheckNetworkAdapters, progress));
 
             return results;
         }
@@ -231,6 +232,63 @@ namespace AutoZapret.Diag
                 return true;
 
             return false;
+        }
+
+        /// <summary>
+        /// Сетевые адаптеры, которые мешают перехвату.
+        ///
+        /// Известный случай — Intel/Qualcomm **Killer**: их «Advanced Stream
+        /// Detect» сам разбирает трафик на уровне драйвера и конфликтует с
+        /// WinDivert. GoodbyeDPI упоминает это в issue #541, и симптом ровно
+        /// наш: обход включён, пакеты не перехватываются, в логе тишина.
+        ///
+        /// Проверка по имени адаптера, а не по оборудованию: «Killer» виден в
+        /// описании даже когда служба выключена. Ложное срабатывание здесь
+        /// безопасно — это предупреждение с точным действием («выключите
+        /// Advanced Stream Detect»), а не блокер.
+        /// </summary>
+        private static CheckResult CheckNetworkAdapters()
+        {
+            CheckResult r = new CheckResult { Name = "Сетевые адаптеры" };
+
+            string output = Cmd("wmic nic get Name,NetEnabled /format:list");
+
+            if (string.IsNullOrEmpty(output) || output.IndexOf("Name", StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                r.Status = CheckStatus.Ok;
+                r.Detail = "список адаптеров недоступен";
+                return r;
+            }
+
+            List<string> killer = new List<string>();
+
+            foreach (string line in output.Split('\n'))
+            {
+                string t = line.Trim();
+
+                if (!t.StartsWith("Name=", StringComparison.OrdinalIgnoreCase)) continue;
+
+                string name = t.Substring(5).Trim();
+
+                if (name.IndexOf("Killer", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    name.IndexOf("Advanced Stream Detect", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    killer.Add(name);
+                }
+            }
+
+            if (killer.Count > 0)
+            {
+                r.Status = CheckStatus.Warn;
+                r.Detail = "найден адаптер Killer: " + string.Join("; ", killer.ToArray());
+                r.Advice = "В Killer Control Center выключите Advanced Stream Detect — " +
+                           "он конфликтует с перехватом WinDivert (обход включён, но трафик не виден)";
+                return r;
+            }
+
+            r.Status = CheckStatus.Ok;
+            r.Detail = "конфликтующих адаптеров нет";
+            return r;
         }
 
         private static CheckResult CheckSystemProxy()

@@ -37,6 +37,20 @@ namespace AutoZapret.Zapret.Own
         public int UdpPort = 443;
 
         /// <summary>
+        /// Приоритет обработчика WinDivert.
+        ///
+        /// Зачем: WinDivert отдаёт пакет только ОДНОМУ обработчику на каждом
+        /// уровне приоритета. При нуле (по умолчанию) порядок между нами и
+        /// чужим перехватчиком не определён — пакет может уйти ему, а наш
+        /// движок при этом «работает» и не видит трафика.
+        ///
+        /// 2000 — как у winws2 (см. WinwsSupervisor.WinDivertPriority) и как в
+        /// штатном blockcheck2.sh zapret2. Диапазон допустимых значений
+        /// -30000..30000.
+        /// </summary>
+        public short Priority = 2000;
+
+        /// <summary>
         /// Не пропускать поддельные RST, которыми DPI обрывает соединение.
         ///
         /// Зачем отдельно от техник. Все техники обхода пытаются не дать DPI
@@ -142,7 +156,7 @@ namespace AutoZapret.Zapret.Own
             try
             {
                 handle = WinDivertInterop.WinDivertOpen(
-                    filter, WinDivertInterop.LayerNetwork, 0, 0);
+                    filter, WinDivertInterop.LayerNetwork, _options.Priority, 0);
             }
             catch (Exception ex)
             {
@@ -162,7 +176,9 @@ namespace AutoZapret.Zapret.Own
                             (_options.Profiles != null && _options.Profiles.Count > 0
                                 ? "профили: " + _options.Profiles.Describe()
                                 : _options.Technique.Describe()) +
-                            (_options.DryRun ? " (только показ)" : "") + ", фильтр: " + filter);
+                            (_options.DryRun ? " (только показ)" : "") +
+                            ", приоритет фильтра " + _options.Priority +
+                            ", фильтр: " + filter);
 
             // Драйвер открыт и перехват пошёл — только теперь старт можно
             // считать состоявшимся.
