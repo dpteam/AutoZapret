@@ -146,7 +146,12 @@ namespace AutoZapret.App
             {
                 Profiles = compat.Profiles,
                 Seconds = 0,
-                DryRun = false
+                DryRun = false,
+
+                // Не пропускать поддельные RST от DPI: это вторая половина
+                // обхода. Техники не дают распознать соединение, а эта ветка
+                // не даёт DPI его оборвать, когда он всё-таки распознал.
+                BlockDpiReset = true
             };
 
             CancellationTokenSource cancel;

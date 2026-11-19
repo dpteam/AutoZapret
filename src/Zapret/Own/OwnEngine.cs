@@ -35,6 +35,31 @@ namespace AutoZapret.Zapret.Own
 
         /// <summary>Порт назначения для UDP (QUIC). Обычно тот же 443.</summary>
         public int UdpPort = 443;
+
+        /// <summary>
+        /// Не пропускать поддельные RST, которыми DPI обрывает соединение.
+        ///
+        /// Зачем отдельно от техник. Все техники обхода пытаются не дать DPI
+        /// распознать соединение. Но есть второй сценарий: DPI уже всё понял и
+        /// отправляет нам поддельный RST (или 302-редирект по HTTP) — быстрее,
+        /// чем успевает ответить настоящий сервер. Браузер видит RST и сразу
+        /// показывает ошибку, хотя сервер жив и готов работать.
+        ///
+        /// Признак подделки — IP Identification. Настоящие серверы почти никогда
+        /// не начинают с нуля (Windows и BSD ведут глобальный счётчик), а
+        /// генераторы пакетов у DPI ставят 0x0000 или 0x0001. GoodbyeDPI на этом
+        /// и построен: он фильтрует входящие RST с `ip.Id <= 0x0F`.
+        ///
+        /// Риск и почему он приемлем: настоящий RST с таким же малым IP ID
+        /// теоретически возможен. Если его отбросить, соединение не закроется
+        /// сразу, а дождётся таймаута — это хуже, чем закрыть, но заметно
+        /// реже, чем ложный обрыв от DPI.
+        ///
+        /// Включено по умолчанию и не вынесено в настройки намеренно: это часть
+        /// работы движка, а не вкусовщина. Появится случай, где мешает, — тогда
+        /// и сделаем переключатель, а не заранее.
+        /// </summary>
+        public bool BlockDpiReset = true;
     }
 
     /// <summary>Что движок сделал — для лога и отчёта.</summary>
@@ -48,11 +73,15 @@ namespace AutoZapret.Zapret.Own
         /// <summary>Сколько соединений отброшено фильтром (не наши цели).</summary>
         public int Skipped;
 
+        /// <summary>Сколько поддельных RST от DPI не пропущено.</summary>
+        public int DroppedResets;
+
         public string Summary()
         {
             return "пакетов " + Packets + ", ClientHello " + ClientHellos +
                    ", применено " + Applied +
                    (Skipped > 0 ? ", пропущено " + Skipped : "") +
+                   (DroppedResets > 0 ? ", поддельных RST " + DroppedResets : "") +
                    ", ошибок " + Errors;
         }
     }
@@ -278,6 +307,13 @@ namespace AutoZapret.Zapret.Own
 
             byte protocol = version == 4 ? packet[9] : packet[6];
 
+            // Входящие пакеты попадают сюда ТОЛЬКО когда включена блокировка
+            // поддельных RST (иначе фильтр их не отдаёт). Обрабатываем их
+            // отдельной ветвью и сразу: ни одна техника обхода не применяется
+            // к входящему трафику — там нечего резать, это ответ сервера.
+            if (!WinDivertAddress.FromBuffer(address).Outbound)
+                return HandleInbound(packet, length);
+
             bool udpWanted = _options.Profiles != null
                 ? _options.Profiles.HasUdp
                 : (_options.Technique != null && _options.Technique.Kind == Technique.UdpLen);
@@ -462,7 +498,91 @@ namespace AutoZapret.Zapret.Own
 
             if (inner.Length == 0) return "";
 
-            return "outbound and (" + inner + ")";
+            string filter = "outbound and (" + inner + ")";
+
+            if (_options.BlockDpiReset) filter += " or (" + ResetFilterClause() + ")";
+
+            return filter;
+        }
+
+        /// <summary>
+        /// Условие WinDivert для поддельных RST.
+        ///
+        /// Отдельным методом, чтобы selftest мог проверить сам текст условия:
+        /// забытый `ip` или `tcp` здесь означает либо ничего не пойманное,
+        /// либо синтаксическую ошибку фильтра — а WinDivert на плохом фильтре
+        /// просто не открывается, и выглядит это как «движок не запустился».
+        ///
+        /// Только IPv4: у IPv6 нет поля Identification, а без него признака
+        /// подделки нет вовсе, и блокировать все RST подряд нельзя — это ломает
+        /// нормальное закрытие соединений.
+        /// </summary>
+        public static string ResetFilterClause()
+        {
+            return "inbound and tcp and tcp.Rst and " +
+                   "(tcp.SrcPort == 80 or tcp.SrcPort == 443) and ip.Id <= 0x0F";
+        }
+
+        /// <summary>
+        /// Входящий пакет: пропустить или отбросить поддельный RST.
+        ///
+        /// true — пакет съеден (до браузера не дойдёт), false — уходит как есть.
+        ///
+        /// Признак подделки намеренно узкий: RST + порт источника 80/443 +
+        /// малый IP ID. Расширять его нельзя без доказательств — каждый лишний
+        /// отброшенный пакет это «сайт не открылся» без внятной причины.
+        /// </summary>
+        private bool HandleInbound(byte[] packet, int length)
+        {
+            if (!_options.BlockDpiReset) return false;
+
+            if (!LooksLikeForgedReset(packet, length)) return false;
+
+            _stats.DroppedResets++;
+
+            if (_stats.DroppedResets == 1 || _stats.DroppedResets % 20 == 0)
+            {
+                Log.Info("OWN", "не пропущен поддельный RST от DPI (всего " +
+                                _stats.DroppedResets + ")");
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Похож ли пакет на поддельный RST от DPI.
+        ///
+        /// Разбор вынесен в статический метод, потому что это единственная
+        /// часть, которую можно проверить без драйвера: решение принимается по
+        /// трём полям, и ошибка в любом из них означает либо пропущенный обрыв,
+        /// либо отброшенный настоящий пакет.
+        ///
+        /// Только IPv4: у IPv6 нет поля Identification, признака подделки нет.
+        /// </summary>
+        public static bool LooksLikeForgedReset(byte[] packet, int length)
+        {
+            if (packet == null || length < 40) return false;
+
+            int version = (packet[0] >> 4) & 0x0F;
+            if (version != 4) return false;
+
+            if (packet[9] != 6) return false;               // не TCP
+
+            int ihl = (packet[0] & 0x0F) * 4;
+            if (ihl < 20 || length < ihl + 20) return false;
+
+            int flags = packet[ihl + 13];
+
+            // RST без ACK — так выглядит и подделка, и обычное закрытие.
+            // Отдельно требовать ACK нельзя: DPI шлёт именно голый RST.
+            if ((flags & 0x04) == 0) return false;
+
+            int srcPort = (packet[ihl] << 8) | packet[ihl + 1];
+            if (srcPort != 80 && srcPort != 443) return false;
+
+            int ipId = (packet[4] << 8) | packet[5];
+
+            return ipId <= 0x0F;
         }
 
         // ------------------------------------------------- фейки в UDP-потоке

@@ -1726,6 +1726,90 @@ namespace AutoZapret.App
             BitConverter.GetBytes(0x00100000u).CopyTo(address, 8);   // IPv6 = бит 20
             addr = AutoZapret.Zapret.WinDivertAddress.FromBuffer(address);
             Check("WinDivertAddress: IPv6 прочитан", addr.IsIPv6, addr.IsIPv6.ToString());
+
+            TestForgedReset();
+        }
+
+        /// <summary>
+        /// Распознавание поддельного RST от DPI.
+        ///
+        /// Проверяем ровно границы решения: по этим трём полям пакет либо
+        /// съедается (и сайт выживает), либо проходит (и обрыв виден). Ошибка в
+        /// любую сторону не диагностируется снаружи — поэтому проверяем
+        /// синтетикой, без драйвера.
+        /// </summary>
+        private static void TestForgedReset()
+        {
+            // Настоящая подпись DPI: RST, порт источника 443, IP ID = 0.
+            Check("RST: подделка от DPI узнана",
+                AutoZapret.Zapret.Own.OwnEngine.LooksLikeForgedReset(BuildReset(443, 0x0000, 0x04), 40),
+                "ok");
+
+            // Верхняя граница «малого» IP ID, которую использует GoodbyeDPI.
+            Check("RST: IP ID 0x0F ещё подделка",
+                AutoZapret.Zapret.Own.OwnEngine.LooksLikeForgedReset(BuildReset(443, 0x000F, 0x04), 40),
+                "ok");
+
+            // Обычный сервер: IP ID растёт глобально, 0x0F там не встречается.
+            Check("RST: IP ID 0x1000 — настоящий",
+                !AutoZapret.Zapret.Own.OwnEngine.LooksLikeForgedReset(BuildReset(443, 0x1000, 0x04), 40),
+                "не подделка");
+
+            // Порт 80 тоже целят: по HTTP DPI отвечает 302-редиректом.
+            Check("RST: порт 80 тоже проверяется",
+                AutoZapret.Zapret.Own.OwnEngine.LooksLikeForgedReset(BuildReset(80, 0x0001, 0x04), 40),
+                "ok");
+
+            // Чужой порт трогать нельзя: там RST от локальных служб.
+            Check("RST: чужой порт не трогаем",
+                !AutoZapret.Zapret.Own.OwnEngine.LooksLikeForgedReset(BuildReset(8080, 0x0000, 0x04), 40),
+                "не подделка");
+
+            // Без флага RST это обычный пакет.
+            Check("RST: без флага RST не трогаем",
+                !AutoZapret.Zapret.Own.OwnEngine.LooksLikeForgedReset(BuildReset(443, 0x0000, 0x18), 40),
+                "не подделка");
+
+            // Мусор и короткий буфер не должны ронять движок.
+            Check("RST: мусор отклонён",
+                !AutoZapret.Zapret.Own.OwnEngine.LooksLikeForgedReset(new byte[40], 40), "ok");
+
+            Check("RST: короткий буфер отклонён",
+                !AutoZapret.Zapret.Own.OwnEngine.LooksLikeForgedReset(new byte[10], 10), "ok");
+
+            // Условие фильтра проверяем по тексту: пропущенный `ip` или `tcp`
+            // даёт либо ничего не пойманное, либо неверный фильтр, на котором
+            // WinDivert просто не откроется.
+            string clause = AutoZapret.Zapret.Own.OwnEngine.ResetFilterClause();
+
+            Check("RST-фильтр: входящие", clause.Contains("inbound"), clause);
+            Check("RST-фильтр: только TCP", clause.Contains("tcp"), clause);
+            Check("RST-фильтр: флаг RST", clause.Contains("tcp.Rst"), clause);
+            Check("RST-фильтр: малый IP ID", clause.Contains("ip.Id"), clause);
+        }
+
+        /// <summary>Минимальный IPv4/TCP пакет без нагрузки — для проверки RST.</summary>
+        private static byte[] BuildReset(int srcPort, int ipId, int flags)
+        {
+            byte[] packet = new byte[40];
+
+            packet[0] = 0x45;                                   // IPv4, IHL 5
+            packet[2] = 0; packet[3] = 40;                      // total length
+            packet[4] = (byte)(ipId >> 8);
+            packet[5] = (byte)(ipId & 0xFF);
+            packet[8] = 64;                                     // TTL
+            packet[9] = 6;                                      // TCP
+
+            packet[12] = 93; packet[13] = 184; packet[14] = 216; packet[15] = 34;
+
+            packet[20] = (byte)(srcPort >> 8);
+            packet[21] = (byte)(srcPort & 0xFF);
+            packet[22] = 0xCF; packet[23] = 0x08;               // dst port 53000
+
+            packet[32] = 0x50;                                  // data offset 5
+            packet[33] = (byte)flags;
+
+            return packet;
         }
 
         /// <summary>Минимальный TLS ClientHello с SNI: достаточно для проверки смещений.</summary>
