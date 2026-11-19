@@ -149,7 +149,7 @@ namespace AutoZapret.Android
             ISharedPreferences prefs = context.GetSharedPreferences("autozapret", FileCreationMode.Private);
 
             int port = prefs.GetInt("port", 1080);
-            string technique = prefs.GetString("technique", DesyncPreset.Split1.Id);
+            string technique = prefs.GetString("technique", ZapretVpnService.DefaultTechnique);
             string zapretPreset = prefs.GetString("zapret_preset", "");
             int delay = prefs.GetInt("delay", 0);
             bool blockQuic = prefs.GetBoolean("block_quic", true);
@@ -256,8 +256,16 @@ namespace AutoZapret.Android
 
             Socks5Proxy active = ZapretVpnService.Running;
 
+            // Дефолт ОДИН на всё приложение: ZapretVpnService.DefaultTechnique.
+            //
+            // Здесь стояло "split1", в сервисе — "fake8", в интерфейсе —
+            // Split1.Id. Три разных дефолта означали, что отчёт «техника=»
+            // показывал не то, чем реально работает обход: prefs пуст, сервис
+            // взял fake8, а STATE напечатал «Разрез 1». По такому отчёту нельзя
+            // понять, что происходит, — а он для этого и нужен.
             Say("STATE: vpn=" + (ZapretVpnService.IsRunning ? "on" : "off") +
-                ", техника=" + DesyncPreset.ById(prefs.GetString("technique", "split1")).Name +
+                ", техника=" + DesyncPreset.ById(
+                    prefs.GetString("technique", ZapretVpnService.DefaultTechnique)).Name +
                 ", режим приложений=" + AppSelection.LoadMode(context) +
                 ", выбранных приложений=" + AppSelection.LoadApps(context).Count);
 

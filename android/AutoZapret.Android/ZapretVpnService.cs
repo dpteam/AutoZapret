@@ -49,6 +49,31 @@ namespace AutoZapret.Android
         private const int NotificationId = 42;
         private const string ChannelId = "autozapret-vpn";
 
+        /// <summary>
+        /// Техника обхода по умолчанию. ОДНО место для интерфейса и сервиса.
+        ///
+        /// Почему именно fake, а не разрез. Разрез (split) режет TLS
+        /// ClientHello на два сегмента, и это помогает там, где DPI собирает
+        /// рукопожатие из кусков. Fake отправляет подставной пакет, который
+        /// DPI принимает за начало соединения, — и работает там, где разрез
+        /// не пробивает.
+        ///
+        /// Проверено на Nothing A015 (Android 16), MTS LTE:
+        ///   split1 / split2 / multisplit -> example.com ок, youtube/discord таймаут
+        ///   disorder / oob               -> не проходит даже example.com
+        ///   fake8                        -> example.com, youtube, discord,
+        ///                                   google, cdn.discordapp — ок
+        ///
+        /// На Wi-Fi тот же результат, то есть дело не в провайдере, а в
+        /// технике: разрез на этом устройстве не пробивает ничего, кроме
+        /// незаблокированных сайтов.
+        ///
+        /// Раньше здесь стояло "fake8", а в интерфейсе — Split1: два разных
+        /// дефолта. Человек видел в списке «Разрез 1», соглашался с ним, и
+        /// сервис получал именно разрез. Теперь значение одно на оба места.
+        /// </summary>
+        public const string DefaultTechnique = "fake8";
+
         /// <summary>Адрес внутри туннеля: тот же, что ждёт hev в конфиге.</summary>
         private const string TunnelAddress = "10.10.10.10";
 
@@ -244,7 +269,7 @@ namespace AutoZapret.Android
             // — берём его, иначе ручную настройку.
             TuneProfile tuned = NetworkTuner.ForCurrent(this);
 
-            string technique = prefs.GetString("technique", DesyncPreset.Split1.Id);
+            string technique = prefs.GetString("technique", ZapretVpnService.DefaultTechnique);
 
             if (technique == "auto" && tuned != null)
             {
@@ -604,7 +629,7 @@ namespace AutoZapret.Android
             _proxy.Config.BlockQuic = prefs.GetBoolean("block_quic", true);
             _proxy.Config.BindAddress = "";
 
-            string technique = prefs.GetString("technique", DesyncPreset.Split1.Id);
+            string technique = prefs.GetString("technique", ZapretVpnService.DefaultTechnique);
 
             if (technique == "auto")
             {
@@ -681,7 +706,7 @@ namespace AutoZapret.Android
                 // Движок не должен занять пользовательский порт.
                 int enginePort = userPort == 1081 ? 1082 : 1081;
 
-                string technique = prefs.GetString("technique", "fake8");
+                string technique = prefs.GetString("technique", DefaultTechnique);
 
                 string args = EngineArgsFor(technique);
 

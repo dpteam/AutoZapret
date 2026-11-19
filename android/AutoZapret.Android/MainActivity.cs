@@ -154,7 +154,22 @@ namespace AutoZapret.Android
             ISharedPreferences prefs = GetSharedPreferences("autozapret", FileCreationMode.Private);
 
             _port = prefs.GetInt("port", 1080);
-            _technique = DesyncPreset.ById(prefs.GetString("technique", DesyncPreset.Split1.Id)).Id;
+
+            // Дефолт ОДИН и он же у сервиса: см. ZapretVpnService.
+            //
+            // Раньше здесь стоял `DesyncPreset.Split1.Id`, а сервис по умолчанию
+            // брал `fake8`. Два разных дефолта — это не «мелочь»: при первом
+            // запуске интерфейс показывал «Разрез 1», человек соглашался, и
+            // сервис получал именно разрез. На MTS LTE разрез не пробивает ни
+            // YouTube, ни Discord, а fake пробивает всё — то есть приложение
+            // выглядело нерабочим ровно из-за расхождения дефолтов.
+            //
+            // Проверено на Nothing A015 (Android 16, MTS LTE):
+            //   split1  -> example.com ок, youtube/discord таймаут
+            //   fake8   -> example.com, youtube, discord, google, cdn.discord — ок
+            _technique = DesyncPreset.ById(
+                prefs.GetString("technique", ZapretVpnService.DefaultTechnique)).Id;
+
             _zapretPreset = prefs.GetString("zapret_preset", "");
             _delay = prefs.GetInt("delay", 0);
             _blockQuic = prefs.GetBoolean("block_quic", true);
