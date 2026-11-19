@@ -773,13 +773,25 @@ namespace AutoZapret.App
 
                 foreach (ProbeTarget t in targets) names.Add(t.Name);
 
+                // Сколько стратегий вообще есть у текущего движка и сколько из
+                // них свои. Нужно интерфейсу: «все (141)» вместо «все», иначе
+                // человек не знает, что значит «все».
+                _zapret.EnsureStrategies();
+
+                List<Strategy> pool = _zapret.Strategies.ByEngine(StrategyEngine(_settings.EngineKind));
+
+                int custom = 0;
+                foreach (Strategy s in pool) if (s.Custom) custom++;
+
                 _form.Bridge.Send(WebBridge.Msg("diag.targets",
                     "own", _settings.ProbeOwnList,
                     "count", (long)targets.Count,
                     "usable", (long)ProbeTargets.CountUsable(),
                     "max", (long)ProbeTargets.MaxOwn,
                     "note", note,
-                    "names", names));
+                    "names", names,
+                    "strategies", (long)pool.Count,
+                    "customStrategies", (long)custom));
             });
 
             // Отладочный прогон одной стратегии: winws рассказывает, что делает
@@ -4515,18 +4527,33 @@ namespace AutoZapret.App
 
             // Перебираем стратегии ТЕКУЩЕГО движка: у v2 другой exe и lua,
             // стратегии v1 под ним просто не запустятся.
+            //
+            // Через StrategyEngineFor, а не сырой EngineKind: у «своего»
+            // движка (own) стратегии лежат под engine="v1", и ByEngine("own")
+            // возвращал пусто — перебор отказывал «для движка own нет
+            // стратегий», хотя они есть и именно этот движок их исполняет.
+            string engine = StrategyEngine(_settings.EngineKind);
+
+            // Порядок: СНАЧАЛА свои, потом остальные (см. SweepOrder).
+            // count <= 0 — «все»: молча проверить 22 из 141 значит соврать
+            // про результат.
+            List<Strategy> ordered = _zapret.SweepOrder(engine, count);
+
             List<string> ids = new List<string>();
-            foreach (Strategy s in _zapret.Strategies.ByEngine(_settings.EngineKind))
-            {
-                ids.Add(s.Id);
-                if (ids.Count >= count) break;
-            }
+
+            foreach (Strategy s in ordered) ids.Add(s.Id);
 
             if (ids.Count == 0)
             {
-                AbortTest("для движка " + _settings.EngineKind + " нет стратегий");
+                AbortTest("для движка " + engine + " нет стратегий");
                 return;
             }
+
+            List<Strategy> all = _zapret.Strategies.ByEngine(engine);
+
+            int totalAvailable = all.Count;
+            int customAvailable = 0;
+            foreach (Strategy s in all) if (s.Custom) customAvailable++;
 
             StrategyTester tester = new StrategyTester(_zapret, new ConnectivityProbe());
 
@@ -4586,7 +4613,20 @@ namespace AutoZapret.App
             string summary;
             if (cancelled) summary = "отменено — проверено " + scores.Count + " стратегий";
             else if (scores.Count == 0) summary = "ничего не проверено";
-            else summary = "проверено " + scores.Count + " стратегий против " + baseline.Blocked.Count + " целей";
+            else
+            {
+                summary = "проверено " + scores.Count + " стратегий против " + baseline.Blocked.Count + " целей";
+
+                // Если проверили не всё — говорим прямо. Иначе «проверено 22»
+                // читается как «проверено всё», и человек делает вывод о
+                // стратегиях, которых даже не запускали.
+                if (scores.Count < totalAvailable)
+                    summary += " (из " + totalAvailable + " доступных: поднять число в списке слева)";
+
+                if (customAvailable > 0)
+                    summary += ". Своих стратегий проверено: " +
+                               Math.Min(scores.Count, customAvailable) + " из " + customAvailable;
+            }
 
             // Если ни одна стратегия не дала ни одной успешной пробы — это не
             // «нет подходящей», а «движок не влияет на трафик вообще». Говорим

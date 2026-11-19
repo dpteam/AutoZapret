@@ -59,7 +59,6 @@
   "Перебрать стратегии": "Try strategies",
   "5 стратегий": "5 strategies",
   "10 стратегий": "10 strategies",
-  "все 22": "all 22",
   "Подобрать": "Pick",
   "Цели": "Targets",
   "Задержка": "Latency",
@@ -378,5 +377,7 @@
   "Копировать": "Copy",
   "Удалить свою": "Delete mine",
   "Проверять по своим доменам": "Check against my own domains",
-  "Цели берутся из списка «Свои домены — обходить» на экране «Списки», а не из встроенного набора. Для тех, у кого не открывается конкретный сайт": "Targets come from the \"My domains to bypass\" list on the Lists screen instead of the built-in set. For those whose problem is one specific site"
+  "Цели берутся из списка «Свои домены — обходить» на экране «Списки», а не из встроенного набора. Для тех, у кого не открывается конкретный сайт": "Targets come from the \"My domains to bypass\" list on the Lists screen instead of the built-in set. For those whose problem is one specific site",
+  "25 стратегий": "25 strategies",
+  "все": "all"
 }

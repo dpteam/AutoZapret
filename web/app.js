@@ -1824,7 +1824,10 @@
 
         var test = document.getElementById("btn-diag-test");
         if (test) test.addEventListener("click", function () {
-            var count = parseInt(document.getElementById("diag-test-count").value, 10) || 5;
+            // 0 = «все»: пустой выбор означает именно это, а не «пять».
+            var raw = document.getElementById("diag-test-count").value;
+            var count = raw === "0" ? 0 : (parseInt(raw, 10) || 5);
+
             test.disabled = true;
             test.textContent = "Идёт перебор…";
             document.getElementById("diag-test-progress").style.display = "";
@@ -2225,6 +2228,19 @@
      */
     function renderDiagTargets(msg) {
         var hint = document.getElementById("diag-own-targets-hint");
+
+        // Сколько стратегий есть — в подпись пункта «все», иначе слово «все»
+        // ничего не значит: у одного движка 141, у другого 22.
+        var select = document.getElementById("diag-test-count");
+
+        if (select && msg.strategies > 0) {
+            for (var i = 0; i < select.options.length; i++) {
+                if (select.options[i].value !== "0") continue;
+
+                select.options[i].textContent = "все (" + msg.strategies +
+                    (msg.customStrategies > 0 ? ", своих " + msg.customStrategies : "") + ")";
+            }
+        }
 
         if (!hint) return;
 

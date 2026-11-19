@@ -2296,8 +2296,7 @@ namespace AutoZapret.App
             int stressozz = v1.FindAll(s => s.Id.StartsWith("stressozz.", StringComparison.Ordinal)).Count;
             Check("стратегии: набор StressOzz на месте", stressozz >= 70, stressozz + " шт.");
 
-            // Дубли по содержимому — это две строки в списке, между которыми
-            // человек выбирает наугад, и обе дают одинаковый результат.
+            // Дубли по содержимому — это две строки в списке, между которыми            // человек выбирает наугад, и обе дают одинаковый результат.
             // Каталог собирается из четырёх наборов, и совпадения между ними
             // неизбежны; ловить их надо здесь, а не глазами.
             HashSet<string> content = new HashSet<string>(StringComparer.Ordinal);
@@ -2321,6 +2320,68 @@ namespace AutoZapret.App
             }
 
             Check("стратегии: нет дублей по содержимому", contentDupes == 0, contentDupes + " шт.");
+
+            // Порядок перебора: свои первыми.
+            //
+            // Это обещание интерфейса. Человек импортировал набор, нажал
+            // «Подобрать», и ждёт результат по СВОИМ стратегиям. Если перебор
+            // берёт первые N по алфавиту id, `shared.*` оказывается после
+            // `mods.*` и не проверяется вовсе — что и случилось у человека
+            // на живом тесте.
+            using (AutoZapret.Zapret.ZapretService sweep = new AutoZapret.Zapret.ZapretService())
+            {
+                // Сначала загрузка каталога, потом добавление своей.
+                //
+                // EnsureStrategies при первом вызове читает кэш движка и
+                // заменяет ВСЁ этого движка (RemoveAll + AddRange). Если
+                // добавить свою раньше, её сотрёт загрузка — в приложении
+                // этого не происходит (загрузка идёт на старте, до импорта),
+                // но тест обязан повторять правильный порядок.
+                sweep.EnsureStrategies();
+
+                AutoZapret.Zapret.Strategy mine = new AutoZapret.Zapret.Strategy
+                {
+                    Id = "shared.selftest-order",
+                    Name = "своя для порядка",
+                    Engine = "v1",
+                    Custom = true,
+                    Note = "selftest"
+                };
+
+                mine.GlobalArgs.Add("--wf-tcp=443");
+                mine.Profiles.Add(new AutoZapret.Zapret.StrategyProfile
+                {
+                    Name = "p1",
+                    Args = new List<string> { "--filter-tcp=443", "--dpi-desync=split2" }
+                });
+
+                sweep.Strategies.AddOrReplace(mine);
+
+                List<AutoZapret.Zapret.Strategy> firstFive = sweep.SweepOrder("v1", 5);
+
+                Check("перебор: своя стратегия попадает в первые 5",
+                    firstFive.Exists(s => s.Id == "shared.selftest-order"),
+                    firstFive.Count > 0 ? firstFive[0].Id : "пусто");
+
+                Check("перебор: своя идёт ПЕРВОЙ",
+                    firstFive.Count > 0 && firstFive[0].Id == "shared.selftest-order",
+                    firstFive.Count > 0 ? firstFive[0].Id : "пусто");
+
+                List<AutoZapret.Zapret.Strategy> all = sweep.SweepOrder("v1", 0);
+                Check("перебор: 0 значит все",
+                    all.Count == sweep.Strategies.ByEngine("v1").Count,
+                    all.Count + " из " + sweep.Strategies.ByEngine("v1").Count);
+
+                // Свой движок исполняет стратегии v1 — перебор обязан это
+                // учитывать, а не искать ByEngine("own") и отказывать.
+                List<AutoZapret.Zapret.Strategy> own = sweep.SweepOrder(
+                    AutoZapret.Zapret.ZapretService.StrategyEngineFor("own"), 5);
+
+                Check("перебор: свой движок видит стратегии v1",
+                    own.Count > 0, own.Count + " шт.");
+
+                sweep.DeleteCustom("shared.selftest-order");
+            }
 
             // пересечение id означало бы, что выбор стратегии неоднозначен
             HashSet<string> v1Set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

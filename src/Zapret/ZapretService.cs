@@ -720,6 +720,37 @@ namespace AutoZapret.Zapret
             return SaveCustomStrategy(source, id, name, source.Note);
         }
 
+        /// <summary>
+        /// Порядок перебора: свои стратегии первыми, потом остальные.
+        ///
+        /// Почему свои первыми. Человек импортировал набор или сохранил
+        /// победителя подбора фейка именно потому, что это ему нужно. Перебор
+        /// берёт первые N из этого списка, и если свои окажутся в конце
+        /// (id вида `shared.*` сортируется после `mods.*`), они не проверятся
+        /// вообще — а человек ждёт результат именно по ним.
+        ///
+        /// limit &lt;= 0 — все.
+        ///
+        /// Отдельным методом, а не в AppHost: иначе порядок нельзя проверить
+        /// тестом, а он — часть обещания «свои проверяются».
+        /// </summary>
+        public List<Strategy> SweepOrder(string engine, int limit)
+        {
+            EnsureStrategies();
+
+            List<Strategy> pool = _store.ByEngine(engine);
+
+            List<Strategy> ordered = new List<Strategy>();
+
+            foreach (Strategy s in pool) if (s.Custom) ordered.Add(s);
+            foreach (Strategy s in pool) if (!s.Custom) ordered.Add(s);
+
+            if (limit > 0 && ordered.Count > limit)
+                ordered = ordered.GetRange(0, limit);
+
+            return ordered;
+        }
+
         public List<Dictionary<string, object>> DescribeStrategies(string engine = null)
         {
             EnsureStrategies();
