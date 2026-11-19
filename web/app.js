@@ -806,6 +806,7 @@
             opt.value = s.id;
             var label = s.name;
             if (s.recommended) label = "★ " + label;
+            if (s.custom) label += " (своя)";
             if (s.note) label += "  —  " + s.note;
             opt.textContent = label;
             sel.appendChild(opt);
@@ -849,6 +850,265 @@
     }
 
     // ------------------------------------------------------------ логи
+
+    // ------------------------------------------------------------ свои стратегии
+
+    function initCustomStrategies() {
+        var pick = document.getElementById("btn-import-bats");
+        var file = document.getElementById("file-import-bats");
+
+        if (pick && file) {
+            pick.addEventListener("click", function () { file.click(); });
+
+            file.addEventListener("change", function () {
+                var chosen = file.files ? Array.prototype.slice.call(file.files) : [];
+                file.value = "";   // иначе повторный выбор той же папки не сработает
+                if (!chosen.length) return;
+
+                // Больше 200 .bat — это уже целый чужой архив. Перебирать его
+                // в интерфейсе незачем, а чтение займёт минуты.
+                if (chosen.length > 200) chosen = chosen.slice(0, 200);
+
+                text("custom-strategies-status", "Читаю файлов: " + chosen.length + "…");
+
+                readBats(chosen, 0, [], function (files) {
+                    if (!files.length) {
+                        text("custom-strategies-status", "В выбранной папке нет .bat");
+                        return;
+                    }
+
+                    text("custom-strategies-status", "Разбираю файлов: " + files.length + "…");
+                    send("strategy.importBats", { files: files });
+                });
+            });
+        }
+
+        var exportButton = document.getElementById("btn-export-bats");
+
+        if (exportButton) exportButton.addEventListener("click", function () {
+            // Свой движок исполняет набор zapret 1, поэтому экспортируем v1.
+            var engine = state.engineKind === "v2" ? "v2" : "v1";
+
+            exportButton.disabled = true;
+            exportButton.textContent = "Экспортирую…";
+
+            text("custom-strategies-status", "Записываю .bat…");
+            send("strategy.exportBats", { engine: engine });
+        });
+
+        var tune = document.getElementById("btn-tune-fakes");
+
+        if (tune) tune.addEventListener("click", function () {
+            // Пока идёт подбор, кнопка — это «Остановить». Иначе единственный
+            // способ прекратить перебор на тысячу файлов — закрыть программу.
+            if (tuneRunning) {
+                tune.disabled = true;
+                tune.textContent = "Останавливаю…";
+                send("strategy.tuneCancel");
+                return;
+            }
+
+            var select = document.getElementById("strategy-select");
+            var id = select ? select.value : "";
+
+            if (!id) {
+                text("custom-strategies-status", "Сначала выберите стратегию");
+                return;
+            }
+
+            setTuneRunning(true);
+            clearCustomLog();
+            showTuneProgress(0, 0, "");
+            text("custom-strategies-status", "Подбираю фейк: это долго, до нескольких минут");
+            send("strategy.tuneFakes", { id: id, max: 30, save: true });
+        });
+    }
+
+    var tuneRunning = false;
+
+    function setTuneRunning(on) {
+        tuneRunning = on;
+
+        var button = document.getElementById("btn-tune-fakes");
+        if (!button) return;
+
+        button.disabled = false;
+        button.textContent = on ? "Остановить" : "Подобрать";
+
+        if (!on) hideTuneProgress();
+    }
+
+    function showTuneProgress(index, total, file) {
+        var box = document.getElementById("tune-progress");
+        var fill = document.getElementById("tune-fill");
+        var line = document.getElementById("tune-line");
+
+        if (box) box.style.display = "";
+        if (fill) fill.style.width = total > 0 ? Math.round(index * 100 / total) + "%" : "0%";
+
+        if (line) {
+            line.textContent = total > 0
+                ? "проверяю " + index + " из " + total + ": " + file
+                : (file || "готовлю перебор…");
+        }
+    }
+
+    function hideTuneProgress() {
+        var box = document.getElementById("tune-progress");
+        if (box) box.style.display = "none";
+
+        var fill = document.getElementById("tune-fill");
+        if (fill) fill.style.width = "0%";
+    }
+
+    /**
+     * Прочитать выбранные .bat в текст.
+     *
+     * Читаем в двоичном виде, а не readAsText: .bat из старых сборок бывает
+     * в cp1251 или cp866, и «прочитать как UTF-8» превратило бы кириллицу в
+     * ромбики. Командная строка winws при этом ASCII, поэтому на разбор это
+     * не влияет, но заметки и пути — влияет.
+     */
+    function readBats(list, index, acc, done) {
+        if (index >= list.length) { done(acc); return; }
+
+        var file = list[index];
+
+        if (!/\.bat$/i.test(file.name || "") || file.size > 512 * 1024) {
+            readBats(list, index + 1, acc, done);
+            return;
+        }
+
+        var reader = new FileReader();
+
+        reader.onload = function () {
+            acc.push({ name: file.name, text: decodeBat(reader.result) });
+            readBats(list, index + 1, acc, done);
+        };
+
+        reader.onerror = function () { readBats(list, index + 1, acc, done); };
+
+        reader.readAsArrayBuffer(file);
+    }
+
+    function decodeBat(buffer) {
+        if (!buffer) return "";
+
+        var bytes = new Uint8Array(buffer);
+        var value = decodeWith(bytes, "utf-8");
+
+        // Символ замены — признак неверной кодировки: настоящий .bat его не
+        // содержит, а кириллица в комментариях при ошибке даёт именно его.
+        if (value.indexOf("\uFFFD") >= 0) {
+            var win = decodeWith(bytes, "windows-1251");
+
+            if (win.indexOf("\uFFFD") < 0) value = win;
+            else {
+                var oem = decodeWith(bytes, "ibm866");
+                if (oem.indexOf("\uFFFD") < 0) value = oem;
+            }
+        }
+
+        return value;
+    }
+
+    function decodeWith(bytes, encoding) {
+        try { return new TextDecoder(encoding).decode(bytes); }
+        catch (e) { return new TextDecoder("utf-8").decode(bytes); }
+    }
+
+    function appendCustomLog(line) {
+        var box = document.getElementById("custom-strategies-log");
+        if (!box || !line) return;
+
+        box.style.display = "";
+        box.textContent += (box.textContent ? "\n" : "") + line;
+        box.scrollTop = box.scrollHeight;
+    }
+
+    function clearCustomLog() {
+        var box = document.getElementById("custom-strategies-log");
+        if (!box) return;
+
+        box.textContent = "";
+        box.style.display = "none";
+    }
+
+    function renderImportedBats(msg) {
+        var added = msg.added || 0;
+        var total = msg.total || 0;
+        var warnings = msg.warnings || [];
+
+        if (!added) {
+            text("custom-strategies-status",
+                 warnings.length ? "Ничего не добавлено: " + warnings[0]
+                                 : "Ничего не добавлено");
+        } else {
+            text("custom-strategies-status",
+                 "Добавлено стратегий: " + added + ", всего своих: " + total);
+        }
+
+        warnings.forEach(function (w) { appendCustomLog("! " + w); });
+    }
+
+    function renderExportedBats(msg) {
+        var button = document.getElementById("btn-export-bats");
+
+        if (button) {
+            button.disabled = false;
+            button.textContent = "Экспортировать";
+        }
+
+        var count = msg.count || 0;
+
+        if (!count) {
+            text("custom-strategies-status", "Нечего экспортировать");
+        } else {
+            text("custom-strategies-status",
+                 "Записано файлов: " + count + " — " + (msg.dir || ""));
+        }
+
+        (msg.warnings || []).forEach(function (w) { appendCustomLog("! " + w); });
+    }
+
+    function renderTuned(msg) {
+        setTuneRunning(false);
+
+        (msg.warnings || []).forEach(function (w) { appendCustomLog("! " + w); });
+
+        if (msg.cancelled) {
+            var done = "Остановлено: проверено " + (msg.tested || 0) + " из " + (msg.planned || 0);
+
+            if (msg.ok) {
+                text("custom-strategies-status",
+                     done + ". Лучший найденный: " + msg.best + " (счёт " + msg.score + ")" +
+                     (msg.saved ? " — сохранено как своя стратегия" : ""));
+            } else {
+                text("custom-strategies-status", done + ". Рабочего фейка не нашлось");
+            }
+
+            return;
+        }
+
+        if (!msg.ok) {
+            var reason = msg.error || "неизвестная причина";
+
+            // «процесс 0/20» в разбивке значит, что движок не поднялся. Совет
+            // про права экономит человеку поиск причины в стратегии.
+            if (msg.breakdown && msg.breakdown.indexOf("процесс 0/") >= 0)
+                reason += ". Движок не запустился — нужны права администратора";
+
+            text("custom-strategies-status", "Подбор не удался: " + reason);
+            return;
+        }
+
+        var line = "Лучший фейк: " + msg.best + " (счёт " + msg.score + ")";
+
+        if (msg.saved) line += " · сохранено как своя стратегия";
+
+        text("custom-strategies-status", line);
+        appendCustomLog("готово: " + msg.best);
+    }
 
     function escapeHtml(s) {
         return String(s)
@@ -3370,6 +3630,26 @@
                 renderStrategies(strategyItems);
                 break;
 
+            case "strategy.imported":
+                renderImportedBats(msg);
+                break;
+
+            case "strategy.exported":
+                renderExportedBats(msg);
+                break;
+
+            case "strategy.tuneProgress":
+                appendCustomLog(msg.line || "");
+                break;
+
+            case "strategy.tuneStep":
+                showTuneProgress(msg.index || 0, msg.total || 0, msg.file || "");
+                break;
+
+            case "strategy.tuned":
+                renderTuned(msg);
+                break;
+
             case "engine.result":
                 renderEngineResult(msg);
                 break;
@@ -3630,6 +3910,14 @@
 
             case "error":
                 console.warn("ошибка от ядра:", msg.message);
+
+                // Долгая операция упала до терминального сообщения: кнопка
+                // осталась бы в «Останавливаю…» навсегда, и человек решил бы,
+                // что программа зависла.
+                if (msg.action === "fake-tune") {
+                    setTuneRunning(false);
+                    text("custom-strategies-status", "Подбор прерван ошибкой: " + (msg.message || ""));
+                }
                 break;
 
             default:
@@ -3648,6 +3936,7 @@
         bindService();
         initSettings();
         initDiag();
+        initCustomStrategies();
         initLists();
         initHosts();
         initProxy();
@@ -3695,6 +3984,15 @@
         // список стратегий: проверяется «не слетел ли выбор при перестройке»
         renderStrategies: renderStrategies,
         renderState: renderState,
+        // Свои стратегии: импорт/экспорт/подбор фейка. Нужны для проверки в браузере:
+        // без моста эти ветки иначе не запустить вовсе, и «кнопка молчит» не поймать.
+        renderImportedBats: renderImportedBats,
+        renderExportedBats: renderExportedBats,
+        renderTuned: renderTuned,
+        setTuneRunning: setTuneRunning,
+        showTuneProgress: showTuneProgress,
+        appendCustomLog: appendCustomLog,
+        decodeBat: decodeBat,
         // карточка DNS: проверяется, что опасное состояние видно и кнопки
         // возвращаются из «Включаю…»
         renderSystemDns: renderSystemDns,

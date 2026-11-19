@@ -47,6 +47,182 @@ namespace AutoZapret.Zapret
             return null;
         }
 
+        /// <summary>
+        /// Добавить стратегии без сохранения на диск.
+        ///
+        /// Нужно перебору фейков: он подставляет варианты одной стратегии,
+        /// прогоняет их и убирает. Если такие варианты попадут в кэш, человек
+        /// увидит десяток почти одинаковых строк, из которых работает одна.
+        /// </summary>
+        public void AddTemporary(IEnumerable<Strategy> items)
+        {
+            if (items == null) return;
+
+            lock (_gate)
+            {
+                foreach (Strategy s in items)
+                {
+                    if (s == null) continue;
+
+                    // Одноимённый id не должен остаться от предыдущего прогона:
+                    // иначе tester найдёт старый вариант с другим фейком.
+                    _strategies.RemoveAll(x =>
+                        string.Equals(x.Id, s.Id, StringComparison.OrdinalIgnoreCase));
+
+                    _strategies.Add(s);
+                }
+            }
+        }
+
+        /// <summary>Убрать стратегии по id (временные варианты перебора).</summary>
+        public void RemoveByIds(IEnumerable<string> ids)
+        {
+            if (ids == null) return;
+
+            HashSet<string> set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (string id in ids) if (id != null) set.Add(id);
+
+            if (set.Count == 0) return;
+
+            lock (_gate)
+            {
+                _strategies.RemoveAll(s => set.Contains(s.Id));
+            }
+        }
+
+        // ---------------------------------------------------------------- custom
+
+        /// <summary>
+        /// Добавить или заменить стратегию по id, не трогая остальные.
+        ///
+        /// Нужно и импорту своих .bat, и подбору фейка: результат должен
+        /// появиться в списке сразу, а не после перезапуска.
+        /// </summary>
+        public void AddOrReplace(Strategy strategy)
+        {
+            if (strategy == null || string.IsNullOrEmpty(strategy.Id)) return;
+
+            lock (_gate)
+            {
+                _strategies.RemoveAll(s =>
+                    string.Equals(s.Id, strategy.Id, StringComparison.OrdinalIgnoreCase));
+
+                _strategies.Add(strategy);
+
+                _strategies.Sort((a, b) =>
+                    string.Compare(a.Id, b.Id, StringComparison.OrdinalIgnoreCase));
+            }
+        }
+
+        /// <summary>Свои стратегии в JSON — отдельный файл, независимый от движка.</summary>
+        public string ToCustomJson()
+        {
+            Dictionary<string, object> root = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                { "schema", CurrentSchema },
+                { "idFormat", IdFormat },
+                { "kind", "custom" },
+                { "savedAt", DateTime.Now.ToString("o") }
+            };
+
+            List<object> list = new List<object>();
+
+            lock (_gate)
+            {
+                foreach (Strategy s in _strategies)
+                    if (s.Custom) list.Add(StrategyToMap(s));
+            }
+
+            root["strategies"] = list;
+
+            return Json.Stringify(root);
+        }
+
+        public int CustomCount
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    int count = 0;
+                    foreach (Strategy s in _strategies) if (s.Custom) count++;
+                    return count;
+                }
+            }
+        }
+
+        public void SaveCustom(string path)
+        {
+            AtomicFile.WriteAllText(path, ToCustomJson());
+        }
+
+        /// <summary>
+        /// Догрузить свои стратегии.
+        ///
+        /// Вызывается ПОСЛЕ загрузки наборов движка: иначе кэш движка
+        /// (в нём свои стратегии тоже лежат) перезапишет их, и человек
+        /// увидит «мои стратегии пропали после обновления».
+        ///
+        /// Возвращает число добавленных.
+        /// </summary>
+        public int LoadCustom(string path)
+        {
+            string text = AtomicFile.ReadAllTextOrNull(path);
+            if (text == null) return 0;
+
+            Dictionary<string, object> root = Json.ParseObjectSafe(text);
+            if (root == null)
+            {
+                Log.Warn("WINWS", "свои стратегии не разобрались: " + path);
+                return 0;
+            }
+
+            int idFormat = Json.GetInt(root, "idFormat", IdFormat);
+
+            if (idFormat != IdFormat)
+            {
+                Log.Warn("WINWS", "свои стратегии от старого формата id (" + idFormat + "), пропуск");
+                return 0;
+            }
+
+            List<object> list = Json.GetArray(root, "strategies");
+            if (list == null) return 0;
+
+            List<Strategy> loaded = new List<Strategy>();
+
+            foreach (object item in list)
+            {
+                Dictionary<string, object> map = item as Dictionary<string, object>;
+                if (map == null) continue;
+
+                Strategy s = StrategyFromMap(map);
+                if (s == null || s.Profiles.Count == 0) continue;
+
+                s.Custom = true;
+                loaded.Add(s);
+            }
+
+            if (loaded.Count == 0) return 0;
+
+            lock (_gate)
+            {
+                foreach (Strategy s in loaded)
+                {
+                    _strategies.RemoveAll(x =>
+                        string.Equals(x.Id, s.Id, StringComparison.OrdinalIgnoreCase));
+
+                    _strategies.Add(s);
+                }
+
+                _strategies.Sort((a, b) =>
+                    string.Compare(a.Id, b.Id, StringComparison.OrdinalIgnoreCase));
+            }
+
+            Log.Info("WINWS", "своих стратегий загружено: " + loaded.Count);
+            return loaded.Count;
+        }
+
         // ----------------------------------------------------------------- import
 
         /// <summary>
@@ -248,7 +424,8 @@ namespace AutoZapret.Zapret
                 { "engine", s.Engine },
                 { "note", s.Note },
                 { "recommended", s.Recommended },
-                { "source", s.Source }
+                { "source", s.Source },
+                { "custom", s.Custom }
             };
 
             List<object> targets = new List<object>();
@@ -284,7 +461,8 @@ namespace AutoZapret.Zapret
                 Engine = Json.GetString(map, "engine", "v1"),
                 Note = Json.GetString(map, "note", ""),
                 Recommended = Json.GetBool(map, "recommended", false),
-                Source = Json.GetString(map, "source", "")
+                Source = Json.GetString(map, "source", ""),
+                Custom = Json.GetBool(map, "custom", false)
             };
             if (s.Id.Length == 0) return null;
 

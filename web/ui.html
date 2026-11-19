@@ -143,6 +143,52 @@
       </div>
 
       <div class="card">
+        <div class="card-title">Свои стратегии</div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Импорт .bat</div>
+            <div class="row-hint">
+              Набор стратегий из другой сборки zapret или от другого человека.
+              Выберите папку — файлы разбираются так же, как наборы движка
+            </div>
+          </div>
+          <button class="btn" id="btn-import-bats">Выбрать папку</button>
+          <input type="file" id="file-import-bats" webkitdirectory multiple style="display:none">
+        </div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Экспорт в .bat</div>
+            <div class="row-hint">
+              Записать стратегии текущего движка обратно в .bat — их можно запустить
+              без AutoZapret и разобрать по частям
+            </div>
+          </div>
+          <button class="btn" id="btn-export-bats">Экспортировать</button>
+        </div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Подобрать фейк (.bin)</div>
+            <div class="row-hint">
+              Перебрать файлы того же вида, что в выбранной стратегии, и оставить рабочий.
+              Занимает время: каждый вариант — запуск движка и проверка
+            </div>
+          </div>
+          <button class="btn" id="btn-tune-fakes">Подобрать</button>
+        </div>
+
+        <div id="tune-progress" style="display:none;margin-top:10px">
+          <div class="progress-bar"><div class="progress-fill" id="tune-fill" style="width:0%"></div></div>
+          <div class="row-hint mono" id="tune-line"></div>
+        </div>
+
+        <div class="row-hint mono" id="custom-strategies-status"></div>
+        <div class="mini-log" id="custom-strategies-log" style="display:none;max-height:200px"></div>
+      </div>
+
+      <div class="card">
         <div class="card-title">DNS</div>
 
         <div class="row">

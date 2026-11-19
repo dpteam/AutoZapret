@@ -109,6 +109,12 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
 
     $code = Invoke-Step 'node' @('tools\add-i18n-keys.js')
     Record 'словарь переводов' ($code -eq 0) ''
+
+    # Каждое действие страницы обязано иметь обработчик в мосте. Иначе
+    # кнопка отправляет сообщение в пустоту: ни ошибки, ни эффекта, и искать
+    # причину пойдут в HTML, хотя её там нет.
+    $code = Invoke-Step 'node' @('tools\check-bridge.js')
+    Record 'мост: обработчики' ($code -eq 0) ''
 } else {
     Write-Host '  [skip] node не найден — проверки UI и переводов пропущены'
     Record 'проверки UI' $true 'skip: нет node'

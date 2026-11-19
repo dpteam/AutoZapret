@@ -280,6 +280,168 @@ namespace AutoZapret.App
                 PushStrategies();
             });
 
+            bridge.Register("strategy.importBats", msg =>
+            {
+                List<KeyValuePair<string, string>> files = new List<KeyValuePair<string, string>>();
+
+                List<object> raw = Json.GetArray(msg, "files");
+
+                if (raw != null)
+                {
+                    foreach (object item in raw)
+                    {
+                        Dictionary<string, object> map = item as Dictionary<string, object>;
+                        if (map == null) continue;
+
+                        files.Add(new KeyValuePair<string, string>(
+                            Json.GetString(map, "name", ""),
+                            Json.GetString(map, "text", "")));
+                    }
+                }
+
+                string prefix = Json.GetString(msg, "prefix", "custom.");
+
+                RunInBackground("strategy-import", () =>
+                {
+                    List<string> warnings = new List<string>();
+
+                    int added = _zapret.ImportCustomBats(files, prefix, warnings);
+
+                    _form.Bridge.Send(WebBridge.Msg("strategy.imported",
+                        "added", (long)added,
+                        "total", (long)_zapret.Strategies.CustomCount,
+                        "warnings", ToObjects(warnings)));
+
+                    PushStrategies();
+                    PushState();
+                });
+            });
+
+            bridge.Register("strategy.exportBats", msg =>
+            {
+                string engine = Json.GetString(msg, "engine", "");
+                string id = Json.GetString(msg, "id", "");
+
+                RunInBackground("strategy-export", () =>
+                {
+                    List<string> written = new List<string>();
+                    List<string> warnings = new List<string>();
+
+                    int count = _zapret.ExportBats(
+                        engine.Length > 0 ? engine : null,
+                        id.Length > 0 ? id : null,
+                        null, written, warnings);
+
+                    _form.Bridge.Send(WebBridge.Msg("strategy.exported",
+                        "count", (long)count,
+                        "dir", Paths.ExportedStrategiesDir,
+                        "files", ToObjects(written),
+                        "warnings", ToObjects(warnings)));
+
+                    if (count > 0) OpenPath(Paths.ExportedStrategiesDir);
+                });
+            });
+
+            bridge.Register("strategy.tuneFakes", msg =>
+            {
+                string id = Json.GetString(msg, "id", _settings.StrategyId);
+                int max = (int)Json.GetInt(msg, "max", 30);
+                bool save = Json.GetBool(msg, "save", true);
+
+                if (string.IsNullOrEmpty(id)) return;
+
+                // Отмена обязательна: файлов фейков полторы тысячи, и полный
+                // перебор — это часы. Без выхода кнопка «Подобрать» превращается
+                // в «запусти и жди, пока надоест закрывать программу».
+                CancellationTokenSource cancel = new CancellationTokenSource();
+
+                if (!BeginFakeTune(cancel))
+                {
+                    _form.Bridge.Send(WebBridge.Msg("strategy.tuned",
+                        "ok", false,
+                        "error", "подбор уже идёт",
+                        "cancelled", false,
+                        "attempts", new List<object>(),
+                        "warnings", new List<object>()));
+                    return;
+                }
+
+                RunInBackground("fake-tune", () =>
+                {
+                    try
+                    {
+                        FakeTuneResult result = FakeTuner.Run(_zapret, id, Math.Max(1, max), 1,
+                            line => _form.Bridge.Send(WebBridge.Msg("strategy.tuneProgress", "line", line)),
+                            cancel.Token,
+                            (index, total, file) => _form.Bridge.Send(WebBridge.Msg(
+                                "strategy.tuneStep",
+                                "index", (long)index,
+                                "total", (long)total,
+                                "file", file)),
+                            900);
+
+                        string saved = "";
+
+                        // Остановленный перебор тоже сохраняем, если победитель
+                        // уже найден: человек ждал не зря, и терять найденное
+                        // из-за того, что он не дождался конца, — обидно.
+                        if (result.Ok && save && result.BestStrategy != null)
+                        {
+                            string newId = TunedId(result.StrategyId, result.Best.File);
+
+                            string written = _zapret.SaveCustomStrategy(
+                                result.BestStrategy,
+                                newId,
+                                result.StrategyName + " · " + result.Best.File,
+                                "подбор фейка: " + result.Slot.Describe());
+
+                            // SaveCustomStrategy возвращает id при успехе и текст
+                            // ошибки при неудаче. Сравниваем с тем, что просили.
+                            if (string.Equals(written, newId, StringComparison.Ordinal))
+                                saved = written;
+                        }
+
+                        List<object> attempts = new List<object>();
+
+                        foreach (FakeAttempt attempt in result.Attempts)
+                        {
+                            attempts.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                            {
+                                { "file", attempt.File },
+                                { "score", (long)attempt.Score },
+                                { "ok", (long)attempt.OkCount },
+                                { "total", (long)attempt.Total }
+                            });
+                        }
+
+                        _form.Bridge.Send(WebBridge.Msg("strategy.tuned",
+                            "ok", result.Ok,
+                            "error", result.Error,
+                            "cancelled", result.Cancelled,
+                            "tested", (long)result.Tested,
+                            "planned", (long)result.Planned,
+                            "strategy", result.StrategyName,
+                            "best", result.Best != null ? result.Best.File : "",
+                            "score", (long)(result.Best != null ? result.Best.Score : 0),
+                            "breakdown", result.Attempts.Count > 0
+                                ? result.Attempts[result.Attempts.Count - 1].Breakdown : "",
+                            "failed", result.Attempts.Count > 0
+                                ? result.Attempts[result.Attempts.Count - 1].Failed : "",
+                            "saved", saved,
+                            "attempts", attempts,
+                            "warnings", ToObjects(result.Warnings)));
+
+                        PushStrategies();
+                    }
+                    finally
+                    {
+                        EndFakeTune(cancel);
+                    }
+                });
+            });
+
+            bridge.Register("strategy.tuneCancel", msg => CancelFakeTune());
+
             bridge.Register("engine.select", msg =>
             {
                 string kind = Json.GetString(msg, "kind", _settings.EngineKind);
@@ -2410,6 +2572,88 @@ namespace AutoZapret.App
             List<object> result = new List<object>();
             foreach (string s in items) result.Add(s);
             return result;
+        }
+
+        /// <summary>
+        /// Идентификатор для стратегии, собранной подбором фейка.
+        ///
+        /// В id входит и исходная стратегия, и имя файла фейка: подобрали
+        /// другой фейк — это другая стратегия, и она не должна затирать
+        /// предыдущий результат. Хеш исходного id нужен, потому что он длинный
+        /// и содержит точки, а имя файла — потому что именно оно отличает
+        /// варианты.
+        /// </summary>
+        private static string TunedId(string strategyId, string file)
+        {
+            uint hash = 2166136261;
+
+            foreach (char c in strategyId ?? "")
+                hash = (hash ^ c) * 16777619;
+
+            string fake = System.IO.Path.GetFileNameWithoutExtension(file ?? "fake");
+
+            return "custom.tuned." + hash.ToString("x8") + "." + fake;
+        }
+
+        // ------------------------------------------------------- подбор фейка
+
+        private readonly object _tuneGate = new object();
+        private CancellationTokenSource _tuneCancel;
+
+        /// <summary>
+        /// Начать подбор фейка. false — уже идёт другой.
+        ///
+        /// Почему не разрешаем два подбора сразу: каждый запускает движок и
+        /// перехватывает трафик. Два одновременно — это два winws с одинаковым
+        /// фильтром, второй выходит с ошибкой, и оба прогона меряют чужой обход.
+        /// </summary>
+        private bool BeginFakeTune(CancellationTokenSource cancel)
+        {
+            lock (_tuneGate)
+            {
+                if (_tuneCancel != null) return false;
+
+                _tuneCancel = cancel;
+                return true;
+            }
+        }
+
+        private void EndFakeTune(CancellationTokenSource cancel)
+        {
+            lock (_tuneGate)
+            {
+                if (ReferenceEquals(_tuneCancel, cancel)) _tuneCancel = null;
+            }
+
+            try { cancel.Dispose(); } catch { }
+        }
+
+        /// <summary>
+        /// Остановить подбор. Токен проверяется перед каждым вариантом, поэтому
+        /// ожидание — это один текущий вариант (запуск движка + проба), а не
+        /// весь перебор.
+        /// </summary>
+        private void CancelFakeTune()
+        {
+            CancellationTokenSource cancel;
+
+            lock (_tuneGate) cancel = _tuneCancel;
+
+            if (cancel == null)
+            {
+                Log.Info("DIAG", "остановка подбора: подбор не идёт");
+                return;
+            }
+
+            try
+            {
+                cancel.Cancel();
+                Log.Info("DIAG", "подбор фейка: остановка запрошена");
+            }
+            catch (ObjectDisposedException)
+            {
+                // уже завершился сам — это не ошибка
+            }
         }
 
         /// <summary>Сколько имён в тексте hosts — для отчёта «добавлено N».</summary>
@@ -4854,6 +5098,11 @@ namespace AutoZapret.App
             _exiting = true;
 
             Log.Info("APP", "выход по запросу");
+
+            // Незавершённый подбор фейка останавливаем сразу: он держит движок
+            // запущенным и перехватывает трафик, а выход должен быть быстрым.
+            // Ждать его окончания нельзя — впереди полный перебор.
+            CancelFakeTune();
 
             // ---- DNS: СНАЧАЛА вернуть системе прежние серверы, только потом
             // гасить свой резолвер.

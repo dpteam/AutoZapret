@@ -63,6 +63,25 @@ namespace AutoZapret.Core
         public static string StrategiesDir { get { return Path.Combine(BaseDir, "assets", "strategies"); } }
 
         /// <summary>
+        /// Свои стратегии — отдельно от кэша движка.
+        ///
+        /// В `assets/strategies/` лежат `strategies.v1.json` и `strategies.v2.json`,
+        /// которые перезаписываются при обновлении движка. Всё, что добавил
+        /// человек (свои .bat, победитель подбора фейка), живёт здесь и
+        /// обновление не задевает.
+        /// </summary>
+        public static string CustomStrategiesFile
+        {
+            get { return Path.Combine(StrategiesDir, "strategies.custom.json"); }
+        }
+
+        /// <summary>Куда складывать .bat при экспорте.</summary>
+        public static string ExportedStrategiesDir
+        {
+            get { return Path.Combine(BaseDir, "exported-strategies"); }
+        }
+
+        /// <summary>
         /// Создаёт каталоги, без которых приложение не может работать.
         /// Вызывать один раз на старте, до первого Log.Write.
         /// </summary>

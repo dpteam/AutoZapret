@@ -1916,36 +1916,270 @@ namespace AutoZapret.Diag
 
             if (!prefix.EndsWith(".", StringComparison.Ordinal)) prefix += ".";
 
-            string file = System.IO.Path.Combine(Paths.StrategiesDir, "strategies.v1.json");
-
             Console.WriteLine("== импорт набора ==");
             Console.WriteLine("каталог: " + dir);
             Console.WriteLine("префикс: " + prefix);
-            Console.WriteLine("файл:    " + file);
 
-            StrategyStore store = new StrategyStore();
-
-            if (System.IO.File.Exists(file)) store.Load(file);
-
-            int before = store.Count;
-
-            // binDir и listsDir нужны парсеру для подстановки плейсхолдеров.
-            // У чужих наборов те же имена файлов, что у движка.
-            int added = store.ImportFromDirectory(dir, Paths.EngineBinDir, Paths.EngineListsDir,
-                                                  System.IO.Path.Combine(Paths.EngineDir, "lua"),
-                                                  prefix, true);
-
-            Console.WriteLine("было: " + before + ", добавлено: " + added + ", стало: " + store.Count);
-
-            if (added == 0)
+            using (ZapretService svc = new ZapretService())
             {
-                Console.WriteLine("ничего не добавлено: набор пуст или не содержит winws");
+                List<string> warnings = new List<string>();
+
+                int added = svc.ImportCustomBatsFromDirectory(dir, prefix, warnings);
+
+                foreach (string warning in warnings)
+                    Console.WriteLine("  [skip] " + warning);
+
+                Console.WriteLine("добавлено: " + added);
+                Console.WriteLine("всего своих: " + svc.Strategies.CustomCount);
+
+                if (added == 0)
+                {
+                    Console.WriteLine("ничего не добавлено: набор пуст или не содержит winws");
+                    return 1;
+                }
+
+                Console.WriteLine("сохранено: " + Paths.CustomStrategiesFile);
+
+                return 0;
+            }
+        }
+
+        /// <summary>
+        /// --export-strategies &lt;каталог&gt; [--engine v1|v2] [--id &lt;id&gt;]
+        ///
+        /// Обратная операция к импорту: пишет .bat, который можно запустить
+        /// напрямую. Нужна тем, кто хочет взять одну стратегию и разобраться
+        /// в ней, или отдать её другому человеку без нашего приложения.
+        /// </summary>
+        public static int RunExportStrategies(string[] args)
+        {
+            string dir = null;
+            string engine = null;
+            string only = null;
+
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], "--export-strategies", StringComparison.OrdinalIgnoreCase) &&
+                    i + 1 < args.Length && !args[i + 1].StartsWith("--"))
+                {
+                    dir = args[i + 1];
+                }
+                else if (string.Equals(args[i], "--engine", StringComparison.OrdinalIgnoreCase) &&
+                         i + 1 < args.Length)
+                {
+                    engine = args[i + 1];
+                }
+                else if (string.Equals(args[i], "--id", StringComparison.OrdinalIgnoreCase) &&
+                         i + 1 < args.Length && !args[i + 1].StartsWith("--"))
+                {
+                    only = args[i + 1];
+                }
+            }
+
+            if (string.IsNullOrEmpty(dir))
+            {
+                Console.WriteLine("нужен каталог: --export-strategies <каталог> [--engine v1|v2] [--id <id>]");
+                return 2;
+            }
+
+            using (ZapretService svc = new ZapretService())
+            {
+                svc.EnsureStrategies();
+
+                List<string> written = new List<string>();
+                List<string> warnings = new List<string>();
+
+                int count = svc.ExportBats(only != null ? null : (engine ?? "v1"), only, dir,
+                                           written, warnings);
+
+                Console.WriteLine("== экспорт стратегий ==");
+                Console.WriteLine("каталог: " + dir);
+
+                foreach (string path in written)
+                    Console.WriteLine("  " + path.Substring(dir.Length).TrimStart('\\'));
+
+                foreach (string warning in warnings)
+                    Console.WriteLine("  [FAIL] " + warning);
+
+                Console.WriteLine("записано: " + count);
+
+                if (count == 0) return 1;
+
+                return warnings.Count > 0 ? 1 : 0;
+            }
+        }
+
+        /// <summary>
+        /// --tune-fakes &lt;id&gt; [--max N] [--no-save] [--seconds S]
+        ///
+        /// Подбирает файл фейка для стратегии перебором. Медленно (каждый
+        /// вариант — это запуск движка и проба), поэтому по умолчанию
+        /// ограничено 30 вариантами.
+        ///
+        /// Ctrl+C останавливает перебор и сохраняет найденное: полный список
+        /// кандидатов — это часы, и «прервать» должно работать, а не убивать
+        /// всё вместе с результатом.
+        /// </summary>
+        public static int RunTuneFakes(string[] args)
+        {
+            string id = null;
+            int max = 30;
+            bool save = true;
+            int seconds = 0;
+
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], "--tune-fakes", StringComparison.OrdinalIgnoreCase) &&
+                    i + 1 < args.Length && !args[i + 1].StartsWith("--"))
+                {
+                    id = args[i + 1];
+                }
+                else if (string.Equals(args[i], "--max", StringComparison.OrdinalIgnoreCase) &&
+                         i + 1 < args.Length)
+                {
+                    int parsed;
+
+                    if (int.TryParse(args[i + 1], out parsed) && parsed > 0) max = parsed;
+                }
+                else if (string.Equals(args[i], "--seconds", StringComparison.OrdinalIgnoreCase) &&
+                         i + 1 < args.Length)
+                {
+                    int parsed;
+
+                    if (int.TryParse(args[i + 1], out parsed) && parsed > 0) seconds = parsed;
+                }
+                else if (string.Equals(args[i], "--no-save", StringComparison.OrdinalIgnoreCase))
+                {
+                    save = false;
+                }
+            }
+
+            if (string.IsNullOrEmpty(id))
+            {
+                Console.WriteLine("нужен id стратегии: --tune-fakes <id> [--max N] [--no-save] [--seconds S]");
+                return 2;
+            }
+
+            using (ZapretService svc = new ZapretService())
+            {
+                svc.EnsureStrategies();
+
+                // Ctrl+C — обычный способ остановить перебор из консоли. Без
+                // этого обработчика нажатие убивает процесс вместе с движком,
+                // и уже найденные варианты пропадают.
+                using (CancellationTokenSource cancel = new CancellationTokenSource())
+                {
+                    ConsoleCancelEventHandler handler = (sender, e) =>
+                    {
+                        e.Cancel = true;   // не убивать процесс: дать дописать результат
+                        cancel.Cancel();
+                    };
+
+                    Console.CancelKeyPress += handler;
+
+                    try
+                    {
+                        FakeTuneResult result = FakeTuner.Run(svc, id, max, 1,
+                            line => Console.WriteLine(line), cancel.Token, null, seconds);
+
+                        return ReportTuneResult(svc, result, save);
+                    }
+                    finally
+                    {
+                        Console.CancelKeyPress -= handler;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Напечатать итог подбора и, если можно, сохранить победителя.
+        ///
+        /// Отдельным методом, потому что «остановлено» и «не удалось» — разные
+        /// ответы, и оба должны быть внятными: при остановке найденное
+        /// сохраняется, при провале — нет.
+        /// </summary>
+        private static int ReportTuneResult(ZapretService svc, FakeTuneResult result, bool save)
+        {
+            Console.WriteLine();
+
+            foreach (FakeAttempt attempt in result.Attempts)
+            {
+                Console.WriteLine("  " + attempt.Score.ToString().PadLeft(4) + "  " +
+                                  attempt.File.PadRight(46) +
+                                  attempt.OkCount + "/" + attempt.Total);
+            }
+
+            if (result.Cancelled)
+            {
+                Console.WriteLine("остановлено: проверено " + result.Tested + " из " + result.Planned);
+
+                if (result.Best == null)
+                {
+                    Console.WriteLine("рабочего фейка не нашлось до остановки");
+                    return 1;
+                }
+            }
+
+            if (!result.Ok)
+            {
+                Console.WriteLine("подбор не удался: " + result.Error);
+
+                // Почему именно не удалось — без этого «0 из 6» ничего не
+                // говорит: движок мог не запуститься, могла смениться сеть,
+                // мог отказать провайдер. Показываем цели и их состояние.
+                if (result.Attempts.Count > 0)
+                {
+                    FakeAttempt last = result.Attempts[result.Attempts.Count - 1];
+
+                    Console.WriteLine("последняя проба: " + last.Breakdown);
+
+                    // «процесс 0/20» — это не сеть и не фейк: движок не
+                    // поднялся. Без этой подсказки человек ищет причину в
+                    // стратегии, а она в правах администратора.
+                    if (last.Breakdown.IndexOf("процесс 0/", StringComparison.Ordinal) >= 0)
+                    {
+                        Console.WriteLine("движок не запустился: проверьте права администратора " +
+                                          "и что WinDivert не занят чужой службой");
+                    }
+
+                    string failed = last.Failed;
+
+                    if (failed.Length > 0) Console.WriteLine("не прошли: " + failed);
+                }
+
+                if (result.Warnings.Count > 0)
+                    Console.WriteLine("предупреждения: " + string.Join("; ", result.Warnings.ToArray()));
+
                 return 1;
             }
 
-            store.Save(file, "imported");
+            Console.WriteLine();
+            Console.WriteLine("лучший фейк: " + result.Best.File +
+                              " (счёт " + result.Best.Score + ")");
 
-            Console.WriteLine("сохранено: " + file);
+            if (!save)
+            {
+                Console.WriteLine("не сохранено (--no-save)");
+                return 0;
+            }
+
+            string wantedId = "custom.tuned." +
+                              StrategyBatWriter.FileName(result.BestStrategy).Replace(".bat", "");
+
+            string newId = svc.SaveCustomStrategy(
+                result.BestStrategy,
+                wantedId,
+                result.StrategyName + " · " + result.Best.File,
+                "подбор фейка: " + result.Slot.Describe());
+
+            if (!string.Equals(newId, wantedId, StringComparison.Ordinal))
+            {
+                Console.WriteLine(newId);
+                return 1;
+            }
+
+            Console.WriteLine("сохранено как своя стратегия: " + newId);
 
             return 0;
         }
@@ -1954,7 +2188,8 @@ namespace AutoZapret.Diag
         /// --strategies: список стратегий с идентификаторами (для отладки и для --only).
         /// Заодно создаёт кэш strategies.v1.json.
         /// </summary>
-        public static int RunStrategies(string[] args)        {
+        public static int RunStrategies(string[] args)
+        {
             using (ZapretService svc = new ZapretService())
             {
                 svc.EnsureStrategies();

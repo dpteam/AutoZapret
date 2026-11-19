@@ -101,6 +101,14 @@ data/fakes/
 # fully portable). Regenerating from .bat is a dev-time operation via
 # `AutoZapret.exe --strategies`, and CI has no refs/ to regenerate from.
 
+# Свои стратегии — это данные человека, а не репозитория: импортированные
+# .bat и победители подбора фейка. Наборы движка (strategies.v1/v2.json) выше
+# коммитятся, и это не противоречие: они воспроизводимы, а свои — нет.
+assets/strategies/strategies.custom.json
+
+# Экспорт .bat кладётся рядом с exe (в dev это bin\, в релизе — папка программы).
+exported-strategies/
+
 # secrets and signing
 *.pfx
 *.snk

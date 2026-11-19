@@ -86,6 +86,9 @@ namespace AutoZapret.App
                 Section("парсер стратегий");
                 TestStrategies();
 
+                Section("свои стратегии и .bat");
+                TestCustomStrategies();
+
                 Section("квотирование аргументов");
                 TestCommandLine();
 
@@ -895,6 +898,331 @@ namespace AutoZapret.App
             finally
             {
                 try { System.IO.File.Delete(tmp); } catch { }
+            }
+        }
+
+        /// <summary>
+        /// Экспорт в .bat, импорт своих .bat и подбор фейка.
+        ///
+        /// Проверяем ровно то, что ломается молча:
+        ///   * .bat, который мы записали, не читается обратно;
+        ///   * имя файла содержит символ, запрещённый в NTFS;
+        ///   * свои стратегии не переживают перезагрузку;
+        ///   * подбор фейка подставляет файл другого вида (TLS в QUIC).
+        /// </summary>
+        private static void TestCustomStrategies()
+        {
+            AutoZapret.Zapret.EngineLocator engine = new AutoZapret.Zapret.EngineLocator();
+            Dictionary<string, string> placeholders = engine.BuildPlaceholders("off");
+
+            AutoZapret.Zapret.Strategy source = new AutoZapret.Zapret.Strategy
+            {
+                Id = "t.writer",
+                Name = "Проверка / экспорта",
+                Engine = "v1",
+                Note = "100% проверка"
+            };
+
+            source.GlobalArgs.Add("--wf-tcp=80,443");
+
+            source.Profiles.Add(new AutoZapret.Zapret.StrategyProfile
+            {
+                Name = "p1",
+                Label = "tls",
+                Args = new List<string>
+                {
+                    "--filter-tcp=443",
+                    "--dpi-desync=split2",
+                    "--dpi-desync-fake-tls=${BIN}/tls_clienthello_www_google_com.bin"
+                }
+            });
+
+            source.Profiles.Add(new AutoZapret.Zapret.StrategyProfile
+            {
+                Name = "p2",
+                Label = "http",
+                Args = new List<string> { "--filter-tcp=80", "--dpi-desync=split2" }
+            });
+
+            string text = AutoZapret.Zapret.StrategyBatWriter.Build(source, placeholders);
+
+            Check("экспорт: запускает winws",
+                text.IndexOf("winws.exe", StringComparison.OrdinalIgnoreCase) >= 0, "ok");
+            Check("экспорт: строки CRLF",
+                text.IndexOf("\r\n", StringComparison.Ordinal) > 0, "ok");
+
+            // `%` в .bat — подстановка переменной: заметка «100% проверка»
+            // иначе превратилась бы в «100 проверка» с пустым остатком.
+            // Ищем именно строку комментария: `%BIN%` в самой команде — законен.
+            Check("экспорт: заметка без %",
+                text.IndexOf(":: 100 проверка", StringComparison.Ordinal) >= 0, "ok");
+
+            string fileName = AutoZapret.Zapret.StrategyBatWriter.FileName(source);
+
+            Check("экспорт: имя файла без запрещённых символов",
+                fileName.IndexOfAny(new[] { '/', '\\', ':', '*', '?', '"', '<', '>', '|' }) < 0,
+                fileName);
+            Check("экспорт: имя файла только латиницей",
+                fileName.IndexOfAny("абвгдеёжзийклмнопрстуфхцчшщъыьэюя".ToCharArray()) < 0, fileName);
+
+            AutoZapret.Zapret.Strategy parsed = AutoZapret.Zapret.StrategyParser.ParseBatText(
+                text, "t.bat", null, engine.BinDir, engine.ListsDir, null, "custom.");
+
+            Check("экспорт читается обратно", parsed != null, parsed == null ? "null" : parsed.Name);
+            Check("экспорт: профилей столько же",
+                parsed != null && parsed.Profiles.Count == source.Profiles.Count,
+                parsed == null ? "-" : parsed.Profiles.Count + " из " + source.Profiles.Count);
+
+            if (parsed != null)
+            {
+                string before = string.Join(" ", source.BuildArguments(placeholders).ToArray());
+                string after = string.Join(" ", parsed.BuildArguments(placeholders).ToArray());
+
+                Check("экспорт: аргументы совпали после круга", before == after,
+                    before == after ? "ok" : after);
+            }
+
+            // ---- свои стратегии переживают перезапуск
+            AutoZapret.Zapret.StrategyStore store = new AutoZapret.Zapret.StrategyStore();
+
+            AutoZapret.Zapret.Strategy custom = new AutoZapret.Zapret.Strategy
+            {
+                Id = "custom.selftest",
+                Name = "своя проверка",
+                Engine = "v1",
+                Custom = true,
+                Note = "из selftest"
+            };
+
+            custom.GlobalArgs.Add("--wf-tcp=443");
+            custom.Profiles.Add(new AutoZapret.Zapret.StrategyProfile
+            {
+                Name = "p1",
+                Label = "tls",
+                Args = new List<string> { "--filter-tcp=443", "--dpi-desync=split2" }
+            });
+
+            store.AddOrReplace(custom);
+
+            Check("своя стратегия добавилась", store.CustomCount == 1, store.CustomCount + " шт.");
+            Check("своя стратегия находится", store.Find("custom.selftest") != null, "ok");
+
+            string temp = Path.Combine(Paths.DataDir, "selftest-custom.json");
+
+            try
+            {
+                store.SaveCustom(temp);
+
+                AutoZapret.Zapret.StrategyStore reloaded = new AutoZapret.Zapret.StrategyStore();
+                int loaded = reloaded.LoadCustom(temp);
+
+                Check("свои стратегии читаются", loaded == 1, loaded + " шт.");
+
+                AutoZapret.Zapret.Strategy again = reloaded.Find("custom.selftest");
+                Check("флаг custom сохранился", again != null && again.Custom, again == null ? "null" : "ok");
+
+                reloaded.LoadCustom(temp);
+                Check("повторная загрузка не плодит дубликаты", reloaded.Count == 1, reloaded.Count + " шт.");
+            }
+            finally
+            {
+                try { File.Delete(temp); } catch { }
+            }
+
+            // ---- подбор фейка: слоты и кандидаты            // Берём разобранный .bat: в нём есть `--dpi-desync-fake-tls`, а в
+            // собранной вручную стратегии выше фейка нет.
+            AutoZapret.Zapret.Strategy withFake = parsed ?? custom;
+
+            List<string> warnings = new List<string>();
+
+            List<AutoZapret.Zapret.FakeSlot> slots =
+                AutoZapret.Zapret.FakeSweeper.Slots(withFake, warnings);
+
+            Check("слот фейка найден", slots.Count == 1,
+                slots.Count == 0 ? string.Join("; ", warnings.ToArray()) : slots[0].Describe());
+
+            if (slots.Count == 0) return;
+
+            List<AutoZapret.Payloads.Payload> candidates =
+                AutoZapret.Zapret.FakeSweeper.Candidates(slots[0].Kind, 5);
+
+            Check("кандидаты того же вида",
+                candidates.Count > 0 && candidates.TrueForAll(p => p.Kind == slots[0].Kind),
+                candidates.Count + " шт.");
+
+            AutoZapret.Zapret.Strategy variant = AutoZapret.Zapret.FakeSweeper.Variant(
+                withFake, slots[0], "selftest_other.bin", "t.variant");
+
+            Check("вариант подставил другой файл",
+                variant != null &&
+                variant.BuildArguments(placeholders).Exists(
+                    a => a.EndsWith("selftest_other.bin", StringComparison.OrdinalIgnoreCase)),
+                variant == null ? "null" : "ok");
+
+            Check("оригинал не изменился",
+                withFake.BuildArguments(placeholders).Exists(
+                    a => a.EndsWith("selftest_other.bin", StringComparison.OrdinalIgnoreCase)) == false,
+                "ok");
+
+            // ---- отмена подбора: заранее отменённый токен
+            //
+            // Проверяем то, ради чего отмена и делалась: перебор на тысячу
+            // файлов не должен запускать движок и не должен врать «не удалось».
+            // «Остановлено» — это не провал, и найденное до остановки остаётся
+            // годным.
+            if (slots.Count > 0)
+            {
+                using (AutoZapret.Zapret.ZapretService tuneService = new AutoZapret.Zapret.ZapretService())
+                {
+                    // Стратегию кладём в хранилище сервиса: подбор ищет её
+                    // именно там, а не в нашем временном store выше.
+                    tuneService.Strategies.AddOrReplace(withFake);
+
+                    using (CancellationTokenSource cts = new CancellationTokenSource())
+                    {
+                        cts.Cancel();
+
+                        AutoZapret.Diag.FakeTuneResult tune = AutoZapret.Diag.FakeTuner.Run(
+                            tuneService, withFake.Id, 5, 1, null, cts.Token);
+
+                        Check("отмена подбора: помечен как остановленный", tune.Cancelled, "ok");
+                        Check("отмена подбора: не выдаёт себя за провал",
+                            tune.Error.Length == 0, tune.Error.Length == 0 ? "ok" : tune.Error);
+                        Check("отмена подбора: ни одного прогона", tune.Tested == 0,
+                            tune.Tested + " из " + tune.Planned);
+                        Check("отмена подбора: победителя нет", tune.Best == null, "ok");
+                    }
+                }
+            }
+
+            // ---- импорт своих .bat тем же путём, что и кнопка в интерфейсе
+            //
+            // Проверяем именно ImportCustomBats: он принимает текст, а не пути,
+            // и именно он вызывается из окна. Ошибка здесь — это «выбрал папку,
+            // а в списке ничего не появилось».
+            string customFile = Paths.CustomStrategiesFile;
+            string customBackup = AtomicFile.ReadAllTextOrNull(customFile);
+
+            try
+            {
+                using (AutoZapret.Zapret.ZapretService service = new AutoZapret.Zapret.ZapretService())
+                {
+                    List<KeyValuePair<string, string>> files =
+                        new List<KeyValuePair<string, string>>();
+
+                    files.Add(new KeyValuePair<string, string>("mine.bat", text));
+                    files.Add(new KeyValuePair<string, string>("broken.bat", "@echo off\r\necho привет\r\n"));
+                    files.Add(new KeyValuePair<string, string>("notes.txt", "не bat"));
+
+                    List<string> importWarnings = new List<string>();
+
+                    int added = service.ImportCustomBats(files, "custom.selftest.", importWarnings);
+
+                    Check("импорт своих .bat: добавлен один", added == 1, added + " шт.");
+                    Check("импорт своих .bat: мусор назван", importWarnings.Count >= 2,
+                        string.Join("; ", importWarnings.ToArray()));
+
+                    AutoZapret.Zapret.Strategy imported = service.Strategies.Find("custom.selftest.mine");
+
+                    Check("импорт своих .bat: стратегия в списке", imported != null, "ok");
+                    Check("импорт своих .bat: помечена как своя",
+                        imported != null && imported.Custom, "ok");
+                }
+            }
+            finally
+            {
+                // Настоящий файл своих стратегий не должен пострадать от selftest.
+                if (customBackup != null) File.WriteAllText(customFile, customBackup);
+                else { try { File.Delete(customFile); } catch { } }
+            }
+
+            // ---- полный круг на настоящем наборе: экспорт всех v1 и обратный разбор
+            //
+            // Синтетическая стратегия выше проверяет формат, но не проверяет,
+            // что настоящие 95 стратегий переживают круг. Именно там ломается
+            // всё интересное: `--hostlist=`, пути к фейкам, профили через `--new`.
+            AutoZapret.Zapret.StrategyStore real = new AutoZapret.Zapret.StrategyStore();
+            string cache = Path.Combine(Paths.StrategiesDir, "strategies.v1.json");
+
+            if (!real.Load(cache))
+            {
+                Skip("круг экспорт/импорт", "нет кэша " + cache);
+                return;
+            }
+
+            List<AutoZapret.Zapret.Strategy> originals = real.ByEngine("v1");
+
+            string batDir = Path.Combine(Paths.DataDir, "selftest-bats");
+
+            try
+            {
+                if (Directory.Exists(batDir)) Directory.Delete(batDir, true);
+                Directory.CreateDirectory(batDir);
+
+                int exported = 0;
+
+                foreach (AutoZapret.Zapret.Strategy s in originals)
+                {
+                    string path = Path.Combine(batDir, AutoZapret.Zapret.StrategyBatWriter.FileName(s));
+
+                    if (AutoZapret.Zapret.StrategyBatWriter.Write(s, placeholders, path) == null)
+                        exported++;
+                }
+
+                AutoZapret.Zapret.StrategyStore back = new AutoZapret.Zapret.StrategyStore();
+
+                int imported = back.ImportFromDirectory(batDir, engine.BinDir, engine.ListsDir,
+                                                        null, "rt.", true);
+
+                Check("круг: импортировано столько же", imported == exported,
+                    "экспорт " + exported + ", импорт " + imported);
+
+                int mismatched = 0;
+                string firstMismatch = "";
+
+                foreach (AutoZapret.Zapret.Strategy s in originals)
+                {
+                    // Сравниваем по имени файла, а не по Name: в файле не может
+                    // быть скобок и слэшей, поэтому `general (ALT)` превращается
+                    // в `general _ALT_`, и поиск по исходному имени не находит
+                    // ничего — это не ошибка экспорта, а нормализация имени.
+                    string baseName = Path.GetFileNameWithoutExtension(
+                        AutoZapret.Zapret.StrategyBatWriter.FileName(s));
+
+                    AutoZapret.Zapret.Strategy b = null;
+
+                    foreach (AutoZapret.Zapret.Strategy candidate in back.All)
+                    {
+                        if (string.Equals(candidate.Name, baseName, StringComparison.Ordinal))
+                        {
+                            b = candidate;
+                            break;
+                        }
+                    }
+
+                    if (b == null)
+                    {
+                        mismatched++;
+                        if (firstMismatch.Length == 0) firstMismatch = s.Name + ": не разобрался";
+                        continue;
+                    }
+
+                    string before = string.Join(" ", s.BuildArguments(placeholders).ToArray());
+                    string after = string.Join(" ", b.BuildArguments(placeholders).ToArray());
+
+                    if (before != after)
+                    {
+                        mismatched++;
+                        if (firstMismatch.Length == 0) firstMismatch = s.Name + ": " + after;
+                    }
+                }
+
+                Check("круг: аргументы всех стратегий совпали", mismatched == 0,
+                    mismatched == 0 ? originals.Count + " шт." : firstMismatch);
+            }
+            finally
+            {
+                try { Directory.Delete(batDir, true); } catch { }
             }
         }
 

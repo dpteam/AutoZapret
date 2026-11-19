@@ -32,6 +32,18 @@ namespace AutoZapret.Zapret
         public bool Recommended;
         public string Source = "";
 
+        /// <summary>
+        /// Стратегия пришла от человека, а не из набора движка.
+        ///
+        /// Зачем отдельный флаг, а не префикс id. Наборы движка при обновлении
+        /// переимпортируются целиком, и всё, что не пришло из .bat движка,
+        /// должно это пережить. Хранить такие стратегии в отдельном файле и
+        /// отличать по флагу — единственный способ не потерять их при
+        /// обновлении. Префикс для этого не годится: человек волен назвать
+        /// свой набор как угодно, в том числе `flowseal.`.
+        /// </summary>
+        public bool Custom;
+
         /// <summary>Глобальные флаги до первого --new: --wf-tcp=, --wf-udp=</summary>
         public List<string> GlobalArgs = new List<string>();
 
@@ -117,10 +129,34 @@ namespace AutoZapret.Zapret
                 return null;
             }
 
+            return ParseBatText(text, Path.GetFileName(path), Path.GetDirectoryName(path),
+                                binDir, listsDir, luaDir, sourcePrefix);
+        }
+
+        /// <summary>
+        /// Разбор .bat из текста, без файла на диске.
+        ///
+        /// Зачем. Импорт своих .bat-ов из интерфейса приходит текстом: файл
+        /// выбирает человек в браузерном поле, а до моста доезжает содержимое.
+        /// Писать его во временный каталог, чтобы тут же прочитать, — лишний
+        /// шаг, на котором Windows может не дать создать файл (антивирус,
+        /// запрет записи в %TEMP%), и импорт падал бы без внятной причины.
+        ///
+        /// originDir нужен только для `%~dp0`: если он пуст, переменная
+        /// останется нераскрытой, и путь в аргументах будет виден как есть —
+        /// это лучше, чем молча подставить каталог, к которому .bat отношения
+        /// не имеет.
+        /// </summary>
+        public static Strategy ParseBatText(string text, string fileName, string originDir,
+                                            string binDir, string listsDir, string luaDir,
+                                            string sourcePrefix)
+        {
+            if (string.IsNullOrEmpty(text)) return null;
+
             List<string> logicalLines = JoinContinuations(text);
 
             Dictionary<string, string> vars = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            vars["~dp0"] = Path.GetDirectoryName(path) + "\\";
+            vars["~dp0"] = string.IsNullOrEmpty(originDir) ? "" : originDir + "\\";
 
             string commandLine = null;
             string exeName = null;
@@ -174,10 +210,10 @@ namespace AutoZapret.Zapret
             Strategy strategy = new Strategy
             {
                 Id = (sourcePrefix != null ? sourcePrefix : (isV2 ? "zapret2." : "flowseal.")) +
-                     NormalizeId(Path.GetFileNameWithoutExtension(path)),
-                Name = Path.GetFileNameWithoutExtension(path),
+                     NormalizeId(Path.GetFileNameWithoutExtension(fileName)),
+                Name = Path.GetFileNameWithoutExtension(fileName),
                 Engine = isV2 ? "v2" : "v1",
-                Source = Path.GetFileName(path)
+                Source = Path.GetFileName(fileName)
             };
 
             // нормализуем пути к плейсхолдерам
@@ -307,6 +343,40 @@ namespace AutoZapret.Zapret
         }
 
         /// <summary>
+        /// Заменить `%BIN%`/`%LISTS%`/`%LUA%` на плейсхолдер, съев следующий за
+        /// переменной разделитель.
+        ///
+        /// `%BIN%\x.bin` и `%BIN%/x.bin` в .bat означают одно и то же, и оба
+        /// должны дать `${BIN}/x.bin`. Простая замена `%BIN%` -> `${BIN}/`
+        /// оставляет второй разделитель (`${BIN}/\x.bin`), из-за чего экспорт
+        /// перестаёт быть обратимым: разбор собственного .bat даёт аргумент,
+        /// не совпадающий с исходным. Ловится selftest-ом (круг export -> import).
+        ///
+        /// Заменяем только саму переменную и ровно один разделитель: `%BIN%`
+        /// внутри другого имени (`%BINPATH%`) не совпадает, потому что нет
+        /// закрывающего `%`.
+        /// </summary>
+        private static string CollapseDirVar(string text, string variable, string placeholder)
+        {
+            int index = text.IndexOf(variable, StringComparison.OrdinalIgnoreCase);
+
+            while (index >= 0)
+            {
+                int after = index + variable.Length;
+                int skip = 0;
+
+                if (after < text.Length && (text[after] == '\\' || text[after] == '/')) skip = 1;
+
+                text = text.Substring(0, index) + placeholder + text.Substring(after + skip);
+
+                index = text.IndexOf(variable, index + placeholder.Length,
+                                     StringComparison.OrdinalIgnoreCase);
+            }
+
+            return text;
+        }
+
+        /// <summary>
         /// Раскрывает переменные .bat.
         ///
         /// КЛЮЧЕВОЕ РЕШЕНИЕ: %BIN%, %LISTS%, %LUA% заменяются сразу на плейсхолдеры
@@ -330,9 +400,15 @@ namespace AutoZapret.Zapret
             result = result.Replace("%GameFilterUDP%", "${GAME_UDP}");
 
             // каталоги движка -> плейсхолдеры (см. комментарий выше)
-            result = result.Replace("%BIN%", "${BIN}/");
-            result = result.Replace("%LISTS%", "${LISTS}/");
-            result = result.Replace("%LUA%", "${LUA}/");
+            //
+            // Разделитель съедаем: `%BIN%\x.bin` и `%BIN%/x.bin` — это одно и то
+            // же, и после подстановки должно получиться `${BIN}/x.bin`, а не
+            // `${BIN}/\x.bin`. Двойной разделитель не ломает winws, но делает
+            // аргумент непохожим на исходный, и экспорт перестаёт быть
+            // обратимым (это ловил selftest: круг export -> import).
+            result = CollapseDirVar(result, "%BIN%", "${BIN}/");
+            result = CollapseDirVar(result, "%LISTS%", "${LISTS}/");
+            result = CollapseDirVar(result, "%LUA%", "${LUA}/");
 
             // прочие %VAR% из set (кроме служебных ~-переменных)
             foreach (KeyValuePair<string, string> kv in vars)

@@ -87,6 +87,14 @@ namespace AutoZapret.Zapret
 
                 EnsureEngine(EngineKind.V1, "strategies.v1.json");
                 EnsureEngine(EngineKind.V2, "strategies.v2.json");
+
+                // Свои стратегии — последними: кэш движка их тоже содержит, и
+                // если загрузить их раньше, он перезапишет файл своим набором.
+                try { _store.LoadCustom(Paths.CustomStrategiesFile); }
+                catch (Exception ex)
+                {
+                    Log.Warn("WINWS", "свои стратегии не загрузились: " + ex.Message);
+                }
             }
         }
 
@@ -273,6 +281,287 @@ namespace AutoZapret.Zapret
         /// из 44 почти одинаковых строк. Хуже: можно было выбрать стратегию
         /// чужого движка — она запускала не тот exe.
         /// </summary>
+        /// <summary>
+        /// Импорт своих .bat-ов.
+        ///
+        /// Принимает текст, а не пути: файлы выбирает человек в окне, и до
+        /// моста доезжает содержимое. Это же делает импорт возможным на
+        /// Android, где понятия «путь к папке» в браузерном поле нет.
+        ///
+        /// Возвращает число добавленных. Всё, что не разобралось, попадает в
+        /// warnings — молча пропущенный .bat выглядит как «импорт не сработал».
+        /// </summary>
+        public int ImportCustomBats(IList<KeyValuePair<string, string>> files,
+                                    string prefix, List<string> warnings)
+        {
+            EnsureStrategies();
+
+            if (files == null || files.Count == 0)
+            {
+                if (warnings != null) warnings.Add("не передано ни одного файла");
+                return 0;
+            }
+
+            if (string.IsNullOrEmpty(prefix)) prefix = "custom.";
+
+            int added = 0;
+
+            foreach (KeyValuePair<string, string> file in files)
+            {
+                string name = file.Key ?? "";
+
+                if (!name.EndsWith(".bat", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (warnings != null) warnings.Add(name + ": не .bat");
+                    continue;
+                }
+
+                Strategy strategy;
+
+                try
+                {
+                    strategy = StrategyParser.ParseBatText(
+                        file.Value, Path.GetFileName(name), null,
+                        _engine.BinDir, _engine.ListsDir,
+                        _engine.IsAvailable(EngineKind.V2) ? _engine.LuaDir : null,
+                        prefix);
+                }
+                catch (Exception ex)
+                {
+                    if (warnings != null) warnings.Add(name + ": " + ex.Message);
+                    continue;
+                }
+
+                if (AddCustom(strategy, name, warnings)) added++;
+            }
+
+            PersistCustom(added);
+
+            return added;
+        }
+
+        /// <summary>
+        /// Импорт своих .bat-ов из каталога — для консоли.
+        ///
+        /// Отличается от ImportCustomBats только способом чтения: здесь файл
+        /// читается с диска, и `StrategyParser` определяет кодировку сам
+        /// (cp1251/cp866/UTF-8). В окне кодировку определяет страница.
+        /// </summary>
+        public int ImportCustomBatsFromDirectory(string dir, string prefix, List<string> warnings)
+        {
+            EnsureStrategies();
+
+            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+            {
+                if (warnings != null) warnings.Add("каталог не найден: " + dir);
+                return 0;
+            }
+
+            if (string.IsNullOrEmpty(prefix)) prefix = "custom.";
+
+            string[] files = Directory.GetFiles(dir, "*.bat");
+            Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+
+            int added = 0;
+
+            foreach (string path in files)
+            {
+                Strategy strategy;
+
+                try
+                {
+                    strategy = StrategyParser.ParseBat(path, _engine.BinDir, _engine.ListsDir,
+                                                       _engine.IsAvailable(EngineKind.V2) ? _engine.LuaDir : null,
+                                                       prefix);
+                }
+                catch (Exception ex)
+                {
+                    if (warnings != null) warnings.Add(Path.GetFileName(path) + ": " + ex.Message);
+                    continue;
+                }
+
+                if (AddCustom(strategy, Path.GetFileName(path), warnings)) added++;
+            }
+
+            PersistCustom(added);
+
+            return added;
+        }
+
+        /// <summary>
+        /// Проверить разобранный .bat и положить его в список.
+        ///
+        /// Отдельно от импорта, потому что «не .bat», «служебный», «нет winws»,
+        /// «нет профилей» — это четыре разные причины, и все четыре должны
+        /// попасть в отчёт: молча пропущенный файл выглядит как «импорт не
+        /// сработал».
+        /// </summary>
+        private bool AddCustom(Strategy strategy, string name, List<string> warnings)
+        {
+            // service.bat и подобные — служебные: в них нет запуска winws,
+            // и импортировать из них нечего.
+            if (Path.GetFileName(name).StartsWith("service", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (strategy == null)
+            {
+                if (warnings != null) warnings.Add(name + ": не нашёл запуск winws");
+                return false;
+            }
+
+            if (strategy.Profiles.Count == 0)
+            {
+                if (warnings != null) warnings.Add(name + ": ни одного профиля");
+                return false;
+            }
+
+            strategy.Custom = true;
+
+            if (string.IsNullOrEmpty(strategy.Note))
+                strategy.Note = "свой .bat: " + Path.GetFileName(name);
+
+            _store.AddOrReplace(strategy);
+
+            return true;
+        }
+
+        private void PersistCustom(int added)
+        {
+            if (added <= 0) return;
+
+            try
+            {
+                Directory.CreateDirectory(Paths.StrategiesDir);
+                _store.SaveCustom(Paths.CustomStrategiesFile);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("WINWS", "свои стратегии не сохранились: " + ex.Message);
+            }
+
+            Log.Info("WINWS", "импортировано своих стратегий: " + added);
+        }
+
+        /// <summary>
+        /// Экспорт стратегий обратно в .bat.
+        ///
+        /// engine == null — все свои; иначе набор указанного движка. onlyId
+        /// ограничивает одной стратегией (кнопка «в .bat» рядом со списком).
+        /// </summary>
+        public int ExportBats(string engine, string onlyId, string dir,
+                              List<string> written, List<string> warnings)
+        {
+            EnsureStrategies();
+
+            if (string.IsNullOrEmpty(dir)) dir = Paths.ExportedStrategiesDir;
+
+            List<Strategy> list = new List<Strategy>();
+
+            if (!string.IsNullOrEmpty(onlyId))
+            {
+                Strategy one = _store.Find(onlyId);
+
+                if (one == null)
+                {
+                    if (warnings != null) warnings.Add("стратегия не найдена: " + onlyId);
+                    return 0;
+                }
+
+                list.Add(one);
+            }
+            else if (!string.IsNullOrEmpty(engine))
+            {
+                list.AddRange(_store.ByEngine(engine));
+            }
+            else
+            {
+                list.AddRange(_store.All);
+            }
+
+            if (list.Count == 0) return 0;
+
+            Dictionary<string, string> placeholders = _engine.BuildPlaceholders("off");
+
+            int count = 0;
+
+            foreach (Strategy s in list)
+            {
+                // Файлы разных движков в одну папку — это два general.bat с
+                // разными командами, и второй молча затрёт первый. Поэтому
+                // каталог на движок.
+                string target = Path.Combine(dir, s.Engine);
+
+                string path = Path.Combine(target, StrategyBatWriter.FileName(s));
+
+                string error = StrategyBatWriter.Write(s, placeholders, path);
+
+                if (error != null)
+                {
+                    if (warnings != null) warnings.Add(error);
+                    continue;
+                }
+
+                if (written != null) written.Add(path);
+                count++;
+            }
+
+            if (count > 0) Log.Info("WINWS", "экспортировано .bat: " + count + " в " + dir);
+
+            return count;
+        }
+
+        /// <summary>
+        /// Сохранить стратегию как свою. Возвращает id или текст ошибки.
+        ///
+        /// Нужно подбору фейка: победитель должен остаться в списке, иначе
+        /// следующий запуск вернёт исходную стратегию с чужим фейком, и вся
+        /// работа пропадёт.
+        /// </summary>
+        public string SaveCustomStrategy(Strategy strategy, string id, string name, string note)
+        {
+            if (strategy == null) return "стратегия не задана";
+
+            EnsureStrategies();
+
+            Strategy copy = new Strategy
+            {
+                Id = string.IsNullOrEmpty(id) ? "custom.tuned" : id,
+                Name = string.IsNullOrEmpty(name) ? (strategy.Name + " (свой)") : name,
+                Engine = strategy.Engine,
+                Note = note ?? "",
+                Recommended = false,
+                Source = strategy.Source,
+                Custom = true,
+                Targets = new List<string>(strategy.Targets),
+                GlobalArgs = new List<string>(strategy.GlobalArgs)
+            };
+
+            foreach (StrategyProfile p in strategy.Profiles)
+            {
+                copy.Profiles.Add(new StrategyProfile
+                {
+                    Name = p.Name,
+                    Label = p.Label,
+                    Args = new List<string>(p.Args)
+                });
+            }
+
+            _store.AddOrReplace(copy);
+
+            try
+            {
+                Directory.CreateDirectory(Paths.StrategiesDir);
+                _store.SaveCustom(Paths.CustomStrategiesFile);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("WINWS", "своя стратегия не сохранилась: " + ex.Message);
+                return "не сохранил: " + ex.Message;
+            }
+
+            return copy.Id;
+        }
+
         public List<Dictionary<string, object>> DescribeStrategies(string engine = null)
         {
             EnsureStrategies();
@@ -295,7 +584,8 @@ namespace AutoZapret.Zapret
                     { "note", s.Note },
                     { "recommended", s.Recommended },
                     { "targets", targets },
-                    { "profiles", (long)s.Profiles.Count }
+                    { "profiles", (long)s.Profiles.Count },
+                    { "custom", s.Custom }
                 });
             }
             return result;
