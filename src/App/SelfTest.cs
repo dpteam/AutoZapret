@@ -5462,7 +5462,7 @@ namespace AutoZapret.App
                     !string.IsNullOrEmpty(exe) && System.IO.File.Exists(exe),
                     exe ?? "пусто");
 
-                // без прав все четыре операции обязаны отказать с причиной
+                // без прав все операции обязаны отказать с причиной
                 if (!AutoZapret.App.Elevation.IsElevated)
                 {
                     AutoZapret.App.ServiceResult install = AutoZapret.App.ServiceManager.Install(false);
@@ -5476,11 +5476,33 @@ namespace AutoZapret.App
                     Check("служба: остановка без прав отказана",
                         !stop.Ok && stop.Message.Length > 0,
                         stop.Message);
+
+                    AutoZapret.App.ServiceResult restart = AutoZapret.App.ServiceManager.Restart();
+
+                    Check("служба: перезапуск без прав отказан",
+                        !restart.Ok && restart.Message.Length > 0,
+                        restart.Message);
+
+                    Check("служба: отказ не выдаёт себя за успех",
+                        restart.Message.IndexOf("перезапущена", StringComparison.OrdinalIgnoreCase) < 0,
+                        "ok");
                 }
                 else
                 {
                     // под админом проверяем только чтение: ставить службу в тесте нельзя
                     Check("служба: под админом чтение работает", true, "ok");
+
+                    // Перезапуск несуществующей службы обязан сказать «не
+                    // установлена», а не «перезапущена» и не молчать.
+                    if (!status.Installed)
+                    {
+                        AutoZapret.App.ServiceResult restart = AutoZapret.App.ServiceManager.Restart();
+
+                        Check("служба: перезапуск без установки отказан",
+                            !restart.Ok &&
+                            restart.Message.IndexOf("не установлена", StringComparison.OrdinalIgnoreCase) >= 0,
+                            restart.Message);
+                    }
                 }
             }
             catch (Exception ex)

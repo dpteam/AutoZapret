@@ -1217,12 +1217,29 @@
             setServiceBusy(true);
             send("service.stop");
         });
+
+        var restart = document.getElementById("btn-service-restart");
+        if (restart) restart.addEventListener("click", function () {
+            // Подтверждение не нужно: это обратимое действие, и его же просили
+            // ради скорости. Но объясняем, что именно произойдёт, — служба
+            // на секунды перестанет обходить, соединения порвутся.
+            setServiceBusy(true);
+
+            var note = document.getElementById("service-note");
+            if (note) {
+                note.textContent = "Перезапускаю службу: обход прервётся на несколько секунд…";
+                note.className = "row-hint";
+            }
+
+            send("service.restart");
+        });
     }
 
     /// Пока операция идёт, кнопки не нажимаются: sc start/stop занимают
     /// секунды, и повторное нажатие запускает вторую операцию поверх первой.
     function setServiceBusy(busy) {
-        ["btn-service-install", "btn-service-start", "btn-service-stop", "btn-service-uninstall"]
+        ["btn-service-install", "btn-service-start", "btn-service-restart",
+         "btn-service-stop", "btn-service-uninstall"]
             .forEach(function (id) {
                 var b = document.getElementById(id);
                 if (b) b.disabled = busy;
@@ -1281,6 +1298,16 @@
             stop.disabled = !msg.installed || !msg.running || !!msg.pending;
         }
 
+        // «Перезапустить» доступно и когда служба работает, и когда стоит:
+        // перезапуск остановленной — это просто запуск, и человек, нажавший
+        // его, ожидает службу работающей. Недоступно только во время
+        // перехода: `sc start` в этот момент ответит 1056.
+        var restart = document.getElementById("btn-service-restart");
+        if (restart) {
+            restart.style.display = "";
+            restart.disabled = !msg.installed || !!msg.pending;
+        }
+
         var note = document.getElementById("service-note");
         if (note && msg.problem) {
             note.textContent = msg.problem;
@@ -1294,6 +1321,38 @@
             note.textContent = msg.message || "";
             note.className = "row-hint " + (msg.ok ? "diag-ok" : "diag-bad");
         }
+
+        // Служба перезапущена или остановлена — расхождение «в окне одна
+        // стратегия, в службе другая» снято, подсказку убираем.
+        if (msg.action === "restart" || msg.action === "stop" || msg.action === "start")
+            hideServiceStale();
+    }
+
+    /**
+     * Служба читает настройки только при старте.
+     *
+     * Пока она работает, смена стратегии в окне до неё не доходит: в списке
+     * новая, а обход идёт по старой. Снаружи это «поменял стратегию, и не
+     * помогло». Поэтому прямо над списком появляется подсказка с кнопкой.
+     */
+    function renderServiceStale(msg) {
+        var row = document.getElementById("row-strategy-service");
+        var hint = document.getElementById("strategy-service-hint");
+
+        if (!row || !hint) return;
+
+        if (!msg.strategy) { hideServiceStale(); return; }
+
+        row.style.display = "";
+
+        hint.textContent = "Служба работает со стратегией, которая была при её запуске. " +
+                           "Чтобы применить «" + msg.strategy + "», перезапустите службу " +
+                           "на экране «Настройки» → «Служба Windows».";
+    }
+
+    function hideServiceStale() {
+        var row = document.getElementById("row-strategy-service");
+        if (row) row.style.display = "none";
     }
 
     function renderOwnCompat(msg) {
@@ -3733,6 +3792,10 @@
                 renderServiceResult(msg);
                 break;
 
+            case "service.stale":
+                renderServiceStale(msg);
+                break;
+
             case "dns.flushed":
                 renderDnsFlushed(msg);
                 break;
@@ -3998,6 +4061,8 @@
         renderSystemDns: renderSystemDns,
         // карточка службы: проверяется, что все четыре кнопки на месте
         renderService: renderService,
+        renderServiceStale: renderServiceStale,
+        renderServiceResult: renderServiceResult,
         // список фиксов hosts: проверяется, что наборы и счётчики видны
         renderHostsFixes: renderHostsFixes,
         // тема: проверяется «светлая и OLED включаются, тёмная снимает атрибут»

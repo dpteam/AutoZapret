@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using AutoZapret.Core;
@@ -298,6 +299,67 @@ namespace AutoZapret.App
             return ServiceResult.Good("служба остановлена");
         }
 
+        /// <summary>
+        /// Перезапустить службу: остановить, дождаться выгрузки драйвера, запустить.
+        ///
+        /// Зачем отдельная кнопка. Человек поменял стратегию и хочет, чтобы её
+        /// подхватила служба. Сейчас для этого надо нажать «Остановить», потом
+        /// «Запустить» и попасть в окно, когда `sc start` отвечает 1056
+        /// («уже останавливается») — служба выглядит сломанной, хотя всё в
+        /// порядке. Одна кнопка делает оба шага и ждёт между ними.
+        ///
+        /// `sc restart` НЕ существует — в Windows есть только stop и start.
+        /// Поэтому здесь два вызова, и пауза между ними не «на всякий случай»:
+        /// `sc stop` возвращается раньше, чем служба отпустила WinDivert, а
+        /// `sc start` при занятом драйвере падает на «A copy of winws is
+        /// already running with the same filter».
+        /// </summary>
+        public static ServiceResult Restart()
+        {
+            if (!Elevation.IsElevated)
+                return ServiceResult.Bad("нужны права администратора");
+
+            ServiceStatus status = Query();
+
+            if (!status.Installed)
+                return ServiceResult.Bad("служба не установлена");
+
+            System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+
+            bool wasRunning = status.Running || status.StartPending;
+
+            if (wasRunning)
+            {
+                ServiceResult stop = Stop();
+
+                // Не «продолжаем на всякий случай»: если служба не встала,
+                // запуск поверх даст два движка на одном фильтре, и оба будут
+                // молча не работать. Честнее сказать, что остановка не удалась.
+                if (!stop.Ok)
+                    return ServiceResult.Bad("перезапуск отменён: " + stop.Message);
+
+                // Драйвер выгружается уже ПОСЛЕ STOPPED. Без паузы старт
+                // ловит занятый WinDivert и выходит с ошибкой фильтра.
+                System.Threading.Thread.Sleep(1500);
+            }
+
+            ServiceResult start = Start();
+
+            if (!start.Ok)
+            {
+                Log.Warn("SVC", "перезапуск: остановлена, но не запустилась: " + start.Message);
+
+                return ServiceResult.Bad("служба остановлена, но не запустилась: " + start.Message);
+            }
+
+            string took = (watch.ElapsedMilliseconds / 1000.0).ToString("0.0", CultureInfo.InvariantCulture);
+
+            Log.Info("SVC", "служба перезапущена за " + took + " с" +
+                             (wasRunning ? "" : " (была остановлена)"));
+
+            return ServiceResult.Good("служба перезапущена за " + took + " с");
+        }
+
         private static bool WaitForStopped(int timeoutMs)
         {
             int waited = 0;
@@ -428,6 +490,13 @@ namespace AutoZapret.App
                 case "stop":
                 {
                     ServiceResult result = Stop();
+                    Console.WriteLine(result.Message);
+                    return result.Ok ? 0 : 1;
+                }
+
+                case "restart":
+                {
+                    ServiceResult result = Restart();
                     Console.WriteLine(result.Message);
                     return result.Ok ? 0 : 1;
                 }

@@ -365,5 +365,6 @@
   "Записать стратегии текущего движка обратно в .bat — их можно запустить без AutoZapret и разобрать по частям": "Write the current engine strategies back to .bat — they run without AutoZapret and can be taken apart",
   "Экспортировать": "Export",
   "Подобрать фейк (.bin)": "Tune fake (.bin)",
-  "Перебрать файлы того же вида, что в выбранной стратегии, и оставить рабочий. Занимает время: каждый вариант — запуск движка и проверка": "Try files of the same kind as in the selected strategy and keep the working one. Takes time: every variant is an engine start and a probe"
+  "Перебрать файлы того же вида, что в выбранной стратегии, и оставить рабочий. Занимает время: каждый вариант — запуск движка и проверка": "Try files of the same kind as in the selected strategy and keep the working one. Takes time: every variant is an engine start and a probe",
+  "Перезапустить": "Restart"
 }

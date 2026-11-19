@@ -278,6 +278,22 @@ namespace AutoZapret.App
 
                 PushState();
                 PushStrategies();
+
+                // Служба читает settings.json только при старте. Пока она
+                // работает, смена стратегии в окне до неё НЕ доходит, и человек
+                // видит новую стратегию в списке, а обход идёт по старой —
+                // ровно тот случай, когда «поменял, а не помогло».
+                if (ServiceRunningCached())
+                {
+                    Strategy chosen = _zapret.Strategies.Find(id);
+
+                    _form.Bridge.Send(WebBridge.Msg("service.stale",
+                        "strategy", chosen != null ? chosen.Name : id));
+                }
+                else
+                {
+                    _form.Bridge.Send(WebBridge.Msg("service.stale", "strategy", ""));
+                }
             });
 
             bridge.Register("strategy.importBats", msg =>
@@ -457,6 +473,15 @@ namespace AutoZapret.App
                 // человек не понимал, почему zapret 2 «не выбирается».
                 // Теперь переключаем по-настоящему: остановить, сменить, запустить.
                 RunInBackground("engine-switch", () => SwitchEngine(kind));
+
+                // Служба держит и движок, и стратегию из settings.json на момент
+                // своего старта. Пока она работает, смена движка в окне до неё
+                // не дойдёт — говорим об этом сразу, а не после «не помогло».
+                if (ServiceRunningCached())
+                {
+                    _form.Bridge.Send(WebBridge.Msg("service.stale",
+                        "strategy", EngineTitle(kind)));
+                }
             });
 
             bridge.Register("logs.get", msg =>
@@ -641,6 +666,22 @@ namespace AutoZapret.App
                 {
                     ServiceResult result = ServiceManager.Stop();
                     SendServiceResult("stop", result);
+                });
+            });
+
+            bridge.Register("service.restart", msg =>
+            {
+                if (!EnsureElevation()) return;
+
+                RunInBackground("svc-restart", () =>
+                {
+                    // Свой winws тоже держит WinDivert. Без этой остановки
+                    // служба поднимется, но фильтр останется за нами: снаружи
+                    // «служба работает», а обхода нет.
+                    StopEngineForService();
+
+                    ServiceResult result = ServiceManager.Restart();
+                    SendServiceResult("restart", result);
                 });
             });
             bridge.Register("own.start", msg =>
