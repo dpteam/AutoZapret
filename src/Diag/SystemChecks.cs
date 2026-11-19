@@ -181,11 +181,9 @@ namespace AutoZapret.Diag
         {
             CheckResult r = new CheckResult { Name = "TCP timestamps" };
 
-            string output = Cmd("netsh interface tcp show global");
+            bool? enabled = TcpTimestampsEnabled();
 
-            // на английской локали: "RFC 1323 Timestamps : enabled"
-            Match match = Regex.Match(output, @"Timestamps[^:]*:\s*(\w+)", RegexOptions.IgnoreCase);
-            if (!match.Success)
+            if (enabled == null)
             {
                 r.Status = CheckStatus.Warn;
                 r.Detail = "не удалось определить";
@@ -193,9 +191,7 @@ namespace AutoZapret.Diag
                 return r;
             }
 
-            string value = match.Groups[1].Value.ToLowerInvariant();
-
-            if (value.StartsWith("enabled") || value.StartsWith("allow") || value.StartsWith("yes"))
+            if (enabled.Value)
             {
                 r.Status = CheckStatus.Ok;
                 r.Detail = "включены";
@@ -209,6 +205,32 @@ namespace AutoZapret.Diag
             }
 
             return r;
+        }
+
+        /// <summary>
+        /// Состояние TCP timestamps: true — включены, false — выключены,
+        /// null — не удалось определить (незнакомая локаль, нет netsh).
+        ///
+        /// Вынесено из CheckTcpTimestamps отдельным методом, потому что тот же
+        /// вопрос задаёт preflight перед запуском движка: стратегия с
+        /// `--dpi-desync-fooling=ts` на машине с выключенными timestamps
+        /// стартует и не работает, и без этой проверки причина не видна.
+        /// </summary>
+        public static bool? TcpTimestampsEnabled()
+        {
+            string output = Cmd("netsh interface tcp show global");
+
+            // на английской локали: "RFC 1323 Timestamps : enabled"
+            Match match = Regex.Match(output, @"Timestamps[^:]*:\s*(\w+)", RegexOptions.IgnoreCase);
+
+            if (!match.Success) return null;
+
+            string value = match.Groups[1].Value.ToLowerInvariant();
+
+            if (value.StartsWith("enabled") || value.StartsWith("allow") || value.StartsWith("yes"))
+                return true;
+
+            return false;
         }
 
         private static CheckResult CheckSystemProxy()

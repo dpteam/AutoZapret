@@ -1966,6 +1966,56 @@ namespace AutoZapret.App
 
                 Check("путь: пустой", AutoZapret.Zapret.Preflight.NormalizePath("") == "", "ok");
 
+                // ---- fooling=ts и TCP timestamps
+                //
+                // Разбор опции проверяем на синтетике: от системы он не зависит,
+                // а ошибка в нём означала бы, что предупреждение либо не появится
+                // никогда, либо появится у стратегий с badseq.
+                List<string> tsArgs = new List<string> { "--dpi-desync=fake", "--dpi-desync-fooling=ts" };
+                Check("fooling: ts распознан",
+                    AutoZapret.Zapret.Preflight.UsesTsFooling(tsArgs), "ok");
+
+                List<string> tsMd5 = new List<string> { "--dpi-desync-fooling=ts,md5sig" };
+                Check("fooling: ts,md5sig распознан",
+                    AutoZapret.Zapret.Preflight.UsesTsFooling(tsMd5), "ok");
+
+                List<string> badseqArgs = new List<string> { "--dpi-desync-fooling=badseq" };
+                Check("fooling: badseq не требует timestamps",
+                    !AutoZapret.Zapret.Preflight.UsesTsFooling(badseqArgs), "ok");
+
+                List<string> noFooling = new List<string> { "--dpi-desync=multisplit", "--filter-tcp=443" };
+                Check("fooling: без опции — нет",
+                    !AutoZapret.Zapret.Preflight.UsesTsFooling(noFooling), "ok");
+
+                // «tso» не должно считаться за «ts»: сравнение по целому элементу
+                // списка, а не по вхождению подстроки.
+                List<string> tsoArgs = new List<string> { "--dpi-desync-fooling=tso" };
+                Check("fooling: tso не путается с ts",
+                    !AutoZapret.Zapret.Preflight.UsesTsFooling(tsoArgs), "ok");
+
+                Check("fooling: null не роняет",
+                    !AutoZapret.Zapret.Preflight.UsesTsFooling(null), "ok");
+
+                // На реальном каталоге: хотя бы одна стратегия должна требовать
+                // timestamps, иначе проверка выше бесполезна на практике.
+                if (store != null)
+                {
+                    int tsStrategies = 0;
+
+                    foreach (AutoZapret.Zapret.Strategy s in store.All)
+                    {
+                        try
+                        {
+                            Dictionary<string, string> ph = engine.BuildPlaceholders("off");
+                            if (AutoZapret.Zapret.Preflight.UsesTsFooling(s.BuildArguments(ph))) tsStrategies++;
+                        }
+                        catch { }
+                    }
+
+                    Check("fooling: в каталоге есть стратегии с ts", tsStrategies > 0,
+                        tsStrategies + " шт. из " + store.Count);
+                }
+
                 // ---- fake-IP от VPN-туннеля: 198.18.0.0/15
                 Check("fake-IP: 198.18.0.4 найден",
                     AutoZapret.Diag.DnsGuard.IsFakeIp(System.Net.IPAddress.Parse("198.18.0.4")), "ok");

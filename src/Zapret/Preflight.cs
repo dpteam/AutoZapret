@@ -301,7 +301,68 @@ namespace AutoZapret.Zapret
             }
             catch { }
 
+            // ---- 8. fooling=ts требует включённых TCP timestamps
+            //
+            // Это самая коварная из «тихих» поломок. Подставной пакет защищён
+            // тем, что его TCP-timestamp не совпадает с настоящим, и сервер
+            // отбрасывает фейк. Если timestamps в Windows выключены, опции в
+            // пакете нет вовсе, отбрасывать нечего — фейк долетает до сервера,
+            // сервер видит два рукопожатия подряд и рвёт соединение. Снаружи
+            // это ровно «стратегия не работает», причём выборочно: те профили,
+            // что используют badseq, работают, а ts — нет.
+            //
+            // Windows выключает timestamps по умолчанию, поэтому проверять надо
+            // каждый запуск, а не один раз при установке.
+            if (UsesTsFooling(args))
+            {
+                bool? timestamps = null;
+                try { timestamps = SystemChecks.TcpTimestampsEnabled(); } catch { }
+
+                if (timestamps == false)
+                {
+                    problems.Add(Warning("tcp-timestamps",
+                        "в Windows выключены TCP timestamps",
+                        "стратегия использует --dpi-desync-fooling=ts, а без timestamps фейк " +
+                        "долетает до сервера и соединение рвётся. Включить (нужен админ): " +
+                        "netsh interface tcp set global timestamps=enabled"));
+                }
+            }
+
             return problems;
+        }
+
+        /// <summary>
+        /// Использует ли стратегия защиту фейка через TCP timestamps.
+        ///
+        /// `--dpi-desync-fooling=ts` и `--dpi-desync-fooling=ts,md5sig` — да.
+        /// `badseq`, `md5sig`, `hopbyhop`, `datanoack` — нет: у них другой
+        /// механизм, и от timestamps они не зависят.
+        ///
+        /// Чистая функция без обращения к системе: её проверяет selftest.
+        /// </summary>
+        public static bool UsesTsFooling(List<string> args)
+        {
+            if (args == null) return false;
+
+            foreach (string arg in args)
+            {
+                if (string.IsNullOrEmpty(arg)) continue;
+
+                const string prefix = "--dpi-desync-fooling=";
+
+                if (!arg.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+
+                string value = arg.Substring(prefix.Length);
+
+                // значение — список через запятую: ts,md5sig,hopbyhop
+                foreach (string part in value.Split(','))
+                {
+                    if (string.Equals(part.Trim(), "ts", StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>Есть ли среди проблем блокеры. Предупреждения старт не отменяют.</summary>
