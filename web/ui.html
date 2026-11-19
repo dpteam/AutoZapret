@@ -268,6 +268,17 @@
           <button class="btn danger" id="btn-service-uninstall">Удалить</button>
         </div>
 
+        <div class="row" id="row-service-apply" style="margin-top:12px">
+          <div>
+            <div class="row-label">Применять стратегию сразу</div>
+            <div class="row-hint">
+              Перезапускать службу при смене стратегии. Выключено: перезапуск
+              рвёт все соединения на несколько секунд
+            </div>
+          </div>
+          <div class="switch" id="service-apply-toggle"></div>
+        </div>
+
         <div class="row-hint" id="service-note" style="margin-top:10px">
           Установка требует прав администратора. Служба ставится в автозапуск
           и перезапускается сама при падении

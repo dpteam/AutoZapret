@@ -732,6 +732,10 @@
 
         setSwitch("set-reconnect", s.reconnectOnStrategy !== false);
 
+        // «Применять стратегию сразу» — про службу, поэтому состояние тоже
+        // приходит вместе с настройками, а не отдельным сообщением.
+        setSwitch("service-apply-toggle", s.serviceRestartOnStrategy === true);
+
         // о программе
         text("about-version", s.version);
         text("about-os", s.os);
@@ -1233,6 +1237,14 @@
 
             send("service.restart");
         });
+
+        var applyNow = document.getElementById("service-apply-toggle");
+        if (applyNow) applyNow.addEventListener("click", function () {
+            var next = !applyNow.classList.contains("on");
+
+            applyNow.classList.toggle("on", next);
+            queueSave({ serviceRestartOnStrategy: next });
+        });
     }
 
     /// Пока операция идёт, кнопки не нажимаются: sc start/stop занимают
@@ -1307,6 +1319,11 @@
             restart.style.display = "";
             restart.disabled = !msg.installed || !!msg.pending;
         }
+
+        // Переключатель «применять сразу» имеет смысл только при
+        // установленной службе: без неё применять нечего.
+        var applyRow = document.getElementById("row-service-apply");
+        if (applyRow) applyRow.style.display = msg.installed ? "" : "none";
 
         var note = document.getElementById("service-note");
         if (note && msg.problem) {

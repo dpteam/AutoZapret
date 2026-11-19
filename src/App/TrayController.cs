@@ -43,6 +43,15 @@ namespace AutoZapret.App
         public event Action LogsRequested;
         public event Action ExitRequested;
 
+        /// <summary>
+        /// Перезапуск службы из трея.
+        ///
+        /// Зачем в трее. Служба работает без окна, и окно обычно свёрнуто.
+        /// Человеку, который поменял стратегию, нужен один пункт рядом с
+        /// иконкой, а не путь «открыть окно → настройки → прокрутить → кнопка».
+        /// </summary>
+        public event Action RestartServiceRequested;
+
         public TrayController(Control syncControl)
         {
             _sync = syncControl;
@@ -112,6 +121,27 @@ namespace AutoZapret.App
             });
         }
 
+        /// <summary>
+        /// Показать или убрать пункт «Перезапустить службу».
+        ///
+        /// Пункт виден только когда служба установлена: у большинства людей её
+        /// нет, и лишний серый пункт в меню — это вопрос «а что это такое»,
+        /// на который меню не отвечает.
+        /// </summary>
+        public void SetServiceRestartAvailable(bool available)
+        {
+            Invoke(() =>
+            {
+                if (_disposed) return;
+
+                ToolStripItem item = FindItem("restart-service");
+                if (item == null) return;
+
+                item.Visible = available;
+                item.Enabled = available;
+            });
+        }
+
         // ------------------------------------------------------------------ menu
 
         private ContextMenuStrip BuildMenu()
@@ -121,6 +151,18 @@ namespace AutoZapret.App
             ToolStripMenuItem toggle = new ToolStripMenuItem("▶ Включить обход") { Name = "toggle" };
             toggle.Click += delegate { Raise(ToggleRequested); };
             menu.Items.Add(toggle);
+
+            // Пункт существует всегда, но активен только когда служба
+            // установлена: без неё перезапускать нечего, и «серый пункт» честнее
+            // пункта, который нажимается и отвечает ошибкой.
+            ToolStripMenuItem restartService = new ToolStripMenuItem("Перезапустить службу")
+            {
+                Name = "restart-service",
+                Enabled = false,
+                Visible = false
+            };
+            restartService.Click += delegate { Raise(RestartServiceRequested); };
+            menu.Items.Add(restartService);
 
             menu.Items.Add(new ToolStripSeparator());
 

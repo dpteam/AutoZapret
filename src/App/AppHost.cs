@@ -77,6 +77,16 @@ namespace AutoZapret.App
             RegisterBridgeHandlers();
 
             _tray.SetState(TrayState.Off);
+
+            // Пункт «Перезапустить службу» в трее должен быть на месте с
+            // первого же открытия меню, а не после того, как человек зайдёт
+            // в настройки. `sc query` — это запуск cmd.exe, поэтому в фоне:
+            // на старте он не должен задерживать появление окна.
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try { _tray.SetServiceRestartAvailable(ServiceManager.Query().Installed); }
+                catch (Exception ex) { Log.Debug("SVC", "состояние для трея: " + ex.Message); }
+            });
         }
 
         // -------------------------------------------------------------------- run
@@ -129,6 +139,24 @@ namespace AutoZapret.App
 
             _tray.ToggleRequested += ToggleProtection;
             _tray.ExitRequested += RequestExit;
+
+            _tray.RestartServiceRequested += delegate
+            {
+                // Перезапуск идёт секунды, и окно при этом не нужно: человек
+                // нажал пункт в трее именно чтобы не открывать окно.
+                RunInBackground("svc-restart", () =>
+                {
+                    StopEngineForService();
+
+                    ServiceResult result = ServiceManager.Restart();
+
+                    _tray.Notify(AppInfo.Name,
+                        result.Ok ? "Служба перезапущена" : result.Message,
+                        result.Ok ? ToolTipIcon.Info : ToolTipIcon.Warning);
+
+                    SendServiceResult("restart", result);
+                });
+            };
         }
 
         private void WireEngine()
@@ -283,17 +311,31 @@ namespace AutoZapret.App
                 // работает, смена стратегии в окне до неё НЕ доходит, и человек
                 // видит новую стратегию в списке, а обход идёт по старой —
                 // ровно тот случай, когда «поменял, а не помогло».
-                if (ServiceRunningCached())
-                {
-                    Strategy chosen = _zapret.Strategies.Find(id);
-
-                    _form.Bridge.Send(WebBridge.Msg("service.stale",
-                        "strategy", chosen != null ? chosen.Name : id));
-                }
-                else
+                if (!ServiceRunningCached())
                 {
                     _form.Bridge.Send(WebBridge.Msg("service.stale", "strategy", ""));
+                    return;
                 }
+
+                if (_settings.ServiceRestartOnStrategy)
+                {
+                    // Человек сам включил «применять сразу» — значит перезапуск
+                    // службы для него ожидаемое поведение, а не сюрприз.
+                    _form.Bridge.Send(WebBridge.Msg("service.stale", "strategy", ""));
+
+                    RunInBackground("svc-apply-strategy", () =>
+                    {
+                        ServiceResult result = ServiceManager.Restart();
+                        SendServiceResult("restart", result);
+                    });
+
+                    return;
+                }
+
+                Strategy chosen = _zapret.Strategies.Find(id);
+
+                _form.Bridge.Send(WebBridge.Msg("service.stale",
+                    "strategy", chosen != null ? chosen.Name : id));
             });
 
             bridge.Register("strategy.importBats", msg =>
@@ -3044,6 +3086,11 @@ namespace AutoZapret.App
         {
             ServiceStatus status = ServiceManager.Query();
 
+            // Трей показывает пункт перезапуска только при установленной службе:
+            // у большинства людей её нет, и лишний серый пункт — это вопрос без
+            // ответа. Состояние спрашиваем здесь же, чтобы не запускать sc дважды.
+            _tray.SetServiceRestartAvailable(status.Installed);
+
             _form.Bridge.Send(WebBridge.Msg("service",
                 "installed", status.Installed,
                 "running", status.Running,
@@ -5057,6 +5104,7 @@ namespace AutoZapret.App
                 "language", _settings.Language,
                 "autoStartProtect", _settings.AutoStart,
                 "reconnectOnStrategy", _settings.ReconnectOnStrategy,
+                "serviceRestartOnStrategy", _settings.ServiceRestartOnStrategy,
                 "processPresets", _settings.ProcessPresets,
                 "logFile", Log.CurrentFile ?? "",
                 // служба держит обход: наша кнопка питания должна это знать
@@ -5114,6 +5162,7 @@ namespace AutoZapret.App
             _settings.StartMinimized = Json.GetBool(msg, "startMinimized", _settings.StartMinimized);
             _settings.AutoStart = Json.GetBool(msg, "autoStart", _settings.AutoStart);
             _settings.ReconnectOnStrategy = Json.GetBool(msg, "reconnectOnStrategy", _settings.ReconnectOnStrategy);
+            _settings.ServiceRestartOnStrategy = Json.GetBool(msg, "serviceRestartOnStrategy", _settings.ServiceRestartOnStrategy);
             _settings.Language = NormalizeLanguage(Json.GetString(msg, "language", _settings.Language));
             _settings.UpdateEngine = Json.GetBool(msg, "updateEngine", _settings.UpdateEngine);
             _settings.UpdateApp = Json.GetBool(msg, "updateApp", _settings.UpdateApp);

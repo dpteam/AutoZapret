@@ -366,5 +366,7 @@
   "Экспортировать": "Export",
   "Подобрать фейк (.bin)": "Tune fake (.bin)",
   "Перебрать файлы того же вида, что в выбранной стратегии, и оставить рабочий. Занимает время: каждый вариант — запуск движка и проверка": "Try files of the same kind as in the selected strategy and keep the working one. Takes time: every variant is an engine start and a probe",
-  "Перезапустить": "Restart"
+  "Перезапустить": "Restart",
+  "Применять стратегию сразу": "Apply strategy immediately",
+  "Перезапускать службу при смене стратегии. Выключено: перезапуск рвёт все соединения на несколько секунд": "Restart the service when the strategy changes. Off by default: a restart drops every connection for a few seconds"
 }

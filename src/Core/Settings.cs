@@ -40,6 +40,17 @@ namespace AutoZapret.Core
         public bool GameFilterMigrated = false;    // разовая миграция: игровой фильтр был включён
         public bool ReconnectOnStrategy = true;    // перезапускать обход при смене стратегии
         public bool ServiceMode = false;           // запускать как службу, а не как процесс
+
+        /// <summary>
+        /// Перезапускать службу при смене стратегии.
+        ///
+        /// По умолчанию ВЫКЛЮЧЕНО, и это осознанно. Служба работает без окна и
+        /// держит обход для всей системы: перезапуск — это разрыв всех
+        /// соединений на несколько секунд. Человек, который просто листает
+        /// список стратегий и смотрит описания, не должен из-за этого терять
+        /// загрузку. Включают те, кому нужно «поменял и сразу работает».
+        /// </summary>
+        public bool ServiceRestartOnStrategy = false;
         public bool AutoPilot = false;             // автоподбор стратегии в фоне
         public bool ProcessPresets = false;        // переключать стратегию под запущенное приложение
 
@@ -169,6 +180,7 @@ namespace AutoZapret.Core
                 s.AutoStart = Json.GetBool(zapret, "autoStart", s.AutoStart);
                 s.AutoStartMigrated = Json.GetBool(zapret, "autoStartMigrated", s.AutoStartMigrated);
                 s.ReconnectOnStrategy = Json.GetBool(zapret, "reconnectOnStrategy", s.ReconnectOnStrategy);
+                s.ServiceRestartOnStrategy = Json.GetBool(zapret, "serviceRestartOnStrategy", s.ServiceRestartOnStrategy);
                 s.SystemDns = Json.GetBool(zapret, "systemDns", s.SystemDns);
 
                 // Разовая миграция: раньше «включать обход при старте» было
@@ -282,6 +294,7 @@ namespace AutoZapret.Core
                 "autoStartMigrated", AutoStartMigrated,
                 "gameFilterMigrated", GameFilterMigrated,
                 "reconnectOnStrategy", ReconnectOnStrategy,
+                "serviceRestartOnStrategy", ServiceRestartOnStrategy,
                 "systemDns", SystemDns,
                 "serviceMode", ServiceMode,
                 "autoPilot", AutoPilot,

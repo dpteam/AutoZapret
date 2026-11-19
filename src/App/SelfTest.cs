@@ -337,6 +337,26 @@ namespace AutoZapret.App
             Settings oledBack = Settings.Load();
             Check("тема oled round-trip", oledBack.Theme == "oled", oledBack.Theme);
 
+            // Новые булевы настройки: дефолт и переживание записи.
+            //
+            // `serviceRestartOnStrategy` по умолчанию ВЫКЛЮЧЕН, и это решение,
+            // а не забытое значение: включённый перезапуск рвёт все соединения
+            // при каждом клике по списку стратегий. Тест фиксирует дефолт,
+            // чтобы его не «поправили» случайно.
+            Settings fresh = new Settings();
+            Check("служба: «применять сразу» выключено по умолчанию",
+                !fresh.ServiceRestartOnStrategy, fresh.ServiceRestartOnStrategy.ToString());
+
+            probe.ServiceRestartOnStrategy = true;
+            probe.Save();
+            Check("служба: «применять сразу» round-trip",
+                Settings.Load().ServiceRestartOnStrategy, "ok");
+
+            probe.ServiceRestartOnStrategy = false;
+            probe.Save();
+            Check("служба: «применять сразу» выключается",
+                !Settings.Load().ServiceRestartOnStrategy, "ok");
+
             // релей: человек копирует адрес из панели Cloudflare, и он легко
             // приезжает с пробелом или переводом строки на конце
             probe.ProxyRelay = "  cdn.example.workers.dev \r\n";
