@@ -101,15 +101,32 @@ namespace AutoZapret.Zapret
             }
 
             sb.Append("::\r\n");
-            sb.Append(":: Пути ниже можно поправить, если переносите папку с движком.\r\n");
+            sb.Append(":: Если переносите папку с движком — поправьте путь в BIN ниже.\r\n");
+            sb.Append(":: Остальные пути относительные (LISTS, LUA), их менять не нужно.\r\n");
             sb.Append("setlocal\r\n");
+
+            // Абсолютный BIN нужен ровно для одного — перейти в каталог движка.
+            // Дальше все пути относительные, и это не косметика.
+            //
+            // cmd.exe обрезает командную строку на 8191 символе, а считает он
+            // её ПОСЛЕ подстановки переменных. У длинных стратегий (Shizapret:
+            // 51 подстановка) абсолютные пути давали 7178 символов при
+            // установке в E:\... — и 9218 при установке в глубокую папку вида
+            // C:\Users\Имя\AppData\Local\Programs\...\AutoZapret-portable-0.2.0\.
+            // То есть .bat создавался, а winws получал обрубок и не стартовал.
+            //
+            // С относительными путями длина команды вообще не зависит от того,
+            // куда установили программу: `%LISTS%` это `..\lists`, а не
+            // 51-символьный путь. Тот же приём, что в service.bat у Flowseal.
             sb.Append("set \"BIN=").Append(bin).Append("\"\r\n");
+            sb.Append("cd /d \"%BIN%\"\r\n");
+            sb.Append("set \"BIN=.\"\r\n");
 
             if (!string.IsNullOrEmpty(lists))
-                sb.Append("set \"LISTS=").Append(lists).Append("\"\r\n");
+                sb.Append("set \"LISTS=").Append(Relative(bin, lists)).Append("\"\r\n");
 
             if (!string.IsNullOrEmpty(lua))
-                sb.Append("set \"LUA=").Append(lua).Append("\"\r\n");
+                sb.Append("set \"LUA=").Append(Relative(bin, lua)).Append("\"\r\n");
 
             if (usesFakes)
             {
@@ -117,7 +134,7 @@ namespace AutoZapret.Zapret
 
                 if (string.IsNullOrEmpty(fakes)) fakes = Path.Combine(bin, "..", "..", "assets", "fakes");
 
-                sb.Append("set \"FAKES=").Append(fakes).Append("\"\r\n");
+                sb.Append("set \"FAKES=").Append(Relative(bin, fakes)).Append("\"\r\n");
             }
 
             sb.Append("\r\n");
@@ -130,7 +147,49 @@ namespace AutoZapret.Zapret
 
             sb.Append("\r\n");
 
+            // Проверка длины: если стратегия когда-нибудь дорастёт до лимита,
+            // лучше узнать об этом в логе при экспорте, чем от человека,
+            // у которого «.bat есть, а обхода нет».
+            int commandLength = 0;
+
+            foreach (string line in sb.ToString().Split('\n'))
+                if (line.StartsWith("start ", StringComparison.Ordinal))
+                    commandLength = line.Length;
+
+            if (commandLength > CmdLimitWarn)
+            {
+                Log.Warn("BAT", "стратегия «" + strategy.Name + "»: командная строка " +
+                                commandLength + " символов, лимит cmd.exe 8191 — .bat может не запуститься");
+            }
+
             return sb.ToString();
+        }
+
+        /// <summary>Лимит cmd.exe — 8191; предупреждаем заранее, с запасом.</summary>
+        private const int CmdLimitWarn = 7800;
+
+        /// <summary>
+        /// Путь <paramref name="target"/> относительно <paramref name="from"/>,
+        /// с обратными слешами (их ждёт cmd) и без завершающего слеша.
+        /// </summary>
+        private static string Relative(string from, string target)
+        {
+            if (string.IsNullOrEmpty(from) || string.IsNullOrEmpty(target)) return target ?? "";
+
+            try
+            {
+                string rel = Path.GetRelativePath(from, target);
+
+                // Внутри одного каталога GetRelativePath отдаёт ".", и это
+                // правильный ответ: `%LISTS%` рядом с bin — это `.\x.txt`.
+                return rel.Replace('/', '\\').TrimEnd('\\');
+            }
+            catch
+            {
+                // Пути на разных дисках относительными не бывают — оставляем
+                // абсолютный: пусть будет длинно, но работоспособно.
+                return target;
+            }
         }
 
         /// <summary>

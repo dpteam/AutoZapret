@@ -1014,6 +1014,50 @@ namespace AutoZapret.App
                     before == after ? "ok" : after);
             }
 
+            // ---- длина команды не зависит от того, куда установили программу
+            //
+            // cmd.exe обрезает командную строку на 8191 символе и считает её
+            // ПОСЛЕ подстановки переменных. С абсолютными путями длинная
+            // стратегия (51 подстановка) в глубокой папке давала 9218 — .bat
+            // создавался, а winws получал обрубок. Поэтому в команде путей
+            // быть не должно вообще: только `%BIN%`/`%LISTS%`, а сами
+            // переменные задаются относительными после `cd /d "%BIN%"`.
+            string startLine = "";
+
+            foreach (string line in text.Split('\n'))
+                if (line.StartsWith("start ", StringComparison.Ordinal))
+                    startLine = line.TrimEnd('\r');
+
+            Check("экспорт: в команде нет абсолютных путей",
+                startLine.Length > 0 && startLine.IndexOf(":\\", StringComparison.Ordinal) < 0,
+                startLine.Length > 200 ? startLine.Substring(0, 200) : startLine);
+
+            Check("экспорт: переход в каталог движка есть",
+                text.IndexOf("cd /d \"%BIN%\"", StringComparison.Ordinal) >= 0, "ok");
+
+            Check("экспорт: длина команды в пределах cmd.exe",
+                startLine.Length > 0 && startLine.Length < 7800,
+                startLine.Length + " символов, лимит 8191");
+
+            // Относительный путь обязан быть относительным: абсолютный BIN
+            // в `set` остаётся только один — тот, что нужен для `cd`.
+            int absoluteBin = 0;
+
+            foreach (string line in text.Split('\n'))
+            {
+                string trimmed = line.TrimEnd('\r');
+
+                if (trimmed.StartsWith("set \"BIN=", StringComparison.Ordinal) &&
+                    trimmed.IndexOf(":\\", StringComparison.Ordinal) >= 0)
+                    absoluteBin++;
+            }
+
+            Check("экспорт: абсолютный BIN только один", absoluteBin == 1, absoluteBin + " шт.");
+
+            Check("экспорт: LISTS относительный",
+                text.IndexOf("set \"LISTS=..\\", StringComparison.Ordinal) >= 0,
+                "ok");
+
             // ---- свои стратегии переживают перезапуск
             AutoZapret.Zapret.StrategyStore store = new AutoZapret.Zapret.StrategyStore();
 
