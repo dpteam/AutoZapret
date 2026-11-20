@@ -1550,7 +1550,7 @@ namespace AutoZapret.App
                 string id = Json.GetString(msg, "id", "");
                 string text = Json.GetString(msg, "text", "");
 
-                HostsFix fix = HostsFixes.Find(id);
+                HostsFix fix = HostsFixes.FindAny(id);
 
                 if (fix == null)
                 {
@@ -1565,6 +1565,45 @@ namespace AutoZapret.App
                     "text", updated,
                     "summary", "фикс «" + fix.Name + "» применён, записей " + fix.Count +
                                " · не забудьте «Сохранить»"));
+            });
+
+            // ---- свои наборы hosts
+            //
+            // Человек вставляет кусок hosts (или несколько строк `адрес имя`) и
+            // сохраняет его как набор: дальше он применяется одной галочкой,
+            // как остальные. Без этого каждый раз приходится лезть в редактор
+            // и вспоминать, какие строки он добавлял в прошлый раз.
+            bridge.Register("hosts.fix.save", msg =>
+            {
+                string id = Json.GetString(msg, "id", "");
+                string name = Json.GetString(msg, "name", "");
+                string note = Json.GetString(msg, "note", "");
+                string lines = Json.GetString(msg, "lines", "");
+
+                string result = HostsFixes.SaveCustom(id, name, note, lines);
+
+                bool ok = result != null && result.StartsWith("user-", StringComparison.Ordinal);
+
+                bridge.Send(WebBridge.Msg("hosts.fix.saved",
+                    "ok", ok,
+                    "id", ok ? result : "",
+                    "error", ok ? "" : (result ?? "не сохранил")));
+
+                SendHostsFixes();
+            });
+
+            bridge.Register("hosts.fix.delete", msg =>
+            {
+                string id = Json.GetString(msg, "id", "");
+
+                string error = HostsFixes.DeleteCustom(id);
+
+                bridge.Send(WebBridge.Msg("hosts.fix.deleted",
+                    "ok", error == null,
+                    "id", id,
+                    "error", error ?? ""));
+
+                SendHostsFixes();
             });
 
             // Несколько выбранных сразу: галочки в интерфейсе, одно применение.
@@ -1601,7 +1640,7 @@ namespace AutoZapret.App
 
                     foreach (string id in ids)
                     {
-                        HostsFix fix = HostsFixes.Find(id);
+                        HostsFix fix = HostsFixes.FindAny(id);
 
                         if (fix != null)
                         {
@@ -2908,7 +2947,8 @@ namespace AutoZapret.App
         {
             List<object> items = new List<object>();
 
-            foreach (HostsFix fix in HostsFixes.Load())
+            // Наборы: свои первыми (их человек и ищет), потом поставка.
+            foreach (HostsFix fix in HostsFixes.LoadAll())
             {
                 items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
                 {
@@ -2916,7 +2956,8 @@ namespace AutoZapret.App
                     { "name", fix.Name },
                     { "note", fix.Note ?? "" },
                     { "count", (long)fix.Count },
-                    { "remote", false }
+                    { "remote", false },
+                    { "custom", fix.Custom }
                 });
             }
 

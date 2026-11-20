@@ -106,6 +106,10 @@ data/fakes/
 # коммитятся, и это не противоречие: они воспроизводимы, а свои — нет.
 assets/strategies/strategies.custom.json
 
+# Свои наборы hosts — по той же причине: фиксы поставки в fixes.json
+# воспроизводимы, а то, что человек вставил сам, — нет.
+assets/hosts/fixes.user.json
+
 # Экспорт .bat кладётся рядом с exe (в dev это bin\, в релизе — папка программы).
 exported-strategies/
 

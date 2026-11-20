@@ -949,7 +949,29 @@
           </div>
         </div>
 
-        <div class="diag-list" id="hosts-fixes-list" style="margin-top:10px"></div>
+        <div class="diag-list fix-scroll" id="hosts-fixes-list" style="margin-top:10px"></div>
+
+        <div class="row" style="margin-top:12px;align-items:flex-start">
+          <div style="flex:1">
+            <div class="row-label">Свой набор</div>
+            <div class="row-hint">
+              Вставьте строки hosts — «адрес имя», можно прямо с комментариями и
+              лишними строками, разберётся. Набор сохранится и будет применяться
+              галочкой, как остальные
+            </div>
+            <input type="text" id="hosts-fix-name" placeholder="название набора (например «Wikia»)"
+                   style="width:100%;margin-top:8px" spellcheck="false">
+            <textarea id="hosts-fix-lines" class="list-input" spellcheck="false"
+                      style="min-height:90px;margin-top:8px"
+                      placeholder="162.159.142.170 static.wikia.nocookie.net&#10;162.159.142.170 wikia.nocookie.net"></textarea>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px;min-width:170px">
+            <button class="btn primary" id="btn-hosts-fix-save">Сохранить набор</button>
+            <button class="btn" id="btn-hosts-fix-clear">Очистить</button>
+          </div>
+        </div>
+
+        <div class="row-hint" id="hosts-fix-status"></div>
 
         <div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap">
           <button class="btn primary" id="btn-hosts-fixes-apply">Применить выбранные</button>

@@ -16,6 +16,16 @@ namespace AutoZapret.Lists
         /// <summary>IP и имя — по одной паре на запись.</summary>
         public List<KeyValuePair<string, string>> Entries = new List<KeyValuePair<string, string>>();
 
+        /// <summary>
+        /// Набор добавил человек, а не мы.
+        ///
+        /// Отдельный флаг, а не префикс id: наборы поставки обновляются
+        /// целиком, и всё, что пришло не из `fixes.json`, должно это пережить.
+        /// Префикс для этого не годится — человек волен назвать набор как
+        /// угодно, в том числе `xbox`.
+        /// </summary>
+        public bool Custom;
+
         public int Count { get { return Entries.Count; } }
     }
 
@@ -120,6 +130,284 @@ namespace AutoZapret.Lists
                 if (string.Equals(fix.Id, id, StringComparison.OrdinalIgnoreCase)) return fix;
 
             return null;
+        }
+
+        // ---------------------------------------------------------------- свои
+
+        /// <summary>
+        /// Загрузить свои наборы. Читается ПОСЛЕ поставки и добавляется к ней.
+        ///
+        /// Одноимённый id из поставки заменяется своим: человек, который назвал
+        /// набор `xbox`, явно хотел свою версию, а не «две строки xbox».
+        /// </summary>
+        public static List<HostsFix> LoadCustom()
+        {
+            List<HostsFix> result = new List<HostsFix>();
+
+            string text = AtomicFile.ReadAllTextOrNull(Paths.CustomHostsFixesFile);
+            if (text == null) return result;
+
+            Dictionary<string, object> root = Json.ParseObjectSafe(text);
+            if (root == null)
+            {
+                Log.Warn("HOSTS", "свои наборы hosts не разобрались");
+                return result;
+            }
+
+            List<object> fixes = Json.GetArray(root, "fixes");
+            if (fixes == null) return result;
+
+            foreach (object item in fixes)
+            {
+                Dictionary<string, object> map = item as Dictionary<string, object>;
+                if (map == null) continue;
+
+                HostsFix fix = new HostsFix
+                {
+                    Id = Json.GetString(map, "id", ""),
+                    Name = Json.GetString(map, "name", ""),
+                    Note = Json.GetString(map, "note", ""),
+                    Custom = true
+                };
+
+                if (fix.Id.Length == 0) continue;
+
+                List<object> entries = Json.GetArray(map, "entries");
+
+                if (entries != null)
+                    foreach (object e in entries)
+                    {
+                        Dictionary<string, object> entry = e as Dictionary<string, object>;
+                        if (entry == null) continue;
+
+                        string ip = Json.GetString(entry, "ip", "");
+                        string host = Json.GetString(entry, "host", "");
+
+                        if (ip.Length == 0 || host.Length == 0) continue;
+
+                        fix.Entries.Add(new KeyValuePair<string, string>(ip, host));
+                    }
+
+                if (fix.Entries.Count > 0) result.Add(fix);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Все наборы: поставка + свои. Свои идут первыми — их человек и ищет.
+        /// </summary>
+        public static List<HostsFix> LoadAll()
+        {
+            List<HostsFix> custom = LoadCustom();
+            List<HostsFix> result = new List<HostsFix>();
+
+            result.AddRange(custom);
+
+            foreach (HostsFix fix in Load())
+            {
+                bool overridden = false;
+
+                foreach (HostsFix c in custom)
+                    if (string.Equals(c.Id, fix.Id, StringComparison.OrdinalIgnoreCase)) { overridden = true; break; }
+
+                if (!overridden) result.Add(fix);
+            }
+
+            return result;
+        }
+
+        public static HostsFix FindAny(string id)
+        {
+            foreach (HostsFix fix in LoadAll())
+                if (string.Equals(fix.Id, id, StringComparison.OrdinalIgnoreCase)) return fix;
+
+            return null;
+        }
+
+        /// <summary>
+        /// Сохранить свой набор. Возвращает id или текст ошибки.
+        ///
+        /// Разбирает строки вида `ip host` — то, что человек копирует из hosts
+        /// или из интернета. Комментарии и пустые строки пропускаются, чтобы
+        /// вставленный кусок hosts принимался как есть.
+        /// </summary>
+        public static string SaveCustom(string id, string name, string note, string lines)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return "нужно название набора";
+
+            List<KeyValuePair<string, string>> entries = ParseLines(lines);
+
+            if (entries.Count == 0)
+                return "ни одной пары «адрес имя» — нужны строки вида 1.2.3.4 example.com";
+
+            string fixId = Slug(string.IsNullOrWhiteSpace(id) ? name : id);
+
+            List<HostsFix> all = LoadCustom();
+
+            all.RemoveAll(f => string.Equals(f.Id, fixId, StringComparison.OrdinalIgnoreCase));
+
+            HostsFix fix = new HostsFix
+            {
+                Id = fixId,
+                Name = name.Trim(),
+                Note = (note ?? "").Trim(),
+                Custom = true
+            };
+
+            fix.Entries.AddRange(entries);
+
+            all.Add(fix);
+
+            try
+            {
+                AtomicFile.WriteAllText(Paths.CustomHostsFixesFile, ToJson(all));
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("HOSTS", "свой набор hosts не сохранился: " + ex.Message);
+                return "не сохранил: " + ex.Message;
+            }
+
+            Log.Info("HOSTS", "свой набор hosts сохранён: " + fixId + " (" + fix.Count + " записей)");
+
+            return fixId;
+        }
+
+        public static string DeleteCustom(string id)
+        {
+            List<HostsFix> all = LoadCustom();
+
+            int removed = all.RemoveAll(f => string.Equals(f.Id, id, StringComparison.OrdinalIgnoreCase));
+
+            if (removed == 0) return "набор не найден среди своих: " + id;
+
+            try
+            {
+                AtomicFile.WriteAllText(Paths.CustomHostsFixesFile, ToJson(all));
+            }
+            catch (Exception ex)
+            {
+                return "не сохранил: " + ex.Message;
+            }
+
+            Log.Info("HOSTS", "свой набор hosts удалён: " + id);
+
+            return null;
+        }
+
+        /// <summary>
+        /// Разобрать текст в пары «адрес имя».
+        ///
+        /// Принимает и `1.2.3.4 example.com`, и `1.2.3.4  example.com  # коммент`.
+        /// Строка без адреса или без имени пропускается: вставляют и куски
+        /// hosts с комментариями, и просто списки доменов — падать из-за этого
+        /// нельзя, но и делать вид, что всё разобралось, тоже.
+        /// </summary>
+        public static List<KeyValuePair<string, string>> ParseLines(string text)
+        {
+            List<KeyValuePair<string, string>> result = new List<KeyValuePair<string, string>>();
+
+            if (string.IsNullOrEmpty(text)) return result;
+
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (string raw in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+            {
+                string line = raw.Trim();
+
+                if (line.Length == 0) continue;
+                if (line.StartsWith("#", StringComparison.Ordinal)) continue;
+
+                int hash = line.IndexOf('#');
+                if (hash > 0) line = line.Substring(0, hash).Trim();
+
+                string[] parts = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+
+                if (parts.Length < 2) continue;
+
+                string ip = parts[0];
+
+                if (!HostlistManager.IsValidIpOrCidr(ip)) continue;
+
+                // Одна строка может содержать несколько имён: `1.2.3.4 a.com b.com`
+                for (int i = 1; i < parts.Length; i++)
+                {
+                    string host = parts[i];
+
+                    if (!HostlistManager.IsValidDomain(host)) continue;
+
+                    string key = ip + "|" + host;
+                    if (!seen.Add(key)) continue;
+
+                    result.Add(new KeyValuePair<string, string>(ip, host));
+                }
+            }
+
+            return result;
+        }
+
+        private static string ToJson(List<HostsFix> fixes)
+        {
+            Dictionary<string, object> root = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                { "schema", 1 },
+                { "kind", "hosts-fixes" },
+                { "savedAt", DateTime.Now.ToString("o") }
+            };
+
+            List<object> list = new List<object>();
+
+            foreach (HostsFix fix in fixes)
+            {
+                List<object> entries = new List<object>();
+
+                foreach (KeyValuePair<string, string> e in fix.Entries)
+                {
+                    entries.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                    {
+                        { "ip", e.Key },
+                        { "host", e.Value }
+                    });
+                }
+
+                list.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    { "id", fix.Id },
+                    { "name", fix.Name },
+                    { "note", fix.Note },
+                    { "entries", entries }
+                });
+            }
+
+            root["fixes"] = list;
+
+            return Json.Stringify(root);
+        }
+
+        /// <summary>id из названия: только латиница, цифры и дефис.</summary>
+        private static string Slug(string name)
+        {
+            StringBuilder sb = new StringBuilder(name.Length);
+
+            foreach (char c in name ?? "")
+            {
+                if (c > 127) { sb.Append('-'); continue; }
+
+                bool ok = char.IsLetterOrDigit(c) || c == '-' || c == '_';
+
+                sb.Append(ok ? char.ToLowerInvariant(c) : '-');
+            }
+
+            string clean = sb.ToString().Trim('-');
+
+            while (clean.IndexOf("--", StringComparison.Ordinal) >= 0)
+                clean = clean.Replace("--", "-");
+
+            if (clean.Length == 0) clean = "fix-" + DateTime.Now.Ticks.ToString("x").Substring(8);
+            if (clean.Length > 40) clean = clean.Substring(0, 40).Trim('-');
+
+            return "user-" + clean;
         }
 
         /// <summary>Скачиваемые источники: Flowseal и malw.link по умолчанию.</summary>

@@ -379,5 +379,8 @@
   "Проверять по своим доменам": "Check against my own domains",
   "Цели берутся из списка «Свои домены — обходить» на экране «Списки», а не из встроенного набора. Для тех, у кого не открывается конкретный сайт": "Targets come from the \"My domains to bypass\" list on the Lists screen instead of the built-in set. For those whose problem is one specific site",
   "25 стратегий": "25 strategies",
-  "все": "all"
+  "все": "all",
+  "Свой набор": "My own set",
+  "Вставьте строки hosts — «адрес имя», можно прямо с комментариями и лишними строками, разберётся. Набор сохранится и будет применяться галочкой, как остальные": "Paste hosts lines - \"address name\". Comments and extra lines are fine, they get parsed out. The set is saved and applied with a checkbox like the rest",
+  "Сохранить набор": "Save set"
 }

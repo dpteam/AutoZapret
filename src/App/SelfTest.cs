@@ -104,6 +104,9 @@ namespace AutoZapret.App
                 Section("hosts");
                 TestHosts();
 
+                Section("свои наборы hosts");
+                TestCustomHostsFixes();
+
                 Section("фейки");
                 TestPayloads();
 
@@ -1693,9 +1696,127 @@ namespace AutoZapret.App
             }
         }
 
-        private static void TestHosts()
+        /// <summary>
+        /// Свои наборы hosts: разбор вставленного текста и жизнь файла.
+        ///
+        /// Проверяем то, на чём это ломается молча: человек вставляет кусок
+        /// hosts из интернета, и если разбор съест строки без ошибки, набор
+        /// сохранится пустым — а он будет думать, что применил.
+        /// </summary>
+        private static void TestCustomHostsFixes()
         {
-            // --- разбор
+            // --- разбор: что берём, что отбрасываем
+            string text =
+                "# чужой hosts\r\n" +
+                "162.159.142.170 static.wikia.nocookie.net\r\n" +
+                "162.159.142.170   wikia.nocookie.net   # с комментарием\r\n" +
+                "162.159.142.170 static.wikia.nocookie.net\r\n" +   // повтор
+                "0.0.0.0 ads.example.com\r\n" +
+                "\r\n" +
+                "   \r\n" +
+                "просто текст\r\n" +
+                "1.2.3.4\r\n" +                                      // адрес без имени
+                "не-адрес example.com\r\n";                          // не адрес
+
+            List<KeyValuePair<string, string>> parsed = AutoZapret.Lists.HostsFixes.ParseLines(text);
+
+            Check("свои hosts: разобраны все пары", parsed.Count == 3, parsed.Count + " пар");
+
+            Check("свои hosts: комментарий не сломал строку",
+                parsed.Exists(p => p.Value == "wikia.nocookie.net"), "ok");
+
+            Check("свои hosts: повтор не удвоен",
+                parsed.FindAll(p => p.Value == "static.wikia.nocookie.net").Count == 1,
+                parsed.FindAll(p => p.Value == "static.wikia.nocookie.net").Count.ToString());
+
+            Check("свои hosts: блокировка 0.0.0.0 принята",
+                parsed.Exists(p => p.Key == "0.0.0.0"), "ok");
+
+            Check("свои hosts: адрес без имени отброшен",
+                parsed.TrueForAll(p => p.Value.Length > 0), "ok");
+
+            Check("свои hosts: не-адрес отброшен",
+                parsed.TrueForAll(p => AutoZapret.Lists.HostlistManager.IsValidIpOrCidr(p.Key)), "ok");
+
+            Check("свои hosts: пустой текст не даёт пар",
+                AutoZapret.Lists.HostsFixes.ParseLines("").Count == 0, "ok");
+
+            Check("свои hosts: мусор не даёт пар",
+                AutoZapret.Lists.HostsFixes.ParseLines("просто текст\n\n# только коммент").Count == 0, "ok");
+
+            // --- файл: сохранение, чтение, удаление
+            string backup = AtomicFile.ReadAllTextOrNull(Paths.CustomHostsFixesFile);
+
+            try
+            {
+                string id = AutoZapret.Lists.HostsFixes.SaveCustom(
+                    "", "Wikia", "картинки вики",
+                    "162.159.142.170 static.wikia.nocookie.net\n162.159.142.170 wikia.nocookie.net");
+
+                Check("свои hosts: набор сохранён",
+                    id != null && id.StartsWith("user-", StringComparison.Ordinal), id ?? "нет");
+
+                List<AutoZapret.Lists.HostsFix> loaded = AutoZapret.Lists.HostsFixes.LoadCustom();
+
+                Check("свои hosts: набор читается", loaded.Count == 1, loaded.Count + " шт.");
+                Check("свои hosts: помечен как свой",
+                    loaded.Count == 1 && loaded[0].Custom, "ok");
+                Check("свои hosts: записи на месте",
+                    loaded.Count == 1 && loaded[0].Count == 2,
+                    loaded.Count == 1 ? loaded[0].Count.ToString() : "-");
+
+                // Пустой набор — это отказ, а не «сохранилось ничего».
+                string empty = AutoZapret.Lists.HostsFixes.SaveCustom("", "Пустой", "", "нет пар");
+
+                Check("свои hosts: пустой набор отклонён",
+                    empty != null && !empty.StartsWith("user-", StringComparison.Ordinal), empty ?? "сохранился (!)");
+
+                // Без названия — тоже отказ: набор без имени не найти в списке.
+                string noName = AutoZapret.Lists.HostsFixes.SaveCustom("", "   ", "", "1.2.3.4 a.com");
+
+                Check("свои hosts: без названия отклонён",
+                    noName != null && !noName.StartsWith("user-", StringComparison.Ordinal), noName ?? "сохранился (!)");
+
+                // Свои видны в общем списке вместе с поставкой.
+                List<AutoZapret.Lists.HostsFix> all = AutoZapret.Lists.HostsFixes.LoadAll();
+
+                Check("свои hosts: видны в общем списке",
+                    all.Exists(f => f.Custom), all.Count + " всего");
+
+                Check("свои hosts: поставка тоже на месте",
+                    all.Exists(f => !f.Custom), "ok");
+
+                // Свои идут первыми: их человек и ищет.
+                Check("свои hosts: свои первыми",
+                    all.Count > 0 && all[0].Custom, all.Count > 0 ? all[0].Id : "пусто");
+
+                Check("свои hosts: поиск по id работает",
+                    AutoZapret.Lists.HostsFixes.FindAny(id) != null, "ok");
+
+                string error = AutoZapret.Lists.HostsFixes.DeleteCustom(id);
+
+                Check("свои hosts: удаление прошло", error == null, error ?? "ok");
+                Check("свои hosts: после удаления пусто",
+                    AutoZapret.Lists.HostsFixes.LoadCustom().Count == 0, "ok");
+
+                string missing = AutoZapret.Lists.HostsFixes.DeleteCustom("user-нет-такого");
+
+                Check("свои hosts: удаление несуществующего названо",
+                    missing != null, missing ?? "молчит (!)");
+            }
+            finally
+            {
+                try
+                {
+                    if (backup != null) AtomicFile.WriteAllText(Paths.CustomHostsFixesFile, backup);
+                    else if (File.Exists(Paths.CustomHostsFixesFile)) File.Delete(Paths.CustomHostsFixesFile);
+                }
+                catch { }
+            }
+        }
+
+        private static void TestHosts()
+        {            // --- разбор
             string source1 =
                 "# comment\r\n" +
                 "1.2.3.4 example.com www.example.com\r\n" +

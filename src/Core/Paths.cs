@@ -60,6 +60,19 @@ namespace AutoZapret.Core
         /// <summary>Наши фейки (.bin) и манифест.</summary>
         public static string FakesDir { get { return Path.Combine(BaseDir, "assets", "fakes"); } }
 
+        /// <summary>
+        /// Свои наборы hosts — отдельно от поставки.
+        ///
+        /// В `assets/hosts/fixes.json` лежат фиксы, которые проверяли мы; файл
+        /// едет с программой и обновляется вместе с ней. Всё, что добавил
+        /// человек (свой набор адресов для hosts), живёт здесь и обновление
+        /// не задевает — иначе правка поставки стирала бы его записи.
+        /// </summary>
+        public static string CustomHostsFixesFile
+        {
+            get { return Path.Combine(BaseDir, "assets", "hosts", "fixes.user.json"); }
+        }
+
         public static string StrategiesDir { get { return Path.Combine(BaseDir, "assets", "strategies"); } }
 
         /// <summary>

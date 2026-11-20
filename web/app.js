@@ -3478,6 +3478,35 @@
             document.querySelectorAll("#hosts-fixes-list input[data-fix-id]").forEach(function (b) { b.checked = false; });
             updateFixesSelected();
         });
+
+        // ---- свой набор hosts
+        var fixSave = document.getElementById("btn-hosts-fix-save");
+        if (fixSave) fixSave.addEventListener("click", function () {
+            var name = document.getElementById("hosts-fix-name");
+            var lines = document.getElementById("hosts-fix-lines");
+
+            var text = name ? name.value.trim() : "";
+            var body = lines ? lines.value : "";
+
+            if (!text) { fixStatus("Нужно название набора", "diag-bad"); return; }
+            if (!body.trim()) { fixStatus("Вставьте строки hosts: «адрес имя»", "diag-bad"); return; }
+
+            fixSave.disabled = true;
+            fixStatus("Сохраняю…", "");
+
+            send("hosts.fix.save", { name: text, lines: body });
+        });
+
+        var fixClear = document.getElementById("btn-hosts-fix-clear");
+        if (fixClear) fixClear.addEventListener("click", function () {
+            var name = document.getElementById("hosts-fix-name");
+            var lines = document.getElementById("hosts-fix-lines");
+
+            if (name) name.value = "";
+            if (lines) lines.value = "";
+
+            fixStatus("", "");
+        });
     }
 
     /// Счётчик выбранного: видно, сколько применять, не открывая список глазами.
@@ -3621,8 +3650,44 @@
         status.className = "row-hint " + (ok > 0 ? "diag-warn" : "diag-bad");
     }
 
-    function renderHostsFixes(msg) {
-        var list = document.getElementById("hosts-fixes-list");
+    /** Строка состояния своего набора hosts. */
+    function fixStatus(message, cls) {
+        var el = document.getElementById("hosts-fix-status");
+
+        if (!el) return;
+
+        el.textContent = message || "";
+        el.className = "row-hint" + (cls ? " " + cls : "");
+    }
+
+    function renderHostsFixSaved(msg) {
+        var button = document.getElementById("btn-hosts-fix-save");
+        if (button) button.disabled = false;
+
+        if (!msg.ok) {
+            fixStatus(msg.error || "не сохранил", "diag-bad");
+            return;
+        }
+
+        var name = document.getElementById("hosts-fix-name");
+        var lines = document.getElementById("hosts-fix-lines");
+
+        if (name) name.value = "";
+        if (lines) lines.value = "";
+
+        fixStatus("Набор сохранён — он в списке выше, с пометкой «свой»", "diag-ok");
+    }
+
+    function renderHostsFixDeleted(msg) {
+        if (!msg.ok) {
+            fixStatus(msg.error || "не удалил", "diag-bad");
+            return;
+        }
+
+        fixStatus("Набор удалён. Записи, уже добавленные в hosts, остались", "");
+    }
+
+    function renderHostsFixes(msg) {        var list = document.getElementById("hosts-fixes-list");
         if (!list) return;
 
         list.innerHTML = "";
@@ -3649,6 +3714,10 @@
                 ? (f.state || "сеть")
                 : (kind === "bundled" ? (f.state || "поставка") : "фикс");
 
+            // Своя запись помечена: иначе не понять, откуда набор и почему он
+            // не вернётся обновлением поставки.
+            var ownBadge = f.custom ? '<span class="badge">свой</span>' : "";
+
             // Сколько записей даст набор — до нажатия. «200 записей» отличается
             // от «0 записей» задолго до применения.
             var count = "";
@@ -3665,11 +3734,36 @@
                     '<span class="fix-head">' +
                         '<span class="fix-name">' + f.name + '</span>' +
                         '<span class="badge">' + badge + '</span>' +
+                        ownBadge +
                         count +
                         (f.careful ? '<span class="badge warn">блокировки</span>' : '') +
                     '</span>' +
                     (f.note ? '<span class="fix-note">' + f.note + '</span>' : '') +
                 '</span>';
+
+            // Свой набор можно удалить прямо здесь: он живёт отдельным файлом,
+            // и без кнопки человек ищет его на диске.
+            if (f.custom) {
+                var del = document.createElement("button");
+                del.className = "btn danger fix-del";
+                del.type = "button";
+                del.textContent = "×";
+                del.title = "удалить свой набор";
+                del.setAttribute("data-del-fix", f.id);
+
+                del.addEventListener("click", function (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    if (!window.confirm("Удалить свой набор «" + f.name + "»?\n\n" +
+                        "Записи, уже добавленные в hosts, останутся — набор только " +
+                        "перестанет предлагаться.")) return;
+
+                    send("hosts.fix.delete", { id: f.id });
+                });
+
+                row.appendChild(del);
+            }
 
             list.appendChild(row);
         });
@@ -4219,6 +4313,14 @@
                 renderHostsUpdated(msg);
                 break;
 
+            case "hosts.fix.saved":
+                renderHostsFixSaved(msg);
+                break;
+
+            case "hosts.fix.deleted":
+                renderHostsFixDeleted(msg);
+                break;
+
             case "lists.stats":
             {
                 var hint = document.getElementById("list-" + (msg.kind || "general") + "-hint");
@@ -4420,6 +4522,9 @@
         renderSystemDns: renderSystemDns,
         // карточка службы: проверяется, что все четыре кнопки на месте
         renderService: renderService,
+        renderHostsFixes: renderHostsFixes,
+        renderHostsFixSaved: renderHostsFixSaved,
+        renderHostsFixDeleted: renderHostsFixDeleted,
         renderDiagTargets: renderDiagTargets,
         plural: plural,
         renderServiceStale: renderServiceStale,

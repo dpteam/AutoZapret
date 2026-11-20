@@ -450,6 +450,17 @@ h1 {
 
 .fix-row:hover { border-color: var(--border-light); }
 
+/* Кнопка удаления своего набора: маленькая и справа, чтобы не мешать
+   галочке и не выглядеть как «удалить hosts». */
+.fix-del {
+  flex: 0 0 auto;
+  align-self: center;
+  min-width: 28px;
+  padding: 2px 8px;
+  font-size: 15px;
+  line-height: 1;
+}
+
 .fix-row:has(input:checked) {
     border-color: var(--accent-blue);
     background: rgba(85, 170, 255, .07);
@@ -686,6 +697,33 @@ input:focus, select:focus { border-color: var(--accent-blue); }
 /* ---------------------------------------------------------------- диагностика */
 
 .diag-list { display: flex; flex-direction: column; gap: 6px; }
+
+/* Список наборов hosts: своя прокрутка.
+   Наборов становится много (поставка + свои + источники), и без прокрутки
+   карточка растягивается на два экрана — кнопка «Применить» уезжает вниз, и
+   человек прокручивает страницу, чтобы нажать то, что только что выбрал.
+   Высота в 340px — примерно шесть строк: видно, что список длинный, и видно,
+   где он кончается. */
+.fix-scroll {
+  max-height: 340px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+/* Полоса прокрутки в тёмной теме: системная почти не видна. */
+.fix-scroll::-webkit-scrollbar { width: 10px; }
+
+.fix-scroll::-webkit-scrollbar-track {
+  background: var(--bg-input);
+  border-radius: 5px;
+}
+
+.fix-scroll::-webkit-scrollbar-thumb {
+  background: var(--border-light);
+  border-radius: 5px;
+}
+
+.fix-scroll::-webkit-scrollbar-thumb:hover { background: var(--accent-blue); }
 
 .diag-row {
     display: flex;
