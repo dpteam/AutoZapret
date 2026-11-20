@@ -1884,6 +1884,38 @@ namespace AutoZapret.App
                 hosts.Count == new HashSet<string>(hosts, StringComparer.OrdinalIgnoreCase).Count,
                 hosts.Count.ToString());
 
+            // Имён, которых не существует, быть не должно.
+            //
+            // Авторы списков в issue дописали rr1..rr10 «на всякий случай», хотя
+            // у этих семейств существуют только rr1..rr5. Проверено резолвом
+            // каждого номера от rr1 до rr12. Такие записи в hosts мёртвые:
+            // блокировать нечего, а в списке они выглядят как настоящие
+            // ловушки и мешают считать.
+            string[] phantoms =
+            {
+                "rr6---sn-1giz7n7l.googlevideo.com",
+                "rr10---sn-1giz7n7l.googlevideo.com",
+                "rr6---sn-2of5f5-5i.c.youtube.com",
+                "rr10---sn-2of5f5-5i.c.youtube.com",
+                "rr6---sn-f5f7kn7e.c.youtube.com",
+                "rr10---sn-f5f7kn7e.c.youtube.com",
+                "rr6---sn-f5f7lnly.c.youtube.com",
+                "rr10---sn-f5f7lnly.c.youtube.com",
+                "rr6---sn-oj1gi5-54.c.youtube.com",
+                "rr10---sn-oj1gi5-54.c.youtube.com",
+                "rr9---sn-oxuctoxu-n8vl.googlevideo.com",
+                "rr10---sn-oxuctoxu-n8vl.googlevideo.com"
+            };
+
+            List<string> back = new List<string>();
+
+            foreach (string h in phantoms)
+                if (hosts.Exists(x => string.Equals(x, h, StringComparison.OrdinalIgnoreCase)))
+                    back.Add(h);
+
+            Check("ловушки: несуществующих имён нет", back.Count == 0,
+                back.Count == 0 ? "ok" : string.Join(", ", back.ToArray()));
+
             // Главная проверка: ни одно имя не должно вести на рабочий
             // зарубежный сервер. Записи в hosts не «ускоряют YouTube» — они
             // убирают имя из выбора, и убрать хороший сервер значит оставить

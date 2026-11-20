@@ -5,7 +5,7 @@
 # Браузер берёт сервер из списка, который вернул YouTube, попадает на
 # ловушку - и видео висит, хотя страница и картинки открываются.
 #
-# Список привязывает 174 известных имён-ловушек к 0.0.0.0, то есть
+# Список привязывает 147 известных имён-ловушек к 0.0.0.0, то есть
 # в никуда. Тогда YouTube выбирает следующий сервер из своего списка,
 # и если с зарубежными соединение работает - видео идёт.
 #
@@ -18,9 +18,19 @@
 # лишнее имя, которого у вашего провайдера нет, ни на что не влияет -
 # оно и так не резолвится.
 #
-# Чего здесь НЕТ: 8 имён, проверенных как рабочие зарубежные
-# (Брюссель, Торонто, Маунтин-Вью), и 3 непроверенных. Блокировать
-# хороший сервер - значит отнимать у YouTube рабочий вариант.
+# Чего здесь НЕТ:
+#
+#   * 70 имён, которые ведут на РАБОЧИЕ зарубежные серверы
+#     Google (Германия, Польша, Швейцария). Записи в hosts не ускоряют
+#     YouTube - они убирают имя из выбора. Убрать хороший сервер значит
+#     оставить клиенту только ловушки;
+#   * ещё 8 имён из того же разряда (Брюссель, Торонто,
+#     Маунтин-Вью) - их проверили отдельно, адреса в генераторе;
+#   * 3 имени, которые при проверке не заресолвились: догадка
+#     «наверное тоже не в России» - не основание блокировать;
+#   * 27 имён, которых не существует. Авторы списков дописали
+#     rr1..rr10 «на всякий случай», хотя у тех семейств есть только rr1..rr5.
+#     Проверено резолвом каждого номера от rr1 до rr12.
 #
 # Если стало хуже - снимите галочку и сохраните hosts.
 #
@@ -64,12 +74,6 @@
 0.0.0.0 rr1---sn-xguxaxjvh-bvws.googlevideo.com
 0.0.0.0 rr1---sn-xguxaxjvh-gufl.googlevideo.com
 0.0.0.0 rr1---sn-xguxaxjvh-uwhs.googlevideo.com
-0.0.0.0 rr10---sn-1giz7n7l.googlevideo.com
-0.0.0.0 rr10---sn-2of5f5-5i.c.youtube.com
-0.0.0.0 rr10---sn-f5f7kn7e.c.youtube.com
-0.0.0.0 rr10---sn-f5f7lnly.c.youtube.com
-0.0.0.0 rr10---sn-oj1gi5-54.c.youtube.com
-0.0.0.0 rr10---sn-oxuctoxu-n8vl.googlevideo.com
 0.0.0.0 rr2---sn-g5njvh-n8vl.googlevideo.com
 0.0.0.0 rr2---sn-gvnuxaxjvh-n8ml.googlevideo.com
 0.0.0.0 rr2---sn-hxb54vo-045e.googlevideo.com
@@ -157,48 +161,27 @@
 0.0.0.0 rr5---sn-oxuctoxu-xbvl.googlevideo.com
 0.0.0.0 rr5---sn-xguxaxjvh-8v1e.googlevideo.com
 0.0.0.0 rr5---sn-xguxaxjvh-bvwe.googlevideo.com
-0.0.0.0 rr6---sn-1giz7n7l.googlevideo.com
-0.0.0.0 rr6---sn-2of5f5-5i.c.youtube.com
-0.0.0.0 rr6---sn-f5f7kn7e.c.youtube.com
-0.0.0.0 rr6---sn-f5f7lnly.c.youtube.com
 0.0.0.0 rr6---sn-gvnuxaxjvh-n8ml.googlevideo.com
 0.0.0.0 rr6---sn-jvhnu5g-c35z.googlevideo.com
 0.0.0.0 rr6---sn-jvhnu5g-n8vk.googlevideo.com
 0.0.0.0 rr6---sn-jvhnu5g-n8vr.googlevideo.com
 0.0.0.0 rr6---sn-jvhnu5g-n8vy.googlevideo.com
-0.0.0.0 rr6---sn-oj1gi5-54.c.youtube.com
 0.0.0.0 rr6---sn-oxuctoxu-n8vl.googlevideo.com
 0.0.0.0 rr6---sn-oxuctoxu-xbvl.googlevideo.com
 0.0.0.0 rr6---sn-xguxaxjvh-8v1e.googlevideo.com
 0.0.0.0 rr6---sn-xguxaxjvh-bvwe.googlevideo.com
-0.0.0.0 rr7---sn-1giz7n7l.googlevideo.com
-0.0.0.0 rr7---sn-2of5f5-5i.c.youtube.com
-0.0.0.0 rr7---sn-f5f7kn7e.c.youtube.com
-0.0.0.0 rr7---sn-f5f7lnly.c.youtube.com
 0.0.0.0 rr7---sn-gvnuxaxjvh-n8ml.googlevideo.com
 0.0.0.0 rr7---sn-jvhnu5g-c35z.googlevideo.com
 0.0.0.0 rr7---sn-jvhnu5g-n8vk.googlevideo.com
 0.0.0.0 rr7---sn-jvhnu5g-n8vr.googlevideo.com
 0.0.0.0 rr7---sn-jvhnu5g-n8vy.googlevideo.com
-0.0.0.0 rr7---sn-oj1gi5-54.c.youtube.com
 0.0.0.0 rr7---sn-oxuctoxu-n8vl.googlevideo.com
 0.0.0.0 rr7---sn-xguxaxjvh-8v1e.googlevideo.com
 0.0.0.0 rr7---sn-xguxaxjvh-bvwe.googlevideo.com
-0.0.0.0 rr8---sn-1giz7n7l.googlevideo.com
-0.0.0.0 rr8---sn-2of5f5-5i.c.youtube.com
-0.0.0.0 rr8---sn-f5f7kn7e.c.youtube.com
-0.0.0.0 rr8---sn-f5f7lnly.c.youtube.com
 0.0.0.0 rr8---sn-jvhnu5g-c35z.googlevideo.com
 0.0.0.0 rr8---sn-jvhnu5g-n8vk.googlevideo.com
 0.0.0.0 rr8---sn-jvhnu5g-n8vr.googlevideo.com
 0.0.0.0 rr8---sn-jvhnu5g-n8vy.googlevideo.com
-0.0.0.0 rr8---sn-oj1gi5-54.c.youtube.com
 0.0.0.0 rr8---sn-oxuctoxu-n8vl.googlevideo.com
 0.0.0.0 rr8---sn-xguxaxjvh-8v1e.googlevideo.com
 0.0.0.0 rr8---sn-xguxaxjvh-bvwe.googlevideo.com
-0.0.0.0 rr9---sn-1giz7n7l.googlevideo.com
-0.0.0.0 rr9---sn-2of5f5-5i.c.youtube.com
-0.0.0.0 rr9---sn-f5f7kn7e.c.youtube.com
-0.0.0.0 rr9---sn-f5f7lnly.c.youtube.com
-0.0.0.0 rr9---sn-oj1gi5-54.c.youtube.com
-0.0.0.0 rr9---sn-oxuctoxu-n8vl.googlevideo.com
