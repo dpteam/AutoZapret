@@ -4646,6 +4646,30 @@ namespace AutoZapret.App
 
             List<StrategyScore> scores = tester.Run(ids, baseline, 5, 8, token);
 
+            // ---- подтверждение победителя
+            //
+            // Основной перебор проверяет каждую стратегию один раз: этого хватает,
+            // чтобы отсеять нерабочие. Но победителя человек поставит себе и будет
+            // с ним жить, поэтому его проверяем отдельно — три независимых захода,
+            // нужно два. Один заход может пройти случайно (DPI не успел, драйвер не
+            // встал, маршрут дёрнулся), и тогда через минуту «проверенная» стратегия
+            // перестаёт работать, а виноватой выглядит программа.
+            //
+            // Подтверждаем только полный проход: если победитель пробил не все цели,
+            // повторять нечего — ответ уже «не всё работает».
+            if (!token.IsCancellationRequested && scores.Count > 0 && scores[0].Rate >= 1.0)
+            {
+                _form.Bridge.Send(WebBridge.Msg("diag.progress",
+                    "line", "подтверждаю лучшую: 3 захода",
+                    "elapsedSec", (long)watch.Elapsed.TotalSeconds,
+                    "done", false));
+
+                List<ProbeTarget> confirmTargets = baseline != null ? baseline.BlockedTargets()
+                                                                    : ConnectivityProbe.DefaultTargets();
+
+                tester.Confirm(scores[0], confirmTargets, 5, 8, 3, 2, token);
+            }
+
             // Снимок скана — чтобы результат был виден у выбора стратегии,
             // а не только здесь. Человек выбирает стратегию на главной, и
             // «проверена, 6/6, счёт 98» должно быть рядом с ней.
@@ -4676,7 +4700,11 @@ namespace AutoZapret.App
                     { "failed", failed },
                     // почему не пробило: «таймаут ×4», «DNS», «TLS»…
                     { "reasons", s.ProbeReasons ?? "" },
-                    { "error", s.Error ?? "" }
+                    { "error", s.Error ?? "" },
+                    // подтверждение победителя: «2 из 3». 0 — не подтверждали.
+                    { "confirmRounds", (long)s.ConfirmRounds },
+                    { "confirmRequired", (long)s.ConfirmRequired },
+                    { "confirmTotal", (long)s.ConfirmTotal }
                 });
             }
 

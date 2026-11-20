@@ -4439,6 +4439,26 @@ namespace AutoZapret.App
             AutoZapret.Diag.StrategyTester.ComputeScore(zero, SynthReport(-1, -1, -1, -1), true);
             Check("строка стратегии: причина видна",
                 zero.ToLine().IndexOf("таймаут", StringComparison.Ordinal) >= 0, zero.ToLine());
+
+            // ---- подтверждение победителя: заход считается пройденным только целиком.
+            //
+            // Победителя перепроверяют затем, чтобы он держался ЦЕЛИКОМ: «5 из 6»
+            // это тот же частичный результат, который основной перебор уже показал,
+            // и подтверждать его незачем.
+            Check("подтверждение: все цели и живой движок — прошёл",
+                AutoZapret.Diag.StrategyTester.ConfirmPassed(6, 6, true), "6/6, жив");
+            Check("подтверждение: 5 из 6 — не прошёл",
+                !AutoZapret.Diag.StrategyTester.ConfirmPassed(5, 6, true), "5/6");
+            Check("подтверждение: движок умер — не прошёл",
+                !AutoZapret.Diag.StrategyTester.ConfirmPassed(6, 6, false), "6/6, мёртв");
+            Check("подтверждение: ноль целей — не прошёл",
+                !AutoZapret.Diag.StrategyTester.ConfirmPassed(0, 0, true), "0/0");
+
+            // По умолчанию поля нулевые: «не подтверждали» — это не «подтверждён».
+            AutoZapret.Diag.StrategyScore fresh = new AutoZapret.Diag.StrategyScore();
+            Check("подтверждение: по умолчанию не подтверждён",
+                fresh.ConfirmRounds == 0 && fresh.ConfirmRequired == 0 && fresh.ConfirmTotal == 0,
+                fresh.ConfirmRounds + "/" + fresh.ConfirmRequired + "/" + fresh.ConfirmTotal);
         }
 
         /// <summary>

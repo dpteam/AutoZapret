@@ -2729,11 +2729,31 @@
             var reasons = (s.reasons && s.okCount === 0)
                 ? '<div class="detail">почему: ' + s.reasons + "</div>" : "";
 
+            // Подтверждение победителя: «проверена ещё раз 2 из 3».
+            //
+            // Показываем только когда подтверждали (confirmRequired > 0) и только
+            // для того, кто прошёл всё: у остальных повторять нечего.
+            // Без этой строки «🟢 6/6 счёт 98» ничего не говорит о том, что
+            // стратегию проверили повторно, — а именно это отличает «пробило
+            // один раз» от «держится».
+            var confirm = "";
+            if (s.confirmRequired > 0) {
+                var ok = s.confirmRounds >= s.confirmRequired;
+                var cls = ok ? "diag-ok" : "diag-warn";
+                var total = s.confirmTotal || s.confirmRequired;
+
+                confirm = '<div class="detail ' + cls + '">' +
+                    (ok ? "проверена повторно: " : "повторная проверка не прошла: ") +
+                    s.confirmRounds + " из " + total + " заходов" +
+                    (ok ? "" : " (нужно " + s.confirmRequired + ") — в работе может подвести") +
+                    "</div>";
+            }
+
             var scoreCls = s.score >= 80 ? "diag-ok" : (s.score >= 50 ? "diag-warn" : "diag-bad");
 
             tr.innerHTML =
                 "<td>" + mark + "</td>" +
-                "<td>" + s.name + failed + reasons + breakdown + "</td>" +
+                "<td>" + s.name + failed + reasons + breakdown + confirm + "</td>" +
                 "<td>" + s.okCount + "/" + s.total + "</td>" +
                 "<td>" + (s.okCount > 0 ? s.avgMs + " ms" : "—") + "</td>" +
                 "<td class=\"" + scoreCls + "\"><b>" + (s.score || 0) + "</b></td>";
@@ -4533,6 +4553,9 @@
         renderHostsFixSaved: renderHostsFixSaved,
         renderHostsFixDeleted: renderHostsFixDeleted,
         renderDiagTargets: renderDiagTargets,
+        // Результаты перебора стратегий: нужно проверять, что строка про
+        // подтверждение победителя действительно появляется и говорит правду.
+        renderTestResult: renderTestResult,
         plural: plural,
         renderServiceStale: renderServiceStale,
         renderServiceResult: renderServiceResult,

@@ -44,6 +44,23 @@ namespace AutoZapret.Diag
         public double Rate { get { return Total == 0 ? 0 : (double)OkCount / Total; } }
 
         /// <summary>
+        /// Сколько независимых повторов прошла лучшая стратегия и сколько нужно.
+        ///
+        /// Один замер — это один замер. Стратегия может пробить один раз и
+        /// рассыпаться на втором: DPI успевает распознать соединение, маршрут
+        /// на секунду меняется, драйвер не встал. Снаружи это выглядит как
+        /// «проверил — 6/6, поставил — не работает», и человек ищет причину
+        /// в стратегии, а её там нет.
+        ///
+        /// 0 значит «не подтверждали» (например, отменили до подтверждения).
+        /// </summary>
+        public int ConfirmRounds;
+        public int ConfirmRequired;
+
+        /// <summary>Сколько заходов всего сделали. «3 из 3, нужно 2» — понятно, «3 из 2» — нет.</summary>
+        public int ConfirmTotal;
+
+        /// <summary>
         /// Разбивка счёта. Без неё «78» ничего не объясняет: непонятно,
         /// стратегия медленная или просто нестабильная.
         /// </summary>
@@ -235,6 +252,119 @@ namespace AutoZapret.Diag
             });
 
             return scores;
+        }
+
+        /// <summary>
+        /// Прошёл ли один заход подтверждения.
+        ///
+        /// Только полный проход: подтверждаем победителя затем, чтобы он держался
+        /// ЦЕЛИКОМ. «5 из 6» — это уже не подтверждение, а тот же частичный
+        /// результат, который основной перебор и так показал.
+        ///
+        /// Чистая функция — её проверяет selftest.
+        /// </summary>
+        public static bool ConfirmPassed(int okCount, int total, bool alive)
+        {
+            return alive && total > 0 && okCount == total;
+        }
+
+        /// <summary>
+        /// Повторная проверка победителя: несколько независимых заходов подряд.
+        ///
+        /// Зачем. Основной перебор проверяет каждую стратегию ОДИН раз, и этого
+        /// достаточно, чтобы отсеять заведомо нерабочие. Но у победителя цена
+        /// ошибки другая: его человек поставит себе и будет жить с ним. Если он
+        /// прошёл случайно — «DPI ещё не успел», «драйвер не встал», «маршрут
+        /// дёрнулся» — то через минуту всё сломается, и виноватой будет выглядеть
+        /// программа.
+        ///
+        /// Поэтому победитель подтверждается отдельно: N заходов с паузой,
+        /// нужно не меньше M. Пауза не «на всякий случай»: два запроса подряд
+        /// через одно и то же короткое состояние сети — это один замер, а не два.
+        ///
+        /// Возвращает true, если подтверждений хватило. Заполняет
+        /// <see cref="StrategyScore.ConfirmRounds"/> и <c>ConfirmRequired</c>,
+        /// чтобы отчёт мог сказать «2 из 3», а не просто «да/нет».
+        /// </summary>
+        public bool Confirm(StrategyScore score, List<ProbeTarget> targets,
+                            int holdSeconds, int timeoutSec,
+                            int rounds, int required,
+                            CancellationToken cancel = default(CancellationToken))
+        {
+            if (score == null) return false;
+
+            if (targets == null || targets.Count == 0)
+                targets = ConnectivityProbe.DefaultTargets();
+
+            if (rounds < 1) rounds = 1;
+            if (required < 1) required = 1;
+            if (required > rounds) required = rounds;
+
+            score.ConfirmRounds = 0;
+            score.ConfirmRequired = required;
+            score.ConfirmTotal = rounds;
+
+            if (cancel.IsCancellationRequested) return false;
+
+            Report("подтверждаю " + score.Name + ": " + rounds + " захода, нужно " + required);
+
+            for (int round = 1; round <= rounds; round++)
+            {
+                if (cancel.IsCancellationRequested)
+                {
+                    try { _zapret.Stop(); } catch { }
+                    Report("подтверждение отменено");
+                    break;
+                }
+
+                string error = _zapret.Start(score.Id);
+
+                if (error != null)
+                {
+                    Report("   заход " + round + ": не запустился — " + error);
+                }
+                else
+                {
+                    if (cancel.WaitHandle.WaitOne(Math.Max(1, holdSeconds) * 1000))
+                    {
+                        try { _zapret.Stop(); } catch { }
+                        Report("подтверждение отменено");
+                        break;
+                    }
+
+                    ProbeReport report = _probe.CheckAll(targets, timeoutSec, 4, cancel);
+                    bool alive = WinwsSupervisor.AnyWinwsRunning();
+
+                    bool passed = ConfirmPassed(report.OkCount, report.Total, alive);
+
+                    if (passed) score.ConfirmRounds++;
+
+                    Report("   заход " + round + ": " + report.OkCount + "/" + report.Total +
+                           (alive ? "" : ", движок не жив") +
+                           (passed ? " — прошёл" : " — не прошёл"));
+                }
+
+                try { _zapret.Stop(); } catch { }
+
+                if (round < rounds && cancel.WaitHandle.WaitOne(700))
+                {
+                    Report("подтверждение отменено");
+                    break;
+                }
+            }
+
+            bool confirmed = score.ConfirmRounds >= required;
+
+            Log.Info("DIAG", "подтверждение «" + score.Name + "»: " +
+                             score.ConfirmRounds + " из " + rounds + " (нужно " + required + ") — " +
+                             (confirmed ? "подтверждён" : "НЕ подтверждён"));
+
+            Report(confirmed
+                ? "подтверждён: " + score.ConfirmRounds + " из " + rounds + " заходов"
+                : "НЕ подтверждён: " + score.ConfirmRounds + " из " + rounds +
+                  " (нужно " + required + ") — в работе может подвести");
+
+            return confirmed;
         }
 
         /// <summary>
