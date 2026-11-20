@@ -107,6 +107,9 @@ namespace AutoZapret.App
                 Section("свои наборы hosts");
                 TestCustomHostsFixes();
 
+                Section("ловушки кэшей YouTube");
+                TestYoutubeTraps();
+
                 Section("фейки");
                 TestPayloads();
 
@@ -1813,6 +1816,123 @@ namespace AutoZapret.App
                 }
                 catch { }
             }
+        }
+
+        /// <summary>
+        /// Фикс «ловушки кэшей YouTube».
+        ///
+        /// Проверяем то, на чём список может навредить:
+        ///   * набор вообще виден в каталоге и помечен как блокирующий;
+        ///   * в нём нет имён, которые проверили как рабочие зарубежные —
+        ///     блокировка хорошего сервера отнимает у YouTube рабочий вариант;
+        ///   * все строки это `0.0.0.0` + валидное имя кэша;
+        ///   * список Дом.ру (его дал заказчик) попал целиком: если из него
+        ///     что-то потеряется, фикс не сработает именно у него.
+        /// </summary>
+        private static void TestYoutubeTraps()
+        {
+            AutoZapret.Lists.HostsSource source = null;
+
+            foreach (AutoZapret.Lists.HostsSource s in AutoZapret.Lists.HostsFixes.Bundled())
+                if (string.Equals(s.Id, "youtube-traps", StringComparison.OrdinalIgnoreCase)) source = s;
+
+            Check("ловушки: набор есть в каталоге", source != null, source == null ? "НЕТ" : source.Name);
+
+            if (source == null) return;
+
+            Check("ловушки: помечен как блокирующий", source.Careful, source.Careful ? "ok" : "НЕТ");
+            Check("ловушки: имя файла задано",
+                string.Equals(source.CacheFile, "youtube-traps.txt", StringComparison.OrdinalIgnoreCase),
+                source.CacheFile ?? "пусто");
+
+            string origin;
+            string text = AutoZapret.Lists.HostsFixes.Read(source, out origin);
+
+            Check("ловушки: файл читается", !string.IsNullOrEmpty(text), origin);
+
+            if (string.IsNullOrEmpty(text)) return;
+
+            List<string> hosts = new List<string>();
+            int badLines = 0;
+            string firstBad = "";
+
+            foreach (string raw in text.Replace("\r\n", "\n").Split('\n'))
+            {
+                string line = raw.Trim();
+
+                if (line.Length == 0) continue;
+                if (line.StartsWith("#", StringComparison.Ordinal)) continue;
+
+                string[] parts = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+
+                if (parts.Length != 2 || parts[0] != "0.0.0.0" ||
+                    !AutoZapret.Lists.HostlistManager.IsValidDomain(parts[1]))
+                {
+                    badLines++;
+                    if (firstBad.Length == 0) firstBad = line;
+                    continue;
+                }
+
+                hosts.Add(parts[1]);
+            }
+
+            Check("ловушки: все строки — блокировка валидного имени", badLines == 0,
+                badLines == 0 ? hosts.Count + " строк" : firstBad);
+
+            Check("ловушки: имён много", hosts.Count >= 200, hosts.Count + " шт.");
+            Check("ловушки: без дублей",
+                hosts.Count == new HashSet<string>(hosts, StringComparer.OrdinalIgnoreCase).Count,
+                hosts.Count.ToString());
+
+            // Проверенные рабочие зарубежные — их блокировать нельзя.
+            string[] notRussian =
+            {
+                "rr3---sn-aj4g55-5t.googlevideo.com",
+                "rr1---sn-aj5go5-5i.googlevideo.com",
+                "rr2---sn-aj5goc-5j.googlevideo.com",
+                "rr3---sn-u14g55-5m.googlevideo.com",
+                "rr3---sn-u14g55-cf.googlevideo.com",
+                "rr1---sn-q4fzen7e.googlevideo.com",
+                "rr5---sn-q4fzen7l.googlevideo.com",
+                "rr5---sn-4g5ednky.googlevideo.com"
+            };
+
+            List<string> leaked = new List<string>();
+
+            foreach (string h in notRussian)
+                if (hosts.Exists(x => string.Equals(x, h, StringComparison.OrdinalIgnoreCase))) leaked.Add(h);
+
+            Check("ловушки: зарубежные серверы не заблокированы", leaked.Count == 0,
+                leaked.Count == 0 ? "ok" : string.Join(", ", leaked.ToArray()));
+
+            // Список Дом.ру, который дал заказчик: он должен попасть целиком.
+            string[] domru =
+            {
+                "rr1---sn-xguxaxjvh-2x1e.googlevideo.com",
+                "rr2---sn-xguxaxjvh-2x1e.googlevideo.com",
+                "rr3---sn-xguxaxjvh-2x1e.googlevideo.com",
+                "rr4---sn-xguxaxjvh-8v1e.googlevideo.com",
+                "rr8---sn-xguxaxjvh-8v1e.googlevideo.com",
+                "rr4---sn-xguxaxjvh-8v1s.googlevideo.com",
+                "rr8---sn-xguxaxjvh-bvwe.googlevideo.com",
+                "rr4---sn-xguxaxjvh-bvws.googlevideo.com",
+                "rr4---sn-xguxaxjvh-gufl.googlevideo.com",
+                "rr4---sn-xguxaxjvh-uwhs.googlevideo.com"
+            };
+
+            List<string> missing = new List<string>();
+
+            foreach (string h in domru)
+                if (!hosts.Exists(x => string.Equals(x, h, StringComparison.OrdinalIgnoreCase))) missing.Add(h);
+
+            Check("ловушки: список Дом.ру попал целиком", missing.Count == 0,
+                missing.Count == 0 ? "ok" : string.Join(", ", missing.ToArray()));
+
+            // Счётчик записей в UI берётся отсюда — он должен совпасть с файлом.
+            int counted = AutoZapret.Lists.HostsFixes.CountEntries(source);
+
+            Check("ловушки: счётчик совпадает с файлом", counted == hosts.Count,
+                counted + " против " + hosts.Count);
         }
 
         private static void TestHosts()
