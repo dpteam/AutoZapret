@@ -1886,11 +1886,13 @@ namespace AutoZapret.App
 
             // Имён, которых не существует, быть не должно.
             //
-            // Авторы списков в issue дописали rr1..rr10 «на всякий случай», хотя
-            // у этих семейств существуют только rr1..rr5. Проверено резолвом
-            // каждого номера от rr1 до rr12. Такие записи в hosts мёртвые:
-            // блокировать нечего, а в списке они выглядят как настоящие
-            // ловушки и мешают считать.
+            // Две разные истории, обе проверены резолвом rr1..rr12:
+            //   * дописанные номера rr6..rr10 при живых rr1..rr5;
+            //   * целые семейства, где мертвы все номера (одно из них в issue
+            //     называли «Торонто», три держали как «непроверенные»).
+            //
+            // Такие записи в hosts мёртвые: блокировать нечего, а в списке они
+            // выглядят как настоящие ловушки и мешают считать.
             string[] phantoms =
             {
                 "rr6---sn-1giz7n7l.googlevideo.com",
@@ -1904,7 +1906,13 @@ namespace AutoZapret.App
                 "rr6---sn-oj1gi5-54.c.youtube.com",
                 "rr10---sn-oj1gi5-54.c.youtube.com",
                 "rr9---sn-oxuctoxu-n8vl.googlevideo.com",
-                "rr10---sn-oxuctoxu-n8vl.googlevideo.com"
+                "rr10---sn-oxuctoxu-n8vl.googlevideo.com",
+
+                // целые семейства, которых нет вовсе
+                "rr5---sn-4g5ednky.googlevideo.com",
+                "rr5---sn-hgn7rnll.googlevideo.com",
+                "rr4---sn-q4fl6nsd.googlevideo.com",
+                "rr5---sn-q4fl6n6z.googlevideo.com"
             };
 
             List<string> back = new List<string>();
@@ -1951,6 +1959,8 @@ namespace AutoZapret.App
                 leakedWorking.Count == 0 ? "ok" : string.Join(", ", leakedWorking.ToArray()));
 
             // Проверенные рабочие зарубежные — их блокировать нельзя.
+            // Каждое проверено резолвом через Яндекс и 1.1.1.1 + geoip:
+            // все AS15169 Google, ни одного российского адреса.
             string[] notRussian =
             {
                 "rr3---sn-aj4g55-5t.googlevideo.com",
@@ -1959,8 +1969,7 @@ namespace AutoZapret.App
                 "rr3---sn-u14g55-5m.googlevideo.com",
                 "rr3---sn-u14g55-cf.googlevideo.com",
                 "rr1---sn-q4fzen7e.googlevideo.com",
-                "rr5---sn-q4fzen7l.googlevideo.com",
-                "rr5---sn-4g5ednky.googlevideo.com"
+                "rr5---sn-q4fzen7l.googlevideo.com"
             };
 
             List<string> leaked = new List<string>();
