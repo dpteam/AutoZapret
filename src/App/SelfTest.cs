@@ -4744,9 +4744,9 @@ namespace AutoZapret.App
 
             AutoZapret.Lists.HostsReport report = AutoZapret.Lists.HostsEditor.Analyze(hosts);
 
-            Check("hosts: записи разобраны", report.Rows == 4, report.Rows.ToString());
-            Check("hosts: localhost не считается",
-                report.UniqueHosts == 2, report.UniqueHosts.ToString());
+            Check("hosts: записи разобраны", report.Rows == 5, report.Rows.ToString());
+            Check("hosts: localhost остаётся в файле",
+                report.UniqueHosts == 3, report.UniqueHosts.ToString());
             Check("hosts: конфликт IPv4 найден", report.Conflicts == 1, report.Conflicts.ToString());
             Check("hosts: IPv4+IPv6 не конфликт",
                 report.ConflictDetails.Count > 0 &&
@@ -4767,6 +4767,55 @@ namespace AutoZapret.App
             Check("hosts: комментарии сохранены",
                 AutoZapret.Lists.HostsEditor.Dedupe("# keep\r\n1.1.1.1 a.com\r\n")
                     .IndexOf("# keep", StringComparison.Ordinal) >= 0, "ok");
+
+            // ---- localhost не должен теряться.
+            //
+            // В стандартном hosts Windows есть «127.0.0.1 localhost» (обычно
+            // закомментированная). Если её раскомментировали или её добавила
+            // программа, «Убрать дубли» не имеет права её выбросить: без неё
+            // часть приложений не находит localhost.
+            string withLocalhost = "127.0.0.1 localhost\r\n::1 ip6-localhost\r\n1.1.1.1 a.com\r\n";
+            string dedupedLocalhost = AutoZapret.Lists.HostsEditor.Dedupe(withLocalhost);
+
+            Check("hosts: запись localhost не удалена",
+                dedupedLocalhost.IndexOf("127.0.0.1 localhost", StringComparison.Ordinal) >= 0,
+                dedupedLocalhost.Replace("\r\n", " | ").Trim());
+            Check("hosts: запись ip6-localhost не удалена",
+                dedupedLocalhost.IndexOf("::1 ip6-localhost", StringComparison.Ordinal) >= 0,
+                dedupedLocalhost.Replace("\r\n", " | ").Trim());
+            Check("hosts: IPv6-адрес пережил разбор",
+                AutoZapret.Lists.HostsEditor.Analyze(withLocalhost).UniqueHosts == 3,
+                AutoZapret.Lists.HostsEditor.Analyze(withLocalhost).UniqueHosts.ToString());
+
+            // Повторное «Убрать дубли» не должно менять файл: иначе каждая
+            // проверка добавляет пустые строки, и файл растёт сам по себе.
+            string dedupeTwice = AutoZapret.Lists.HostsEditor.Dedupe(dedupedLocalhost);
+
+            Check("hosts: повторная дедупликация ничего не меняет",
+                dedupeTwice == dedupedLocalhost,
+                dedupeTwice == dedupedLocalhost
+                    ? "ok"
+                    : "было " + dedupedLocalhost.Length + " симв., стало " + dedupeTwice.Length);
+
+            // Комментарий должен остаться РЯДОМ со своей записью, а не уехать
+            // в начало файла: иначе он перестаёт что-либо объяснять.
+            string ordered =
+                "# заголовок\r\n" +
+                "1.1.1.1 a.com\r\n" +
+                "# про xsts: адрес для Xbox\r\n" +
+                "37.230.192.51 xsts.auth.xboxlive.com\r\n";
+
+            string orderedAfter = AutoZapret.Lists.HostsEditor.Dedupe(ordered);
+
+            int posComment = orderedAfter.IndexOf("# про xsts", StringComparison.Ordinal);
+            int posEntry = orderedAfter.IndexOf("37.230.192.51 xsts", StringComparison.Ordinal);
+
+            Check("hosts: комментарий остался перед своей записью",
+                posComment >= 0 && posEntry > posComment,
+                "комментарий " + posComment + ", запись " + posEntry);
+            Check("hosts: заголовок остался первым",
+                orderedAfter.TrimStart().StartsWith("# заголовок", StringComparison.Ordinal),
+                orderedAfter.Replace("\r\n", " | ").Trim());
 
             // ---- фикс не дублирует уже существующие записи
             System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, string>> fix =
@@ -4803,7 +4852,7 @@ namespace AutoZapret.App
                 CountOccurrences(twice, "37.230.192.51 xsts") == 1,
                 CountOccurrences(twice, "37.230.192.51 xsts").ToString());
             Check("два фикса: имена посчитаны",
-                AutoZapret.Lists.HostsEditor.Analyze(twice).UniqueHosts == 4,
+                AutoZapret.Lists.HostsEditor.Analyze(twice).UniqueHosts == 5,
                 AutoZapret.Lists.HostsEditor.Analyze(twice).UniqueHosts.ToString());
 
             // ---- конфликт: имя уже привязано к ДРУГОМУ адресу.

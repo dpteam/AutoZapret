@@ -98,9 +98,19 @@ namespace AutoZapret.Lists
                 for (int i = 1; i < parts.Length; i++)
                 {
                     string host = parts[i].ToLowerInvariant();
-                    if (host.Length == 0 || host == "localhost") continue;
+                    if (host.Length == 0) continue;
                     if (row.Hosts.Contains(host)) continue;
 
+                    // `localhost` НЕ пропускаем.
+                    //
+                    // Раньше здесь стояло `|| host == "localhost"`, и строка
+                    // «127.0.0.1 localhost» теряла единственное имя, становилась
+                    // пустой и выбрасывалась целиком. А Parse — это ещё и основа
+                    // «Убрать дубли», которая пишет файл обратно. То есть кнопка
+                    // молча удаляла запись localhost из hosts.
+                    //
+                    // Считать её «нашим» именем тоже не нужно: она просто
+                    // остаётся в файле как была.
                     row.Hosts.Add(host);
                 }
 
@@ -189,14 +199,20 @@ namespace AutoZapret.Lists
         /// Убрать дубли: одинаковые IP склеиваются в одну строку, повтор имён
         /// исчезает. Конфликтующие адреса остаются — выбирать за человека, какой
         /// из них правильный, мы не будем, но в отчёте они видны.
+        ///
+        /// Комментарии и пустые строки остаются НА СВОИХ МЕСТАХ. Раньше они все
+        /// собирались в начало файла, и получалось два дефекта:
+        ///   * файл рос на две пустые строки при каждом нажатии — повторный
+        ///     вызов не совпадал с первым, и «Убрать дубли» можно было жать
+        ///     сколько угодно, каждый раз меняя файл;
+        ///   * комментарий, стоявший перед конкретной записью, уезжал в начало
+        ///     и переставал что-либо объяснять.
         /// </summary>
         public static string Dedupe(string text)
         {
             HostsReport report = new HostsReport();
             List<HostsRow> rows = Parse(text, report);
 
-            List<string> head = new List<string>();
-            List<HostsRow> merged = new List<HostsRow>();
             Dictionary<string, HostsRow> byIp = new Dictionary<string, HostsRow>(StringComparer.OrdinalIgnoreCase);
 
             foreach (HostsRow row in rows)
@@ -207,34 +223,51 @@ namespace AutoZapret.Lists
                 {
                     existing = new HostsRow { Ip = row.Ip };
                     byIp[row.Ip] = existing;
-                    merged.Add(existing);
                 }
 
                 foreach (string host in row.Hosts)
                     if (!existing.Hosts.Contains(host)) existing.Hosts.Add(host);
             }
 
-            StringBuilder sb = new StringBuilder(text.Length);
+            List<string> outp = new List<string>();
+            HashSet<string> emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            // комментарии и пустые строки сохраняем: файл остаётся узнаваемым
             foreach (string raw in text.Split('\n'))
             {
-                string line = raw.TrimEnd('\r');
+                string line = raw.TrimEnd('\r').TrimEnd();
 
-                if (line.Trim().Length == 0 || line.TrimStart().StartsWith("#", StringComparison.Ordinal))
-                    head.Add(line);
+                // комментарий или пустая строка — на своё место
+                if (line.Length == 0 || line.TrimStart().StartsWith("#", StringComparison.Ordinal))
+                {
+                    outp.Add(line);
+                    continue;
+                }
+
+                string[] parts = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+
+                HostsRow merged;
+
+                if (parts.Length < 2 || !byIp.TryGetValue(parts[0], out merged))
+                {
+                    // строку разбор не принял — оставляем как есть, а не выбрасываем
+                    outp.Add(line);
+                    continue;
+                }
+
+                // один адрес выводим один раз, со всеми склеенными именами
+                if (!emitted.Add(merged.Ip)) continue;
+
+                outp.Add(merged.Ip + " " + string.Join(" ", merged.Hosts.ToArray()));
             }
 
-            if (head.Count > 0)
-            {
-                foreach (string line in head) sb.Append(line).Append("\r\n");
-                sb.Append("\r\n");
-            }
+            // пустые строки в конце не нужны: без этого повторный вызов
+            // добавлял бы по одной
+            while (outp.Count > 0 && outp[outp.Count - 1].Trim().Length == 0)
+                outp.RemoveAt(outp.Count - 1);
 
-            foreach (HostsRow row in merged)
-            {
-                sb.Append(row.Ip).Append(' ').Append(string.Join(" ", row.Hosts.ToArray())).Append("\r\n");
-            }
+            StringBuilder sb = new StringBuilder(text.Length);
+
+            foreach (string line in outp) sb.Append(line).Append("\r\n");
 
             return sb.ToString();
         }
