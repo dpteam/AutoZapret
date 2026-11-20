@@ -309,6 +309,89 @@ const NOT_RUSSIAN = [
   "rr5---sn-4g5ednky.googlevideo.com"     // 74.125.173.170  Торонто
 ];
 
+// Проверено: ведут на РАБОЧИЕ зарубежные серверы Google (AS15169).
+//
+// Как проверено: каждое имя резолвилось через 1.1.1.1 и через Яндекс (77.88.8.8),
+// адрес смотрелся в ipinfo.io. Оба резолвера дали одно и то же, то есть это не
+// «особенность европейской точки»: имена действительно указывают за границу.
+//
+// Блокировать их нельзя. Записи в hosts не «ускоряют YouTube» — они убирают имя
+// из выбора. Убрать рабочий сервер значит оставить клиенту только ловушки,
+// и видео станет хуже, а не лучше. Именно об этом предупреждал ekungurov
+// в issue #18271, когда отделял российские имена от остальных.
+const FOREIGN_WORKING = [
+    "rr1---sn-1giz7n7l.googlevideo.com",   // 74.125.11.70 CH AS15169 Google LLC
+    "rr1---sn-2of5f5-5i.c.youtube.com",   // 173.194.163.65 PL AS15169 Google LLC
+    "rr1---sn-4g5e6ns6.googlevideo.com",   // 173.194.187.6 DE AS15169 Google LLC
+    "rr1---sn-4g5e6nsr.googlevideo.com",   // 173.194.187.102 DE AS15169 Google LLC
+    "rr1---sn-4g5e6nsz.googlevideo.com",   // 173.194.182.230 DE AS15169 Google LLC
+    "rr1---sn-4g5e6nzs.googlevideo.com",   // 74.125.13.230 DE AS15169 Google LLC
+    "rr1---sn-4g5edndl.googlevideo.com",   // 74.125.162.166 DE AS15169 Google LLC
+    "rr1---sn-4g5ednsz.googlevideo.com",   // 173.194.188.134 DE AS15169 Google LLC
+    "rr1---sn-4g5lznl6.googlevideo.com",   // 74.125.173.38 DE AS15169 Google LLC
+    "rr1---sn-4g5lznl7.googlevideo.com",   // 74.125.163.166 DE AS15169 Google LLC
+    "rr1---sn-4g5lznlz.googlevideo.com",   // 74.125.104.70 DE AS15169 Google LLC
+    "rr1---sn-f5f7kn7e.c.youtube.com",   // 74.125.104.134 PL AS15169 Google LLC
+    "rr1---sn-f5f7lnly.c.youtube.com",   // 74.125.153.230 PL AS15169 Google LLC
+    "rr1---sn-oj1gi5-54.c.youtube.com",   // 173.194.164.145 CH AS15169 Google LLC
+    "rr2---sn-1giz7n7l.googlevideo.com",   // 74.125.11.71 CH AS15169 Google LLC
+    "rr2---sn-2of5f5-5i.c.youtube.com",   // 173.194.163.66 PL AS15169 Google LLC
+    "rr2---sn-4g5e6ns6.googlevideo.com",   // 173.194.187.7 DE AS15169 Google LLC
+    "rr2---sn-4g5e6nsr.googlevideo.com",   // 173.194.187.103 DE AS15169 Google LLC
+    "rr2---sn-4g5e6nsz.googlevideo.com",   // 173.194.182.231 DE AS15169 Google LLC
+    "rr2---sn-4g5e6nzs.googlevideo.com",   // 74.125.13.231 DE AS15169 Google LLC
+    "rr2---sn-4g5edndl.googlevideo.com",   // 74.125.162.167 DE AS15169 Google LLC
+    "rr2---sn-4g5ednsz.googlevideo.com",   // 173.194.188.135 DE AS15169 Google LLC
+    "rr2---sn-4g5lznl6.googlevideo.com",   // 74.125.173.39 DE AS15169 Google LLC
+    "rr2---sn-4g5lznl7.googlevideo.com",   // 74.125.163.167 DE AS15169 Google LLC
+    "rr2---sn-4g5lznlz.googlevideo.com",   // 74.125.104.71 DE AS15169 Google LLC
+    "rr2---sn-f5f7kn7e.c.youtube.com",   // 74.125.104.135 PL AS15169 Google LLC
+    "rr2---sn-f5f7lnly.c.youtube.com",   // 74.125.153.231 PL AS15169 Google LLC
+    "rr2---sn-oj1gi5-54.c.youtube.com",   // 173.194.164.146 CH AS15169 Google LLC
+    "rr3---sn-1giz7n7l.googlevideo.com",   // 74.125.11.72 CH AS15169 Google LLC
+    "rr3---sn-2of5f5-5i.c.youtube.com",   // 173.194.163.67 PL AS15169 Google LLC
+    "rr3---sn-4g5e6ns6.googlevideo.com",   // 173.194.187.8 DE AS15169 Google LLC
+    "rr3---sn-4g5e6nsr.googlevideo.com",   // 173.194.187.104 DE AS15169 Google LLC
+    "rr3---sn-4g5e6nsz.googlevideo.com",   // 173.194.182.232 DE AS15169 Google LLC
+    "rr3---sn-4g5e6nzs.googlevideo.com",   // 74.125.13.232 DE AS15169 Google LLC
+    "rr3---sn-4g5edndl.googlevideo.com",   // 74.125.162.168 DE AS15169 Google LLC
+    "rr3---sn-4g5ednsz.googlevideo.com",   // 173.194.188.136 DE AS15169 Google LLC
+    "rr3---sn-4g5lznl6.googlevideo.com",   // 74.125.173.40 DE AS15169 Google LLC
+    "rr3---sn-4g5lznl7.googlevideo.com",   // 74.125.163.168 DE AS15169 Google LLC
+    "rr3---sn-4g5lznlz.googlevideo.com",   // 74.125.104.72 DE AS15169 Google LLC
+    "rr3---sn-f5f7kn7e.c.youtube.com",   // 74.125.104.136 PL AS15169 Google LLC
+    "rr3---sn-f5f7lnly.c.youtube.com",   // 74.125.153.232 PL AS15169 Google LLC
+    "rr3---sn-oj1gi5-54.c.youtube.com",   // 173.194.164.147 CH AS15169 Google LLC
+    "rr4---sn-1giz7n7l.googlevideo.com",   // 74.125.11.73 CH AS15169 Google LLC
+    "rr4---sn-2of5f5-5i.c.youtube.com",   // 173.194.163.68 PL AS15169 Google LLC
+    "rr4---sn-4g5e6ns6.googlevideo.com",   // 173.194.187.9 DE AS15169 Google LLC
+    "rr4---sn-4g5e6nsr.googlevideo.com",   // 173.194.187.105 DE AS15169 Google LLC
+    "rr4---sn-4g5e6nsz.googlevideo.com",   // 173.194.182.233 DE AS15169 Google LLC
+    "rr4---sn-4g5e6nzs.googlevideo.com",   // 74.125.13.233 DE AS15169 Google LLC
+    "rr4---sn-4g5edndl.googlevideo.com",   // 74.125.162.169 DE AS15169 Google LLC
+    "rr4---sn-4g5ednsz.googlevideo.com",   // 173.194.188.137 DE AS15169 Google LLC
+    "rr4---sn-4g5lznl6.googlevideo.com",   // 74.125.173.41 DE AS15169 Google LLC
+    "rr4---sn-4g5lznl7.googlevideo.com",   // 74.125.163.169 DE AS15169 Google LLC
+    "rr4---sn-4g5lznlz.googlevideo.com",   // 74.125.104.73 DE AS15169 Google LLC
+    "rr4---sn-f5f7kn7e.c.youtube.com",   // 74.125.104.137 PL AS15169 Google LLC
+    "rr4---sn-f5f7lnly.c.youtube.com",   // 74.125.153.233 PL AS15169 Google LLC
+    "rr4---sn-oj1gi5-54.c.youtube.com",   // 173.194.164.148 CH AS15169 Google LLC
+    "rr5---sn-1giz7n7l.googlevideo.com",   // 74.125.11.74 CH AS15169 Google LLC
+    "rr5---sn-2of5f5-5i.c.youtube.com",   // 173.194.163.69 PL AS15169 Google LLC
+    "rr5---sn-4g5e6ns6.googlevideo.com",   // 173.194.187.10 DE AS15169 Google LLC
+    "rr5---sn-4g5e6nsr.googlevideo.com",   // 173.194.187.106 DE AS15169 Google LLC
+    "rr5---sn-4g5e6nsz.googlevideo.com",   // 173.194.182.234 DE AS15169 Google LLC
+    "rr5---sn-4g5e6nzs.googlevideo.com",   // 74.125.13.234 DE AS15169 Google LLC
+    "rr5---sn-4g5edndl.googlevideo.com",   // 74.125.162.170 DE AS15169 Google LLC
+    "rr5---sn-4g5ednsz.googlevideo.com",   // 173.194.188.138 DE AS15169 Google LLC
+    "rr5---sn-4g5lznl6.googlevideo.com",   // 74.125.173.42 DE AS15169 Google LLC
+    "rr5---sn-4g5lznl7.googlevideo.com",   // 74.125.163.170 DE AS15169 Google LLC
+    "rr5---sn-4g5lznlz.googlevideo.com",   // 74.125.104.74 DE AS15169 Google LLC
+    "rr5---sn-f5f7kn7e.c.youtube.com",   // 74.125.104.138 PL AS15169 Google LLC
+    "rr5---sn-f5f7lnly.c.youtube.com",   // 74.125.153.234 PL AS15169 Google LLC
+    "rr5---sn-oj1gi5-54.c.youtube.com",   // 173.194.164.149 CH AS15169 Google LLC
+];
+
 // Не заресолвились при проверке: догадка не основание блокировать.
 const UNVERIFIED = [
   "rr5---sn-hgn7rnll.googlevideo.com",
@@ -319,7 +402,9 @@ const UNVERIFIED = [
 const BLOCK = "0.0.0.0";
 
 // --- собираем
-const excluded = new Set([...NOT_RUSSIAN, ...UNVERIFIED].map((h) => h.toLowerCase()));
+const excluded = new Set(
+  [...NOT_RUSSIAN, ...UNVERIFIED, ...FOREIGN_WORKING].map((h) => h.toLowerCase())
+);
 
 const seen = new Set();
 const final = [];
@@ -390,5 +475,8 @@ fs.writeFileSync(target, lines.join("\n") + "\n", "utf8");
 
 console.log("записано: " + target);
 console.log("имён:     " + final.length);
-console.log("исключено: " + (NOT_RUSSIAN.length + UNVERIFIED.length) +
-            " (зарубежных " + NOT_RUSSIAN.length + ", непроверенных " + UNVERIFIED.length + ")");
+console.log(
+  "исключено: " + (NOT_RUSSIAN.length + UNVERIFIED.length + FOREIGN_WORKING.length) +
+    " (зарубежных " + NOT_RUSSIAN.length + ", непроверенных " + UNVERIFIED.length +
+    ", рабочих зарубежных " + FOREIGN_WORKING.length + ")"
+);

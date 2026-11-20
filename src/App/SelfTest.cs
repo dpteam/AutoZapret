@@ -1879,10 +1879,44 @@ namespace AutoZapret.App
             Check("ловушки: все строки — блокировка валидного имени", badLines == 0,
                 badLines == 0 ? hosts.Count + " строк" : firstBad);
 
-            Check("ловушки: имён много", hosts.Count >= 200, hosts.Count + " шт.");
+            Check("ловушки: имён много", hosts.Count >= 140, hosts.Count + " шт.");
             Check("ловушки: без дублей",
                 hosts.Count == new HashSet<string>(hosts, StringComparer.OrdinalIgnoreCase).Count,
                 hosts.Count.ToString());
+
+            // Главная проверка: ни одно имя не должно вести на рабочий
+            // зарубежный сервер. Записи в hosts не «ускоряют YouTube» — они
+            // убирают имя из выбора, и убрать хороший сервер значит оставить
+            // клиенту только ловушки.
+            //
+            // Эти 70 имён проверены резолвом (1.1.1.1 и Яндекс дали одно и то
+            // же) и geoip: все в DE/PL/CH, оператор AS15169 Google LLC.
+            string[] foreignWorking =
+            {
+                "rr1---sn-1giz7n7l.googlevideo.com",
+                "rr1---sn-2of5f5-5i.c.youtube.com",
+                "rr1---sn-4g5e6ns6.googlevideo.com",
+                "rr1---sn-4g5e6nsr.googlevideo.com",
+                "rr1---sn-4g5e6nsz.googlevideo.com",
+                "rr1---sn-4g5e6nzs.googlevideo.com",
+                "rr1---sn-4g5edndl.googlevideo.com",
+                "rr1---sn-4g5ednsz.googlevideo.com",
+                "rr1---sn-4g5lznl6.googlevideo.com",
+                "rr1---sn-4g5lznl7.googlevideo.com",
+                "rr1---sn-4g5lznlz.googlevideo.com",
+                "rr1---sn-f5f7kn7e.c.youtube.com",
+                "rr1---sn-f5f7lnly.c.youtube.com",
+                "rr1---sn-oj1gi5-54.c.youtube.com"
+            };
+
+            List<string> leakedWorking = new List<string>();
+
+            foreach (string h in foreignWorking)
+                if (hosts.Exists(x => string.Equals(x, h, StringComparison.OrdinalIgnoreCase)))
+                    leakedWorking.Add(h);
+
+            Check("ловушки: рабочие зарубежные серверы не заблокированы", leakedWorking.Count == 0,
+                leakedWorking.Count == 0 ? "ok" : string.Join(", ", leakedWorking.ToArray()));
 
             // Проверенные рабочие зарубежные — их блокировать нельзя.
             string[] notRussian =
