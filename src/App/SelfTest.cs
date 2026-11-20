@@ -4806,6 +4806,66 @@ namespace AutoZapret.App
                 AutoZapret.Lists.HostsEditor.Analyze(twice).UniqueHosts == 4,
                 AutoZapret.Lists.HostsEditor.Analyze(twice).UniqueHosts.ToString());
 
+            // ---- конфликт: имя уже привязано к ДРУГОМУ адресу.
+            //
+            // Это не «уже было»: наш вариант НЕ применился, и человек, отметивший
+            // два набора, ждёт оба. Раньше оба случая выглядели одинаково —
+            // в отчёте было «(уже было)», и молчание читалось как «всё сошлось».
+            System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, string>> conflicting =
+                new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, string>>
+                {
+                    new System.Collections.Generic.KeyValuePair<string, string>("0.0.0.0", "xsts.auth.xboxlive.com"),
+                    new System.Collections.Generic.KeyValuePair<string, string>("10.0.0.3", "fresh.example")
+                };
+
+            System.Collections.Generic.List<string> clashes;
+            string withClash = AutoZapret.Lists.HostsEditor.AddEntries(twice, "Конфликт", conflicting, out clashes);
+
+            Check("конфликт: новое имя всё равно добавлено",
+                withClash.IndexOf("10.0.0.3 fresh.example", StringComparison.Ordinal) >= 0, "ok");
+            Check("конфликт: прежний адрес не перезаписан",
+                CountOccurrences(withClash, "37.230.192.51 xsts") == 1 &&
+                CountOccurrences(withClash, "0.0.0.0 xsts") == 0,
+                CountOccurrences(withClash, "0.0.0.0 xsts").ToString() + " записей 0.0.0.0 xsts");
+            Check("конфликт: назван по имени", clashes.Count == 1,
+                clashes.Count == 0 ? "не сообщён" : clashes[0]);
+            Check("конфликт: видно оба адреса",
+                clashes.Count == 1 && clashes[0].Contains("37.230.192.51") && clashes[0].Contains("0.0.0.0"),
+                clashes.Count == 1 ? clashes[0] : "нет");
+
+            // Без конфликта список пустой — иначе предупреждение висело бы всегда.
+            System.Collections.Generic.List<string> noClash;
+            AutoZapret.Lists.HostsEditor.AddEntries(twice, "Тот же адрес",
+                new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, string>>
+                {
+                    new System.Collections.Generic.KeyValuePair<string, string>("37.230.192.51", "xsts.auth.xboxlive.com")
+                }, out noClash);
+
+            Check("конфликт: одинаковый адрес конфликтом не считается", noClash.Count == 0,
+                noClash.Count.ToString());
+
+            // Отчёт не должен превращаться в простыню: при мультивыборе
+            // конфликтов может быть сотня, и одну длинную строку пролистают
+            // вместе с предупреждением.
+            System.Collections.Generic.List<string> many = new System.Collections.Generic.List<string>();
+            for (int i = 0; i < 12; i++) many.Add("host" + i + ".example (1.1.1.1 вместо 0.0.0.0)");
+
+            string shortText = AutoZapret.Lists.HostsEditor.DescribeClashes(many);
+
+            Check("конфликт: в отчёт попало не больше трёх имён",
+                CountOccurrences(shortText, ".example") == 3,
+                CountOccurrences(shortText, ".example").ToString());
+            Check("конфликт: остальные посчитаны",
+                shortText.Contains("и ещё 9"), shortText);
+            Check("конфликт: пустой список даёт пустую строку",
+                AutoZapret.Lists.HostsEditor.DescribeClashes(null) == "" &&
+                AutoZapret.Lists.HostsEditor.DescribeClashes(new System.Collections.Generic.List<string>()) == "",
+                "ok");
+            Check("конфликт: два имени без «и ещё»",
+                !AutoZapret.Lists.HostsEditor.DescribeClashes(
+                    new System.Collections.Generic.List<string> { "a", "b" }).Contains("и ещё"),
+                "ok");
+
             // ---- списки обхода: статистика и дубли
             string list =
                 "# комментарий\n" +

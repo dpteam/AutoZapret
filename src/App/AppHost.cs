@@ -1637,6 +1637,7 @@ namespace AutoZapret.App
                     string current = text;
                     List<string> done = new List<string>();
                     List<string> failed = new List<string>();
+                    List<string> clashes = new List<string>();
 
                     foreach (string id in ids)
                     {
@@ -1645,10 +1646,14 @@ namespace AutoZapret.App
                         if (fix != null)
                         {
                             int before = CountHosts(current);
-                            current = HostsEditor.AddEntries(current, fix.Name, fix.Entries);
+                            List<string> fixClash;
+
+                            current = HostsEditor.AddEntries(current, fix.Name, fix.Entries, out fixClash);
                             int added = CountHosts(current) - before;
 
                             done.Add(fix.Name + (added > 0 ? " +" + added : " (уже было)"));
+
+                            foreach (string c in fixClash) clashes.Add(fix.Name + ": " + c);
                             continue;
                         }
 
@@ -1688,10 +1693,14 @@ namespace AutoZapret.App
                         }
 
                         int was = CountHosts(current);
-                        current = HostsEditor.AddEntries(current, source.Name, entries);
+                        List<string> sourceClash;
+
+                        current = HostsEditor.AddEntries(current, source.Name, entries, out sourceClash);
                         int got = CountHosts(current) - was;
 
                         done.Add(source.Name + " +" + got + " из " + entries.Count);
+
+                        foreach (string c in sourceClash) clashes.Add(source.Name + ": " + c);
                     }
 
                     HostsReport before2 = HostsEditor.Analyze(text);
@@ -1702,15 +1711,35 @@ namespace AutoZapret.App
                     if (done.Count > 0) parts.Add("добавлено: " + string.Join(", ", done.ToArray()));
                     if (failed.Count > 0) parts.Add("не вышло: " + string.Join(", ", failed.ToArray()));
 
+                    // Конфликт — это не «уже было»: имя уже привязано к другому
+                    // адресу, и наш вариант НЕ применился. Молчать об этом нельзя:
+                    // человек отметил два набора, ждёт оба, а получил один.
+                    //
+                    // Но и вываливать сотню имён в одну строку нельзя — отчёт
+                    // перестанет читаться, и его пролистают. Показываем первые
+                    // три, остальные считаем числом: полный список есть в логе.
+                    if (clashes.Count > 0)
+                    {
+                        parts.Add("уже были привязаны иначе (оставлено прежнее): " +
+                                  HostsEditor.DescribeClashes(clashes));
+                    }
+
                     parts.Add("имён " + before2.UniqueHosts + " → " + after2.UniqueHosts);
                     parts.Add("не забудьте «Сохранить»");
 
                     Log.Info("HOSTS", "мультивыбор фиксов: " + string.Join(" | ", parts.ToArray()));
 
+                    // В интерфейс — три имени, в лог — все: если человек захочет
+                    // разобраться, почему запись не применилась, ему нужен полный
+                    // список, а не обрезанный.
+                    if (clashes.Count > 0)
+                        Log.Info("HOSTS", "конфликтов " + clashes.Count + ": " +
+                                          string.Join(" | ", clashes.ToArray()));
+
                     bridge.Send(WebBridge.Msg("hosts.edited",
                         "text", current,
                         "summary", string.Join(" · ", parts.ToArray()),
-                        "partial", failed.Count > 0));
+                        "partial", failed.Count > 0 || clashes.Count > 0));
                 });
             });
             bridge.Register("hosts.restore", msg =>

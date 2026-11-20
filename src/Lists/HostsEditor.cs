@@ -242,6 +242,21 @@ namespace AutoZapret.Lists
         /// <summary>Добавить записи (фикс) к тексту, не плодя дублей.</summary>
         public static string AddEntries(string text, string title, IEnumerable<KeyValuePair<string, string>> entries)
         {
+            List<string> conflicts;
+            return AddEntries(text, title, entries, out conflicts);
+        }
+
+        /// <summary>
+        /// То же, но с перечнем конфликтов: имена, которые уже были привязаны к
+        /// ДРУГОМУ адресу. Возвращаем их наружу, чтобы интерфейс сказал
+        /// «эта запись не применилась», а не слил два разных случая в одно
+        /// «уже было».
+        /// </summary>
+        public static string AddEntries(string text, string title,
+            IEnumerable<KeyValuePair<string, string>> entries, out List<string> conflicts)
+        {
+            conflicts = new List<string>();
+
             HostsReport report = new HostsReport();
             List<HostsRow> rows = Parse(text, report);
 
@@ -264,11 +279,13 @@ namespace AutoZapret.Lists
                 if (hostToIp.TryGetValue(host, out existing))
                 {
                     // тот же адрес — дубль не нужен; другой адрес — не спорим,
-                    // но скажем об этом в логе
+                    // но скажем об этом и в логе, и в интерфейсе
                     if (!string.Equals(existing, ip, StringComparison.OrdinalIgnoreCase))
                     {
                         Log.Warn("HOSTS", "фикс «" + title + "»: " + host + " уже указывает на " + existing +
                                           ", оставляю как есть");
+
+                        conflicts.Add(host + " (" + existing + " вместо " + ip + ")");
                     }
 
                     skipped++;
@@ -297,6 +314,26 @@ namespace AutoZapret.Lists
             Log.Info("HOSTS", "фикс «" + title + "»: добавлено " + added.Count + ", уже было " + skipped);
 
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// Короткая строка про конфликты для интерфейса.
+        ///
+        /// Показываем не больше трёх имён: при мультивыборе их может быть сотня,
+        /// и одна длинная строка перестаёт читаться — её пролистают, а вместе с
+        /// ней и предупреждение. Полный список остаётся в логе.
+        /// </summary>
+        public static string DescribeClashes(List<string> clashes, int shown = 3)
+        {
+            if (clashes == null || clashes.Count == 0) return "";
+
+            if (shown < 1) shown = 1;
+
+            List<string> head = clashes.GetRange(0, Math.Min(shown, clashes.Count));
+
+            string tail = clashes.Count > shown ? " и ещё " + (clashes.Count - shown) : "";
+
+            return string.Join(", ", head.ToArray()) + tail;
         }
 
         private static string Shorten(string value)
