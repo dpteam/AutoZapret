@@ -2114,8 +2114,18 @@ namespace AutoZapret.App
                 Check("паки: TEKKEN 8 использует stun.bin", hasStun, hasStun ? "ok" : "НЕТ");
 
                 // Файл фейка должен существовать, иначе winws откажется стартовать.
+                //
+                // Без движка проверять нечего: в CI `engine/` в .gitignore, и первый
+                // прогон идёт на чистом клоне. Раньше эта проверка там падала, и
+                // сборка краснела на нормальном состоянии — «нет файла» вместо
+                // «нет движка» это разные вещи.
                 string stun = Path.Combine(Paths.EngineBinDir, "stun.bin");
-                Check("паки: stun.bin на месте", File.Exists(stun), File.Exists(stun) ? "ok" : stun);
+
+                if (!Directory.Exists(Paths.EngineDir))
+                    Skip("паки: stun.bin на месте", "движок не установлен — проверять нечего");
+                else
+                    Check("паки: stun.bin на месте", File.Exists(stun),
+                        File.Exists(stun) ? "ok" : stun);
             }
 
             if (aws != null)
