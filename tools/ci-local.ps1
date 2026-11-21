@@ -199,6 +199,35 @@ if (Test-Path $selftestFile) {
 }
 Record 'selftest' ($code -eq 0) ''
 
+# Прогон «как на чистом клоне»: GitHub Actions запускает selftest ДО того, как
+# скачает движок, и там `bin\engine` существует, но пуст. Новая проверка, которой
+# нужен файл из engine\, покраснит сборку — а локально этого не видно, потому что
+# движок на месте. Воспроизводим это состояние здесь, а не в CI.
+Section 'selftest без движка (как чистый клон)'
+$engineDir = Join-Path $root 'bin\engine'
+$engineAside = Join-Path $root 'bin\engine.__ci-off'
+$cleanCode = 0
+
+try {
+    if (Test-Path $engineDir) { Move-Item $engineDir $engineAside -Force }
+    New-Item -ItemType Directory -Path $engineDir -Force | Out-Null
+
+    Push-Location (Join-Path $root 'bin')
+    try {
+        & $exe '--selftest' | Out-Null
+        $cleanCode = $LASTEXITCODE
+    } finally { Pop-Location }
+
+    if (Test-Path $selftestFile) {
+        Get-Content $selftestFile -Encoding UTF8 | Select-String -Pattern 'RESULT|\[FAIL\]' | ForEach-Object { Write-Host ("  " + $_.Line) }
+    }
+} finally {
+    if (Test-Path $engineDir) { Remove-Item $engineDir -Recurse -Force -ErrorAction SilentlyContinue }
+    if (Test-Path $engineAside) { Move-Item $engineAside $engineDir -Force }
+}
+
+Record 'selftest без движка' ($cleanCode -eq 0) ''
+
 # Режим службы: тело не должно зависать. Если `--service` (без действия) не
 # выйдет за пару секунд, SCM убьёт службу с ошибкой 1053 — и человек увидит
 # «служба не запустилась» без причины. Проверяем здесь, а не на живой машине.

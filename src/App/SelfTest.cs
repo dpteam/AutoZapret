@@ -2115,13 +2115,15 @@ namespace AutoZapret.App
 
                 // Файл фейка должен существовать, иначе winws откажется стартовать.
                 //
-                // Без движка проверять нечего: в CI `engine/` в .gitignore, и первый
-                // прогон идёт на чистом клоне. Раньше эта проверка там падала, и
-                // сборка краснела на нормальном состоянии — «нет файла» вместо
-                // «нет движка» это разные вещи.
+                // Признак «движок есть» берём у EngineLocator (он смотрит наличие
+                // winws.exe), а не у каталога: в CI каталог `bin/engine` существует,
+                // но пустой — `Directory.Exists` возвращал true, проверка шла в
+                // Check и сборка краснела на нормальном состоянии.
                 string stun = Path.Combine(Paths.EngineBinDir, "stun.bin");
 
-                if (!Directory.Exists(Paths.EngineDir))
+                AutoZapret.Zapret.EngineLocator engine = new AutoZapret.Zapret.EngineLocator();
+
+                if (!engine.Ready)
                     Skip("паки: stun.bin на месте", "движок не установлен — проверять нечего");
                 else
                     Check("паки: stun.bin на месте", File.Exists(stun),
