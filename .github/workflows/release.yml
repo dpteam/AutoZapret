@@ -292,8 +292,20 @@ jobs:
 
           # Версия внутри установленной копии должна совпасть с тегом, иначе
           # самообновление будет предлагать её же по кругу.
-          $ver = & (Join-Path $target 'AutoZapret.exe') --version
+          #
+          # Через Start-Process с RedirectStandardOutput, а НЕ через `& exe`:
+          # AutoZapret — GUI-приложение (WinExe), у него нет консольного stdout,
+          # и `& exe --version` в PowerShell возвращает пустую строку, а процесс
+          # висит до таймаута job. Проверено: 30 минут тишины и cancel.
+          $versionFile = Join-Path $env:TEMP 'az-installed-version.txt'
+          $vp = Start-Process -FilePath (Join-Path $target 'AutoZapret.exe') `
+                              -ArgumentList '--version' -Wait -PassThru -NoNewWindow `
+                              -RedirectStandardOutput $versionFile
+
+          $ver = if (Test-Path $versionFile) { (Get-Content $versionFile -Raw).Trim() } else { '' }
           Write-Host "installed version: $ver"
+
+          if ($vp.ExitCode -ne 0) { throw "installed exe --version exited $($vp.ExitCode)" }
           if ($ver -notmatch [regex]::Escape('${{ steps.version.outputs.value }}')) {
             throw "installed version '$ver' does not match the tag"
           }
