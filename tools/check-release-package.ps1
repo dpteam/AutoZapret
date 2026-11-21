@@ -145,7 +145,6 @@ try {
 
     Write-Host '  нет /releases/latest, переводы строк LF'
 
-    # Синтаксис — если в системе есть bash (Git for Windows его приносит).
     # Синтаксис — только настоящим bash. `bash` из PATH на Windows — это
     # лончер WSL, он передаёт путь в Linux, где диска E: нет, и проверка
     # падала бы с «No such file» на правильном файле. Git for Windows несёт
@@ -199,6 +198,35 @@ try {
     } catch {
         Write-Host ("  [warn] сеть или GitHub недоступны: " + $_.Exception.Message)
     }
+
+    # ---------------------------------------------------------------- сборка Linux
+    #
+    # Linux-пакет обязан собираться на ubuntu, а не на windows-раннере.
+    #
+    # Это не стилистика: `chmod +x` в Git for Windows эмулируется и в архив
+    # не попадает. Релиз 0.3.1 вышел с правами 0644 на AutoZapret и nfqws —
+    # человек распаковал и получил «Permission denied». Установщик это
+    # маскировал (chmod после распаковки), но `--status` на распакованной
+    # копии не работал.
+    Write-Host ''
+    Write-Host '== Linux: сборка пакета =='
+
+    $workflowPath = Join-Path $root '.github\workflows\release.yml'
+    $workflow = Get-Content $workflowPath -Raw
+
+    if ($workflow -notmatch '(?m)^  linux:\s*$') {
+        throw 'в release.yml нет отдельной работы linux'
+    }
+
+    if ($workflow -match '(?m)^\s+runs-on:\s*ubuntu' -and $workflow -notmatch '(?s)linux:\s*\n.*?runs-on:\s*ubuntu') {
+        throw 'работа linux не на ubuntu: chmod +x там не работает'
+    }
+
+    if ($workflow -notmatch 'not executable after extraction') {
+        throw 'в release.yml нет проверки бита исполнения внутри архива'
+    }
+
+    Write-Host '  отдельная работа linux на ubuntu, права внутри архива проверяются'
 }
 finally {
     Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue

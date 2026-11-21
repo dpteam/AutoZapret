@@ -18,8 +18,157 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
 jobs:
+
+  # ---------------------------------------------------------------------
+  # Linux package, built on ubuntu.
+  #
+  # The Windows job cannot produce this correctly: chmod +x there is emulated
+  # by Git for Windows and the executable bit never reaches the tarball, so a
+  # release shipped with mode 0644 on AutoZapret and nfqws and the user got
+  # "Permission denied" after extracting it.
+  #
+  # Everything else is platform-independent: dotnet publish -r linux-x64 works
+  # from any host, and nfqws is a prebuilt binary from the official zapret
+  # release, so no C toolchain is involved.
+  # ---------------------------------------------------------------------
+  linux:
+    name: linux package
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      # Версия из тега, а не из csproj: иначе самообновление сравнивает
+      # установленную версию с тегом и зацикливается.
+      - name: Resolve version from tag
+        id: version
+        run: |
+          TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG="${{ github.ref_name }}"
+          V="${TAG#v}"
+
+          if ! echo "$V" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::tag '$TAG' is not a version (expected v1.2.3)"
+            exit 1
+          fi
+
+          echo "version: $V (from tag $TAG)"
+          echo "value=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Publish (self-contained, single file)
+        run: |
+          dotnet publish linux/AutoZapret.Linux.csproj \
+            -c Release -r linux-x64 --self-contained true \
+            -p:PublishSingleFile=true \
+            -p:EnableCompressionInSingleFile=true \
+            -p:Version=${{ steps.version.outputs.value }} \
+            -p:DebugType=none -v minimal --nologo -o linux-publish
+
+          test -f linux-publish/AutoZapret || { echo "::error::linux binary was not produced"; exit 1; }
+
+      - name: Fetch nfqws
+        run: |
+          # nfqws is the same engine as winws (one codebase, different packet
+          # source), so the whole strategy catalogue works unchanged.
+          TAG=$(curl -sI https://github.com/bol-van/zapret/releases/latest \
+                | grep -i '^location:' | sed 's|.*/tag/||' | tr -d '\r\n')
+          echo "zapret: $TAG"
+
+          curl -sL -o zapret.tar.gz \
+            "https://github.com/bol-van/zapret/releases/download/$TAG/zapret-$TAG.tar.gz"
+          tar xzf zapret.tar.gz
+
+          SRC=$(find . -maxdepth 1 -type d -name 'zapret-*' | head -1)
+          if [ -z "$SRC" ] || [ ! -f "$SRC/binaries/linux-x86_64/nfqws" ]; then
+            echo "::error::nfqws not found in zapret $TAG - asset layout changed"
+            exit 1
+          fi
+
+          mkdir -p linux-engine
+          cp "$SRC/binaries/linux-x86_64/nfqws" linux-engine/nfqws
+          chmod +x linux-engine/nfqws
+
+          # Here the binary can actually be run - this is Linux, unlike the
+          # Windows runner where it gave "Exec format error".
+          ./linux-engine/nfqws --version | head -1
+
+      - name: Assemble package
+        run: |
+          set -e
+
+          STAGE=linux-stage
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE/engine/bin" "$STAGE/engine/lists"
+
+          cp linux-publish/AutoZapret "$STAGE/AutoZapret"
+          cp linux-engine/nfqws "$STAGE/engine/bin/nfqws"
+
+          # lists and fakes: same files the Windows package ships
+          cp assets/lists/*.txt "$STAGE/engine/lists/"
+          cp assets/fakes/*.bin "$STAGE/engine/bin/" 2>/dev/null || true
+
+          cp -r assets "$STAGE/assets"
+          cp linux/install.sh "$STAGE/install.sh"
+          cp README.md "$STAGE/" 2>/dev/null || true
+          cp LICENSE "$STAGE/" 2>/dev/null || true
+
+          chmod +x "$STAGE/AutoZapret" "$STAGE/engine/bin/nfqws" "$STAGE/install.sh"
+
+          tar czf autozapret-linux-x64.tar.gz -C "$STAGE" .
+          ls -lh autozapret-linux-x64.tar.gz
+
+          # Contents: listing to a FILE first, then grep. `tar tzf | grep -q`
+          # under pipefail reports "not found" for a file that is present -
+          # grep exits early, tar takes SIGPIPE, the whole pipeline fails.
+          tar tzf autozapret-linux-x64.tar.gz | sed 's|^\./||' > /tmp/archive.txt
+
+          for need in AutoZapret engine/bin/nfqws install.sh assets/strategies/strategies.v1.json; do
+            if ! grep -qx "$need" /tmp/archive.txt; then
+              echo "::error::archive has no $need"
+              head -25 /tmp/archive.txt
+              exit 1
+            fi
+          done
+
+          # The executable bit INSIDE the archive. This is the check whose
+          # absence let a release ship with 0644 on the binaries.
+          tar tzvf autozapret-linux-x64.tar.gz | sed 's|^\./||' > /tmp/verbose.txt
+
+          for need in AutoZapret engine/bin/nfqws install.sh; do
+            mode=$(grep -E " ${need}$" /tmp/verbose.txt | head -1 | cut -d' ' -f1)
+            case "$mode" in
+              -rwx*) echo "  $need: $mode" ;;
+              *) echo "::error::$need has mode '$mode' - not executable after extraction"; exit 1 ;;
+            esac
+          done
+
+          # ipset must be the real list, not the one-line placeholder: with the
+          # placeholder the bypass covers domain lists only and YouTube stays
+          # closed while the service reports "bypass on".
+          mkdir -p /tmp/x && tar xzf autozapret-linux-x64.tar.gz -C /tmp/x
+          count=$(wc -l < /tmp/x/engine/lists/ipset-all.txt)
+          echo "  ipset-all.txt: $count lines"
+          [ "$count" -gt 1000 ] || { echo "::error::ipset-all.txt is a placeholder ($count lines)"; exit 1; }
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-package
+          path: autozapret-linux-x64.tar.gz
+          retention-days: 7
+
   release:
     runs-on: windows-latest
+    needs: linux
 
     # Тот же таймаут, что и в build.yml: очередь GitHub иногда залипает.
     timeout-minutes: 30
@@ -330,116 +479,19 @@ jobs:
           Start-Sleep -Seconds 2
           if (Test-Path (Join-Path $target 'AutoZapret.exe')) { throw "files left after uninstall" }
           Write-Host "install -> selftest -> uninstall: ok"
-
-      # ---------------------------------------------------------------------
-      # Linux: self-contained binary + engine + lists, packed into one tarball.
+      # The tarball is built by the "linux" job on ubuntu and downloaded here.
       #
-      # Cross-published from Windows: dotnet publish -r linux-x64 works, and
-      # nfqws comes from the official zapret release (it ships prebuilt
-      # binaries for every architecture, so no cross-compilation of C).
-      #
-      # Why in the same job: the tarball must contain the SAME assets as the
-      # Windows package. Building it separately would let the two drift.
-      # ---------------------------------------------------------------------
-      - name: Publish Linux (self-contained)
-        shell: pwsh
-        run: |
-          dotnet publish linux/AutoZapret.Linux.csproj `
-            -c Release -r linux-x64 --self-contained true `
-            -p:PublishSingleFile=true `
-            -p:EnableCompressionInSingleFile=true `
-            -p:Version=${{ steps.version.outputs.value }} `
-            -p:FileVersion=${{ steps.version.outputs.numeric }} `
-            -p:AssemblyVersion=${{ steps.version.outputs.numeric }} `
-            -p:DebugType=none -v minimal --nologo -o linux-publish
-
-          if ($LASTEXITCODE -ne 0) { throw "linux publish failed" }
-          if (-not (Test-Path 'linux-publish/AutoZapret')) { throw "linux binary was not produced" }
-
-      - name: Fetch nfqws for Linux
-        shell: bash
-        run: |
-          # nfqws is the same engine as winws (one codebase, different packet
-          # source), so the whole strategy catalogue works on Linux unchanged.
-          TAG=$(curl -sI https://github.com/bol-van/zapret/releases/latest | grep -i '^location:' | sed 's|.*/tag/||' | tr -d '\r\n')
-          echo "zapret: $TAG"
-
-          curl -sL -o zapret.tar.gz "https://github.com/bol-van/zapret/releases/download/$TAG/zapret-$TAG.tar.gz"
-          tar xzf zapret.tar.gz
-
-          SRC=$(find . -maxdepth 1 -type d -name 'zapret-*' | head -1)
-          if [ -z "$SRC" ] || [ ! -f "$SRC/binaries/linux-x86_64/nfqws" ]; then
-            echo "::error::nfqws not found in zapret $TAG - asset layout changed"
-            ls -la . | head -20
-            exit 1
-          fi
-
-          mkdir -p linux-engine
-          cp "$SRC/binaries/linux-x86_64/nfqws" linux-engine/nfqws
-          chmod +x linux-engine/nfqws
-
-          # НЕ запускаем его здесь: раннер Windows, и Linux-бинарник даёт
-          # «cannot execute binary file: Exec format error». Проверяем формат
-          # файла, а не запускаем.
-          ls -l linux-engine/nfqws
-          head -c 4 linux-engine/nfqws | od -c | head -1
-
-      - name: Assemble Linux package
-        shell: bash
-        run: |
-          set -e
-
-          STAGE=linux-stage
-          rm -rf "$STAGE"
-          mkdir -p "$STAGE/engine/bin" "$STAGE/engine/lists"
-
-          cp linux-publish/AutoZapret "$STAGE/AutoZapret"
-          chmod +x "$STAGE/AutoZapret"
-
-          cp linux-engine/nfqws "$STAGE/engine/bin/nfqws"
-          chmod +x "$STAGE/engine/bin/nfqws"
-
-          # lists and fakes: same files the Windows package ships
-          cp assets/lists/*.txt "$STAGE/engine/lists/"
-          cp assets/fakes/*.bin "$STAGE/engine/bin/" 2>/dev/null || true
-
-          cp -r assets "$STAGE/assets"
-          cp linux/install.sh "$STAGE/install.sh"
-          chmod +x "$STAGE/install.sh"
-
-          cp README.md "$STAGE/" 2>/dev/null || true
-          cp LICENSE "$STAGE/" 2>/dev/null || true
-
-          # top-level folder inside the archive: extracting must not scatter
-          # files over whatever directory the user is in
-          tar czf autozapret-linux-x64.tar.gz -C "$STAGE" .
-
-          ls -lh autozapret-linux-x64.tar.gz
-
-          # Verify the archive actually contains what the installer expects.
-          #
-          # The listing goes to a FILE first, and only then is grepped. Writing
-          # `tar tzf ... | grep -qx "$need"` looks equivalent and is not: on a
-          # 33 MB archive grep exits at the first match, tar keeps writing, gets
-          # SIGPIPE, and `pipefail` (which GitHub enables for bash steps) turns
-          # that into a non-zero pipeline - so the check reports "archive has no
-          # ./AutoZapret" for an archive that has it. Reproduced locally with a
-          # 3000-file archive: the piped form fails, the file form passes.
-          #
-          # The `./` prefix is stripped because tars disagree about it: GNU tar
-          # writes `./AutoZapret`, some others write `AutoZapret`.
-          tar tzf autozapret-linux-x64.tar.gz | sed 's|^\./||' > "$RUNNER_TEMP/archive.txt"
-
-          for need in AutoZapret engine/bin/nfqws install.sh assets/strategies/strategies.v1.json; do
-            if ! grep -qx "$need" "$RUNNER_TEMP/archive.txt"; then
-              echo "::error::archive has no $need"
-              echo "--- что внутри (первые 25) ---"
-              head -25 "$RUNNER_TEMP/archive.txt"
-              exit 1
-            fi
-          done
-
-          echo "archive contents verified ($(wc -l < "$RUNNER_TEMP/archive.txt") entries)"
+      # Why not build it in this job: it runs on windows-latest, where
+      # `chmod +x` is emulated by Git for Windows and never reaches the
+      # archive. The released tarball had AutoZapret and nfqws with mode 0644,
+      # so extracting it gave "Permission denied" on ./AutoZapret. `tar --mode`
+      # would fix the modes but applies a single mode to every file, README
+      # included.
+      - name: Download Linux package
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-package
+          path: .
 
       - name: Checksums
         shell: pwsh
