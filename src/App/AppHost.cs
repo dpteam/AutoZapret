@@ -5500,6 +5500,10 @@ namespace AutoZapret.App
 
             Dictionary<string, object> state = WebBridge.Msg("state",
                 "version", AppInfo.Version,
+                // Платформа нужна интерфейсу, чтобы говорить правду о правах:
+                // на Linux нет ни WinDivert, ни UAC, и совет «перезапустить от
+                // админа» там бессмыслен.
+                "platform", "windows",
                 "os", AppInfo.OsDescription,
                 "admin", AppInfo.IsAdmin,
                 "portable", Paths.IsPortable,

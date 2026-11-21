@@ -1,0 +1,80 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    AutoZapret для Linux.
+
+    Отдельный проект, как и android/: десктопная сборка компилирует только
+    src\**\*.cs, поэтому этот каталог в неё не попадает.
+
+    Что переиспользуется из src/: всё, что не трогает Windows. Каталог стратегий,
+    списки, hosts, генератор фейков, Telegram-прокси — это 8 000 строк, которые
+    работают одинаково на обеих системах, потому что написаны на BCL.
+
+    Что своё: движок (nfqws/tpws вместо winws), мост (HTTP+WebSocket вместо
+    WebView2), права (root вместо UAC) и пути к системному hosts.
+
+    Никаких NuGet: только BCL. HttpListener и WebSocket есть в самом .NET.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <AssemblyName>AutoZapret</AssemblyName>
+    <RootNamespace>AutoZapret</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+
+    <!-- Свои списки файлов: иначе SDK подхватит всё подряд и в сборку попадут
+         Windows-файлы, которые на Linux не компилируются. -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
+
+    <Version>0.3.0</Version>
+    <FileVersion>0.3.0.0</FileVersion>
+    <AssemblyVersion>0.3.0.0</AssemblyVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- ============================================================ общее ядро
+         AppInfo.cs, SystemDns.cs и BrowserDoh.cs исключены: первые два трогают
+         Windows-API, третий — реестр. Для Linux у них свои замены ниже. -->
+    <Compile Include="../src/Core/*.cs"
+             Exclude="../src/Core/AppInfo.cs;../src/Core/SystemDns.cs;../src/Core/BrowserDoh.cs" />
+
+    <Compile Include="../src/Lists/*.cs" />
+    <Compile Include="../src/Payloads/*.cs" />
+    <Compile Include="../src/Proxy/*.cs" />
+
+    <!-- Стратегии: разбор .bat, хранение, обмен. Всё это чистый BCL. -->
+    <Compile Include="../src/Zapret/CommandLine.cs" />
+    <Compile Include="../src/Zapret/StrategyParser.cs" />
+    <Compile Include="../src/Zapret/StrategyStore.cs" />
+    <Compile Include="../src/Zapret/StrategyConf.cs" />
+    <Compile Include="../src/Zapret/StrategyBatWriter.cs" />
+    <Compile Include="../src/Zapret/EngineInstaller.cs" />
+    <Compile Include="../src/Zapret/FakeSweeper.cs" />
+
+    <!-- Своё -->
+    <Compile Include="*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Тот же UI, что на Windows: те же три файла с теми же LogicalName,
+         чтобы Resources.Text их нашёл без изменений. -->
+    <EmbeddedResource Include="../web/ui.html">
+      <LogicalName>AutoZapret.Web.ui.html</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="../web/app.js">
+      <LogicalName>AutoZapret.Web.app.js</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="../web/theme.css">
+      <LogicalName>AutoZapret.Web.theme.css</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="../web/i18n/en.json">
+      <LogicalName>AutoZapret.Web.i18n.en.json</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+</Project>

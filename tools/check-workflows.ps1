@@ -12,8 +12,18 @@ foreach ($file in $files) {
     $i = 0
     $stepName = '?'
 
+    $isLinuxJob = $false
+
     while ($i -lt $lines.Count) {
         $line = $lines[$i]
+
+        # Какой раннер у текущей работы. Блоки bash нельзя проверять
+        # парсером PowerShell: он честно скажет «синтаксическая ошибка»
+        # про совершенно правильный `if [ $? -ne 0 ]; then`.
+        if ($line -match '^\s*runs-on:\s*(.+)$') {
+            $runner = $Matches[1].Trim().ToLowerInvariant()
+            $isLinuxJob = ($runner -notmatch 'windows')
+        }
 
         if ($line -match '^\s*-\s+name:\s*(.+)$') { $stepName = $Matches[1].Trim() }
 
@@ -32,6 +42,20 @@ foreach ($file in $files) {
 
                 [void]$script.AppendLine($next.Substring([Math]::Min($indent + 2, $next.Length)))
                 $j++
+            }
+
+            # Ищем shell: у этого шага (он идёт после run: на том же уровне)
+            $shellIsBash = $false
+            for ($k = $j; $k -lt [Math]::Min($j + 4, $lines.Count); $k++) {
+                if ($lines[$k] -match '^\s*shell:\s*bash') { $shellIsBash = $true; break }
+                if ($lines[$k] -match '^\s*-\s+name:') { break }
+            }
+
+            if ($isLinuxJob -or $shellIsBash) {
+                $total++
+                Write-Host ("[ok]   {0} :: {1} (bash — парсер PowerShell не применим)" -f $file.Name, $stepName)
+                $i = $j
+                continue
             }
 
             $total++

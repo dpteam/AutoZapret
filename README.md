@@ -529,7 +529,6 @@ powershell -File tools\ci-local.ps1    :: полный локальный CI (+�
 сборка без предупреждений, `--selftest`, строгий selftest с движком, пакет.
 
 Android-версия живёт в `android/` и собирается отдельно:
-
 ```bat
 android\build.cmd
 android\build-hev.cmd        :: tun2socks (нужен NDK)
@@ -557,9 +556,52 @@ assets/
   strategies/            каталоги стратегий (JSON)
   fakes/                 библиотека фейков
 android/                 отдельное приложение для телефона
+linux/                   отдельная сборка для Linux (nfqws + браузер)
 tools/                   сборка, проверки, импорт стратегий
 docs/research/           разборы источников (zapret, DPI, прокси)
 ```
+
+---
+
+## Linux
+
+Отдельная сборка: тот же интерфейс и тот же каталог стратегий, но движок
+другой — `nfqws` из zapret вместо `winws.exe`. Это один и тот же код с разными
+источниками пакетов, поэтому **все 141 стратегия работают на Linux без
+переделки** (проверено `nfqws --dry-run` на каждой).
+
+```bash
+# движок: скачивает nfqws под вашу архитектуру из релиза zapret
+./linux/tools/fetch-engine.sh
+
+# сборка
+dotnet build linux/AutoZapret.Linux.csproj -c Release
+
+# запуск: интерфейс откроется в браузере
+cd linux/bin/Release/net9.0
+./AutoZapret                 # покажет адрес и откроет браузер
+./AutoZapret --no-browser    # только сервер
+./AutoZapret --port 8099     # другой порт
+
+# включить обход — только от root
+sudo ./AutoZapret
+```
+
+| | Windows | Linux |
+|---|---|---|
+| Перехват | WinDivert (`winws.exe`) | NFQUEUE (`nfqws`) + iptables |
+| Интерфейс | WebView2 | тот же HTML в браузере |
+| Права | UAC | `sudo` |
+| `hosts` | `%SystemRoot%\System32\drivers\etc\hosts` | `/etc/hosts` |
+
+Интерфейс — **тот же самый** `web/ui.html`: мост подменяется шимом поверх
+WebSocket, и `app.js` не меняется ни на строку. Поэтому кнопки, темы, переводы
+и списки стратегий на Linux те же, что на Windows.
+
+**Чего пока нет:** диагностики (подбор стратегии, пробы), hosts-редактора,
+Telegram-прокси и самообновления — в интерфейсе они отвечают «на Linux пока не
+реализовано» вместо молчания. Ядро, каталог стратегий и включение обхода
+работают.
 
 ---
 

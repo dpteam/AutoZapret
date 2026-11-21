@@ -463,16 +463,33 @@
 
         var parts = [];
 
-        // ---- нет прав администратора
+        // ---- нет прав администратора (Windows) или root (Linux)
+        //
+        // Причина разная, и говорить одно и то же нельзя: на Linux нет ни
+        // WinDivert, ни UAC, и совет «перезапустить от админа» там не значит
+        // ничего. Человек должен прочитать, что именно нужно сделать.
         if (s && s.admin === false) {
+            var isLinux = s.platform === "linux";
+
+            var title = isLinux
+                ? t("Запущено без прав root — обход не включится.")
+                : t("Запущено без прав администратора — обход не включится.");
+
+            var hint = isLinux
+                ? t("nfqws открывает сокет к ядру и ставит правила iptables — это разрешено только root.")
+                : t("Драйвер WinDivert загружается только от администратора.");
+
+            var action = isLinux
+                ? '<div class="row-hint mono" style="margin-top:6px">sudo ./AutoZapret</div>'
+                : '<button class="btn primary" id="btn-restart-admin" style="margin-top:8px">' +
+                  t("Перезапустить от админа") + '</button>';
+
             parts.push(
                 '<div class="notice warn" style="margin-bottom:10px">' +
                 '<span>!</span><div style="flex:1">' +
-                '<div>' + t("Запущено без прав администратора — обход не включится.") + '</div>' +
-                '<div class="row-hint" style="margin-top:4px">' +
-                t("Драйвер WinDivert загружается только от администратора.") + '</div>' +
-                '<button class="btn primary" id="btn-restart-admin" style="margin-top:8px">' +
-                t("Перезапустить от админа") + '</button>' +
+                '<div>' + title + '</div>' +
+                '<div class="row-hint" style="margin-top:4px">' + hint + '</div>' +
+                action +
                 '</div></div>');
         }
 
@@ -4681,6 +4698,9 @@
     // без моста WebView2 (в CI и при ручной проверке вёрстки). Ничего не
     // включает и не меняет настройки — только применяет словарь.
     window.azDebug = {
+        // Состояние, которое пришло от ядра. Нужно для проверки в браузере:
+        // иначе «движок не установлен» не отличить от «поле не пришло».
+        state: function () { return state; },
         applyLanguage: applyLanguage,
         t: t,
         tf: tf,

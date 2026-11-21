@@ -227,8 +227,16 @@ namespace AutoZapret.Core
 
         private static string EnsureTrailingSlash(string path)
         {
-            if (string.IsNullOrEmpty(path)) return ".\\";
-            return path.EndsWith("\\", StringComparison.Ordinal) ? path : path + "\\";
+            // Разделитель зависит от системы. На Linux обратный слеш — обычный
+            // символ имени файла, а не разделитель: путь "/opt/app\" указывает
+            // на файл с именем «app\», и Path.Combine даёт "/opt/app\engine",
+            // то есть каталог с именем «app\engine». Всё, что ищется по такому
+            // пути, «не находится» — и это выглядит как отсутствие файлов.
+            char separator = System.IO.Path.DirectorySeparatorChar;
+
+            if (string.IsNullOrEmpty(path)) return "." + separator;
+
+            return path[path.Length - 1] == separator ? path : path + separator;
         }
 
         private static void SafeCreate(string dir)

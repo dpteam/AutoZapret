@@ -112,14 +112,25 @@ namespace AutoZapret.Lists
             @"^(?=.{1,253}$)([a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-        /// <summary>Системный путь к hosts.</summary>
+        /// <summary>
+        /// Системный путь к hosts.
+        ///
+        /// На Linux это всегда /etc/hosts. Через Environment.SpecialFolder.Windows
+        /// его не получить: на Linux такого понятия нет, и путь молча получился бы
+        /// вида "/System32/drivers/etc/hosts" — запись ушла бы в никуда, а
+        /// программа отчиталась бы об успехе.
+        /// </summary>
         public static string SystemPath
         {
             get
             {
+#if WINDOWS
                 string root = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
                 if (string.IsNullOrEmpty(root)) root = Environment.GetEnvironmentVariable("SystemRoot") ?? "C:\\Windows";
                 return Path.Combine(root, "System32", "drivers", "etc", "hosts");
+#else
+                return "/etc/hosts";
+#endif
             }
         }
 

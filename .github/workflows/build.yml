@@ -273,3 +273,50 @@ jobs:
             publish/engine/
             publish/tools/
           retention-days: 14
+      # ---------------------------------------------------------------------
+      # Linux: РѕС‚РґРµР»СЊРЅР°СЏ СЂР°Р±РѕС‚Р°, РїРѕС‚РѕРјСѓ С‡С‚Рѕ СЃРѕР±РёСЂР°РµС‚СЃСЏ РґСЂСѓРіРёРј SDK-С‚Р°СЂРіРµС‚РѕРј
+      # (net9.0 РІРјРµСЃС‚Рѕ net9.0-windows) Рё РЅР° РґСЂСѓРіРѕР№ РћРЎ.
+      #
+      # Р—Р°С‡РµРј РІ CI, РµСЃР»Рё Windows-СЃР±РѕСЂРєР° Рё С‚Р°Рє Р·РµР»С‘РЅР°СЏ: linux/ РєРѕРјРїРёР»РёСЂСѓРµС‚
+      # РѕР±С‰РёРµ С„Р°Р№Р»С‹ РёР· src/, Рё Р»СЋР±РѕРµ РёР·РјРµРЅРµРЅРёРµ С‚Р°Рј РјРѕР¶РµС‚ СЃР»РѕРјР°С‚СЊ Linux,
+      # РЅРµ Р·Р°РґРµРІ Windows (РЅР°РїСЂРёРјРµСЂ, РїСѓС‚СЊ СЃ РѕР±СЂР°С‚РЅС‹Рј СЃР»РµС€РµРј). РџСЂРѕРІРµСЂРєР°
+      # РєРѕРјРїРёР»СЏС†РёРё вЂ” РјРёРЅРёРјСѓРј; Р·Р°РїСѓСЃРє selftest РїСЂРѕРІРµСЂСЏРµС‚, С‡С‚Рѕ РєР°С‚Р°Р»РѕРі
+      # СЃС‚СЂР°С‚РµРіРёР№ С‡РёС‚Р°РµС‚СЃСЏ Рё Р°СЂРіСѓРјРµРЅС‚С‹ РґР»СЏ nfqws СЃРѕР±РёСЂР°СЋС‚СЃСЏ.
+      # ---------------------------------------------------------------------
+      linux:
+        name: linux (net9.0)
+        runs-on: ubuntu-latest
+
+        steps:
+          - uses: actions/checkout@v4
+
+          - name: Setup .NET SDK
+            uses: actions/setup-dotnet@v4
+            with:
+              dotnet-version: '10.0.x'
+
+          - name: Build
+            run: |
+              dotnet build linux/AutoZapret.Linux.csproj -c Release -v minimal --nologo
+              if [ $? -ne 0 ]; then echo "::error::linux build failed"; exit 1; fi
+
+          - name: Selftest (Р±РµР· РґРІРёР¶РєР° Рё Р±РµР· root)
+            run: |
+              # Р СЏРґРѕРј СЃ Р±РёРЅР°СЂРЅРёРєРѕРј РЅРµС‚ engine/ вЂ” РїСЂРѕРІРµСЂРєРё РґРІРёР¶РєР° РїСЂРѕРїСѓСЃРєР°СЋС‚СЃСЏ,
+              # РЅРѕ РєР°С‚Р°Р»РѕРі СЃС‚СЂР°С‚РµРіРёР№, СЂР°Р·Р±РѕСЂ .bat Рё СЃР±РѕСЂРєР° Р°СЂРіСѓРјРµРЅС‚РѕРІ СЂР°Р±РѕС‚Р°СЋС‚.
+              cd linux/bin/Release/net9.0
+              ./AutoZapret --selftest
+              code=$?
+              if [ $code -ne 0 ]; then echo "::error::linux selftest failed"; exit $code; fi
+
+          - name: Verify no Windows-only APIs leaked in
+            run: |
+              # РћР±С‰РёРµ С„Р°Р№Р»С‹ РЅРµ РґРѕР»Р¶РЅС‹ РѕР±СЂР°С‰Р°С‚СЊСЃСЏ Рє WinForms/WinDivert РЅР°РїСЂСЏРјСѓСЋ:
+              # linux/ РёС… РЅРµ РєРѕРјРїРёР»РёСЂСѓРµС‚, РЅРѕ РµСЃР»Рё РєС‚Рѕ-С‚Рѕ РґРѕР±Р°РІРёС‚ С‚Р°РєРѕРµ РІ Core,
+              # Linux-СЃР±РѕСЂРєР° СѓРїР°РґС‘С‚ вЂ” Р»СѓС‡С€Рµ СѓР·РЅР°С‚СЊ СЌС‚Рѕ Р·РґРµСЃСЊ.
+              if grep -rn "System.Windows.Forms" src/Core src/Lists src/Payloads src/Proxy 2>/dev/null; then
+                echo "::error::Windows-only API in shared code"
+                exit 1
+              fi
+              echo "shared code is clean"
+
