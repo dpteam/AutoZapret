@@ -92,6 +92,13 @@ Section 'workflow-файлы'
 $code = Invoke-Step 'powershell' @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools\check-workflows.ps1')
 Record 'workflow-файлы' ($code -eq 0) ''
 
+# Версия в csproj против последнего тега. Если csproj ниже тега, собранный exe
+# рапортует старую версию, и самообновление зацикливается: предлагает новую,
+# ставит, снова видит старую.
+Section 'версия'
+$code = Invoke-Step 'powershell' @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools\check-version.ps1')
+Record 'версия' ($code -eq 0) ''
+
 Section 'кодировки и переводы строк'
 $code = Invoke-Step 'powershell' @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools\check-encoding.ps1')
 Record 'кодировки' ($code -eq 0) ''
@@ -331,6 +338,29 @@ if ($Publish) {
     $publishOutput | Out-File -FilePath $log -Append -Encoding utf8
     Record 'publish.cmd' ($code -eq 0) ''
     $source = Join-Path $root 'publish'
+
+    # Установщик собирается из того же publish\, что и пакет. Проверяем его
+    # только в полном режиме: ISCC есть не у всех, а сборка занимает минуту.
+    $iscc = @(
+        'C:\Program Files (x86)\Inno Setup 6\ISCC.exe',
+        'C:\Program Files\Inno Setup 6\ISCC.exe'
+    ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+    if ($iscc) {
+        Section 'установщик'
+        $code = Invoke-Step 'powershell' @('-NoProfile', '-ExecutionPolicy', 'Bypass',
+            '-File', 'tools\build-installer.ps1', '-SkipPublish')
+        Record 'сборка установщика' ($code -eq 0) ''
+
+        if ($code -eq 0) {
+            $code = Invoke-Step 'powershell' @('-NoProfile', '-ExecutionPolicy', 'Bypass',
+                '-File', 'tools\check-installer.ps1')
+            Record 'проверка установщика' ($code -eq 0) ''
+        }
+    }
+    else {
+        Record 'сборка установщика' $true 'skip: Inno Setup не установлен'
+    }
 } else {
     $source = Join-Path $root 'bin'
     Write-Host '  без -Publish: пакет из bin\ (нужен установленный .NET)'
@@ -355,6 +385,14 @@ function Copy-IfExists([string]$relative, [string]$target = '') {
 $packaged = @()
 if (Copy-IfExists 'AutoZapret.exe') { $packaged += 'AutoZapret.exe' }
 if (Copy-IfExists 'WebView2Loader.dll') { $packaged += 'WebView2Loader.dll' }
+
+# Иконка рядом с exe: окно и трей ищут её по этому пути, иначе берут
+# уменьшенную копию из exe — в трее это мыло.
+if (Copy-IfExists 'AutoZapret.ico') { $packaged += 'AutoZapret.ico' }
+elseif (Test-Path (Join-Path $root 'assets\AutoZapret.ico')) {
+    Copy-Item (Join-Path $root 'assets\AutoZapret.ico') (Join-Path $stageDir 'AutoZapret.ico') -Force
+    $packaged += 'AutoZapret.ico'
+}
 
 # framework-dependent сборка без этих файлов не запустится
 foreach ($f in @('AutoZapret.dll', 'AutoZapret.runtimeconfig.json', 'AutoZapret.deps.json')) {

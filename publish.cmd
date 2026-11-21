@@ -145,6 +145,14 @@ if exist "%ROOT%lib\webview2\WebView2Loader.dll" (
   exit /b 1
 )
 
+rem Icon next to the exe. The window and the tray look for AutoZapret.ico in the
+rem program folder; without it they fall back to a scaled-down copy extracted
+rem from the exe, and the tray icon looks blurry at 100% DPI.
+if exist "%ROOT%assets\AutoZapret.ico" (
+  copy /y "%ROOT%assets\AutoZapret.ico" "%OUT%\" >nul
+  echo       AutoZapret.ico
+)
+
 for %%F in ("%OUT%\AutoZapret.exe") do set "SIZE=%%~zF"
 set /a SIZE_MB=%SIZE% / 1048576
 

@@ -143,6 +143,11 @@ jobs:
           Copy-Item 'publish/AutoZapret.exe'      $stage
           Copy-Item 'publish/WebView2Loader.dll'  $stage
 
+          # Иконка рядом с exe: окно и трей ищут её по этому пути.
+          if (Test-Path 'assets/AutoZapret.ico') {
+            Copy-Item 'assets/AutoZapret.ico' $stage -Force
+          }
+
           # ассеты и стратегии - часть продукта, без них приложение пустое
           Copy-Item 'assets' $stage -Recurse -Force
 
@@ -225,12 +230,88 @@ jobs:
             Write-Host "содержимое архива проверено: $($names.Count) файлов"
           } finally { $zip.Dispose() }
 
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          # Установщик собирается из ТОГО ЖЕ publish\, что и портативный архив:
+          # две разные сборки одного продукта неизбежно разъедутся.
+          if (-not (Test-Path 'publish/engine/bin/winws.exe')) {
+            throw "publish/engine missing - an installer without the engine installs a program that cannot work"
+          }
+
+          $env:AUTOZAPRET_VERSION = '${{ steps.version.outputs.value }}'
+
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\autozapret.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with $LASTEXITCODE" }
+
+          $setup = Get-ChildItem 'artifacts/AutoZapret-*-setup.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $setup) { throw "installer was not produced" }
+
+          $mb = [Math]::Round($setup.Length / 1MB, 1)
+          Write-Host "$($setup.Name) -> $mb MB"
+          if ($setup.Length -lt 20MB) { throw "installer too small ($mb MB)" }
+
+          Copy-Item $setup.FullName '.' -Force
+
+      - name: Verify installer (silent install, selftest, uninstall)
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem 'AutoZapret-*-setup.exe' | Select-Object -First 1).FullName
+          $target = Join-Path $env:TEMP 'az-ci-install'
+
+          if (Test-Path $target) { Remove-Item $target -Recurse -Force }
+
+          $p = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=$target" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "installer exited $($p.ExitCode)" }
+
+          # Установщик, который собрался, - это не установщик, который работает.
+          foreach ($rel in @('AutoZapret.exe','engine/bin/winws.exe','engine/bin/WinDivert64.sys',
+                             'assets/strategies/strategies.v1.json','assets/hosts/fixes.json',
+                             'assets/fixes/packs.json','WebView2Loader.dll','LICENSE','README.md')) {
+            $path = Join-Path $target $rel
+            if (-not (Test-Path $path)) { throw "installed copy has no $rel" }
+          }
+
+          Push-Location $target
+          try {
+            $s = Start-Process -FilePath (Join-Path $target 'AutoZapret.exe') -ArgumentList '--selftest' -Wait -PassThru -NoNewWindow
+          } finally { Pop-Location }
+
+          if (Test-Path (Join-Path $target 'selftest.txt')) {
+            Get-Content (Join-Path $target 'selftest.txt') -Encoding UTF8 | Select-String -Pattern 'RESULT|\[FAIL\]' | ForEach-Object { Write-Host $_.Line }
+          }
+
+          if ($s.ExitCode -ne 0) { throw "selftest of the installed copy failed with $($s.ExitCode)" }
+
+          # Версия внутри установленной копии должна совпасть с тегом, иначе
+          # самообновление будет предлагать её же по кругу.
+          $ver = & (Join-Path $target 'AutoZapret.exe') --version
+          Write-Host "installed version: $ver"
+          if ($ver -notmatch [regex]::Escape('${{ steps.version.outputs.value }}')) {
+            throw "installed version '$ver' does not match the tag"
+          }
+
+          $uninst = Join-Path $target 'unins000.exe'
+          if (-not (Test-Path $uninst)) { throw "no uninstaller registered" }
+
+          $u = Start-Process -FilePath $uninst -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
+          if ($u.ExitCode -ne 0) { throw "uninstaller exited $($u.ExitCode)" }
+
+          Start-Sleep -Seconds 2
+          if (Test-Path (Join-Path $target 'AutoZapret.exe')) { throw "files left after uninstall" }
+          Write-Host "install -> selftest -> uninstall: ok"
+
       - name: Checksums
         shell: pwsh
         run: |
-          Get-ChildItem -Filter 'AutoZapret-portable.zip' | ForEach-Object {
+          # Установщик считается тем же способом, что и архив: человек должен
+          # иметь возможность сверить оба файла перед запуском.
+          Get-ChildItem -Filter 'AutoZapret-portable.zip','AutoZapret-*-setup.exe' -ErrorAction SilentlyContinue | ForEach-Object {
             $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-            "$h  $($_.Name)" | Out-File -FilePath 'checksums.txt' -Encoding ASCII
+            "$h  $($_.Name)" | Out-File -FilePath 'checksums.txt' -Encoding ASCII -Append
             Write-Host "$h  $($_.Name)"
           }
 
@@ -240,6 +321,7 @@ jobs:
           name: win-portable-release
           path: |
             AutoZapret-portable.zip
+            AutoZapret-*-setup.exe
             checksums.txt
 
       - name: Publish release
@@ -248,6 +330,10 @@ jobs:
         with:
           files: |
             AutoZapret-portable.zip
+            AutoZapret-*-setup.exe
             checksums.txt
           generate_release_notes: true
-          draft: true
+          draft: false
+          # Пока проект до 1.0.0, каждый релиз помечается пререлизом: обещать
+          # «стабильно» на 0.x нельзя. На 1.0.0 флаг снимается.
+          prerelease: true
