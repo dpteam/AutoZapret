@@ -334,10 +334,49 @@ jobs:
       - name: Verify no Windows-only APIs in shared code
         run: |
           # Shared files must not reach for WinForms or WinDivert directly.
-          # linux/ does not compile them, but if someone adds such a call to
-          # Core, the Linux build breaks - better to know here.
-          if grep -rn "System.Windows.Forms" src/Core src/Lists src/Payloads src/Proxy 2>/dev/null; then
+          #
+          # The file list comes from MSBuild, not from a glob over src/. That is
+          # the whole point: src/Core contains AppInfo.cs, SystemDns.cs and
+          # BrowserDoh.cs, which ARE Windows-only and ARE excluded from the Linux
+          # project. Grepping the directory flags them, the check goes red on a
+          # correct tree, and a check that cries wolf gets switched off.
+          dotnet msbuild linux/AutoZapret.Linux.csproj -getItem:Compile \
+            -p:Configuration=Release -v quiet > "$RUNNER_TEMP/compile.json"
+
+          mapfile -t FILES < <(grep '"FullPath"' "$RUNNER_TEMP/compile.json" \
+            | sed 's/.*"FullPath": "//; s/",\?$//' \
+            | grep '/src/')
+
+          echo "файлов из src/ в Linux-сборке: ${#FILES[@]}"
+
+          if [ "${#FILES[@]}" -eq 0 ]; then
+            echo "::error::MSBuild returned no src/ files - the check would pass on nothing"
+            exit 1
+          fi
+
+          bad=0
+
+          for f in "${FILES[@]}"; do
+            # Ищем конструкции, а не слова. «WinDivert» в комментарии — это
+            # объяснение, почему файл исключён, и оно полезно; ловить его
+            # значит краснеть на правильном дереве.
+            #
+            #   using System.Windows.Forms;   — реальная зависимость от WinForms
+            #   DllImport("WinDivert...")     — реальный вызов нативной библиотеки
+            #
+            # Первичная гарантия — сам шаг Build: проект net9.0 без
+            # UseWindowsForms не соберётся, если shared-файл потянет WinForms.
+            # Эта проверка ловит то, что сборка пропустит: #if WINDOWS-ветки
+            # и P/Invoke, замаскированный под обычный код.
+            if grep -nE '^[[:space:]]*using[[:space:]]+System\.Windows\.Forms|DllImport[[:space:]]*\([[:space:]]*"WinDivert' "$f"; then
+              echo "  ^^ в файле, который собирает Linux: $f"
+              bad=1
+            fi
+          done
+
+          if [ "$bad" -ne 0 ]; then
             echo "::error::Windows-only API in shared code"
             exit 1
           fi
+
           echo "shared code is clean"

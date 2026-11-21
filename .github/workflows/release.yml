@@ -416,14 +416,30 @@ jobs:
 
           ls -lh autozapret-linux-x64.tar.gz
 
-          # verify the archive actually contains what the installer expects
-          for need in ./AutoZapret ./engine/bin/nfqws ./install.sh ./assets/strategies/strategies.v1.json; do
-            if ! tar tzf autozapret-linux-x64.tar.gz | grep -qx "$need"; then
+          # Verify the archive actually contains what the installer expects.
+          #
+          # The listing goes to a FILE first, and only then is grepped. Writing
+          # `tar tzf ... | grep -qx "$need"` looks equivalent and is not: on a
+          # 33 MB archive grep exits at the first match, tar keeps writing, gets
+          # SIGPIPE, and `pipefail` (which GitHub enables for bash steps) turns
+          # that into a non-zero pipeline - so the check reports "archive has no
+          # ./AutoZapret" for an archive that has it. Reproduced locally with a
+          # 3000-file archive: the piped form fails, the file form passes.
+          #
+          # The `./` prefix is stripped because tars disagree about it: GNU tar
+          # writes `./AutoZapret`, some others write `AutoZapret`.
+          tar tzf autozapret-linux-x64.tar.gz | sed 's|^\./||' > "$RUNNER_TEMP/archive.txt"
+
+          for need in AutoZapret engine/bin/nfqws install.sh assets/strategies/strategies.v1.json; do
+            if ! grep -qx "$need" "$RUNNER_TEMP/archive.txt"; then
               echo "::error::archive has no $need"
+              echo "--- что внутри (первые 25) ---"
+              head -25 "$RUNNER_TEMP/archive.txt"
               exit 1
             fi
           done
-          echo "archive contents verified"
+
+          echo "archive contents verified ($(wc -l < "$RUNNER_TEMP/archive.txt") entries)"
 
       - name: Checksums
         shell: pwsh
