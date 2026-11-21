@@ -357,11 +357,21 @@ jobs:
           tar xzf zapret.tar.gz
 
           SRC=$(find . -maxdepth 1 -type d -name 'zapret-*' | head -1)
+          if [ -z "$SRC" ] || [ ! -f "$SRC/binaries/linux-x86_64/nfqws" ]; then
+            echo "::error::nfqws not found in zapret $TAG - asset layout changed"
+            ls -la . | head -20
+            exit 1
+          fi
+
           mkdir -p linux-engine
           cp "$SRC/binaries/linux-x86_64/nfqws" linux-engine/nfqws
           chmod +x linux-engine/nfqws
 
-          ./linux-engine/nfqws --version | head -1
+          # НЕ запускаем его здесь: раннер Windows, и Linux-бинарник даёт
+          # «cannot execute binary file: Exec format error». Проверяем формат
+          # файла, а не запускаем.
+          ls -l linux-engine/nfqws
+          head -c 4 linux-engine/nfqws | od -c | head -1
 
       - name: Assemble Linux package
         shell: bash

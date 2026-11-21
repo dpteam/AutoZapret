@@ -562,11 +562,22 @@ namespace AutoZapret.Linux
         {
             int failed = 0;
             int passed = 0;
+            int skipped = 0;
 
             Action<string, bool, string> check = delegate(string name, bool ok, string detail)
             {
                 if (ok) { passed++; Console.WriteLine("[ok]   " + name + (detail.Length > 0 ? " -> " + detail : "")); }
                 else { failed++; Console.WriteLine("[FAIL] " + name + " -> " + detail); }
+            };
+
+            // Отсутствие файла и поломка файла — разные вещи, и второе не должно
+            // выглядеть как первое. В CI движка и assets рядом с бинарником нет
+            // (их кладёт установщик), поэтому проверки, которым они нужны,
+            // пропускаются с причиной, а не краснеют.
+            Action<string, string> skip = delegate(string name, string reason)
+            {
+                skipped++;
+                Console.WriteLine("[skip] " + name + " -> " + reason);
             };
 
             check("x64 процесс", Environment.Is64BitProcess, Environment.Is64BitProcess ? "ok" : "32-bit");
@@ -578,11 +589,23 @@ namespace AutoZapret.Linux
             check("hosts — путь Linux", hosts == "/etc/hosts", hosts);
 
             // каталог стратегий
+            //
+            // В собранной поставке он лежит рядом с бинарником, но `dotnet build`
+            // в CI его туда не копирует: assets кладёт установщик. Если каталога
+            // нет вовсе — это не поломка, это сборка без данных.
+            bool haveStrategies = Directory.Exists(Paths.StrategiesDir);
+
             StrategyStore store = new StrategyStore();
-            store.Load(Path.Combine(Paths.StrategiesDir, "strategies.v1.json"));
+
+            if (haveStrategies)
+                store.Load(Path.Combine(Paths.StrategiesDir, "strategies.v1.json"));
 
             List<Strategy> all = new List<Strategy>(store.All);
-            check("стратегии загружены", all.Count > 0, all.Count + " шт.");
+
+            if (haveStrategies)
+                check("стратегии загружены", all.Count > 0, all.Count + " шт.");
+            else
+                skip("стратегии загружены", "нет " + Paths.StrategiesDir);
 
             // аргументы для nfqws собираются и не содержат WinDivert-фильтров
             if (all.Count > 0)
@@ -599,7 +622,13 @@ namespace AutoZapret.Linux
                     args.Find(a => a.Contains("${")) ?? "ok");
             }
 
-            check("nfqws найден", NfqwsEngine.Ready, NfqwsEngine.BinaryPath);
+            // Движок ставит установщик рядом с бинарником. В CI его нет, и это
+            // не провал: проверять надо то, что собрали мы, а не то, что должны
+            // докачать.
+            if (Directory.Exists(Paths.EngineDir))
+                check("nfqws найден", NfqwsEngine.Ready, NfqwsEngine.BinaryPath);
+            else
+                skip("nfqws найден", "нет " + Paths.EngineDir);
 
             // ---- firewall: команды строятся правильно
             //
@@ -643,7 +672,8 @@ namespace AutoZapret.Linux
                 !tcp.Contains("12"), tcp);
 
             Console.WriteLine();
-            Console.WriteLine("RESULT: " + (failed == 0 ? "ok" : failed + " failed") + ", " + passed + " ok");
+            Console.WriteLine("RESULT: " + (failed == 0 ? "ok" : failed + " failed") + ", " + passed + " ok" +
+                              (skipped > 0 ? ", " + skipped + " skip" : ""));
 
             return failed == 0 ? 0 : 1;
         }

@@ -304,10 +304,32 @@ jobs:
         run: |
           # There is no engine/ next to the binary, so engine checks are skipped,
           # but the strategy catalogue, .bat parsing and argument assembly work.
+          #
+          # assets/ IS copied next to the binary on purpose: the point of this
+          # job is to catch breakage in the shared strategy parsing code. If the
+          # catalogue is absent the selftest would skip it, and a broken parser
+          # would pass CI unnoticed.
           cd linux/bin/Release/net9.0
+          mkdir -p assets
+          cp -r ../../../../assets/strategies assets/
           ./AutoZapret --selftest
           code=$?
           if [ $code -ne 0 ]; then echo "::error::linux selftest failed"; exit $code; fi
+
+      - name: Check install.sh
+        run: |
+          # The installer is the first thing a user runs, and a syntax error in
+          # it means "nothing happens" with no useful message. Cheap to check.
+          bash -n linux/install.sh
+          echo "install.sh: syntax ok"
+
+          # CRLF in a shell script breaks bash with "$'\r': command not found",
+          # which reads like a missing file. Editors on Windows add it silently.
+          if grep -q $'\r' linux/install.sh; then
+            echo "::error::linux/install.sh has CRLF line endings - bash cannot run it"
+            exit 1
+          fi
+          echo "install.sh: LF endings ok"
 
       - name: Verify no Windows-only APIs in shared code
         run: |

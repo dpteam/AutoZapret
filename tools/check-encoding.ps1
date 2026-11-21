@@ -154,6 +154,38 @@ foreach ($file in $files) {
 Write-Host ""
 Write-Host ("проверено файлов: {0}, проблем: {1}" -f $checked, $problems)
 
+# ---------------------------------------------------------------- .sh скрипты
+#
+# У shell-скриптов два требования, которых нет у остальных файлов, и оба
+# ломаются молча:
+#   * LF, а не CRLF — иначе bash говорит "$'\r': command not found", и это
+#     читается как «нет такого файла»;
+#   * бит исполнения в git — иначе после клона `./install.sh` даёт
+#     «Permission denied», хотя файл на месте.
+#
+# core.fileMode на Windows всегда false, поэтому режим в рабочем каталоге
+# ничего не значит: смотреть надо в индекс.
+
+$git = Get-Command git -ErrorAction SilentlyContinue
+
+if ($git) {
+    $shellFiles = @(& git ls-files '*.sh' 2>$null)
+
+    foreach ($rel in $shellFiles) {
+        if ([string]::IsNullOrWhiteSpace($rel)) { continue }
+
+        $entry = & git ls-files -s -- $rel 2>$null
+
+        if ($entry -and $entry -notmatch '^100755') {
+            Fail ("{0}: нет бита исполнения в git (режим {1}) — после клона не запустится" -f $rel, $entry.Split()[0])
+        }
+    }
+
+    if ($shellFiles.Count -gt 0 -and $problems -eq 0) {
+        Ok ("shell-скриптов исполняемых: {0}" -f $shellFiles.Count)
+    }
+}
+
 if ($problems -eq 0) {
     Write-Host "[ok]   кодировки в порядке"
     exit 0
