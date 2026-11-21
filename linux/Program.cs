@@ -4,11 +4,13 @@ using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.WebSockets;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using AutoZapret.Core;
 using AutoZapret.Linux;
+using AutoZapret.Lists;
 using AutoZapret.Zapret;
 
 namespace AutoZapret.Linux
@@ -31,10 +33,29 @@ namespace AutoZapret.Linux
         private static bool _openBrowser = true;
         private static Bridge _bridge;
         private static HttpListener _listener;
+        private static string _strategyOverride;
 
         public static int Main(string[] args)
         {
             Paths.EnsureDirectories();
+
+            // Списки: вшитые в assets/lists раскладываются в engine/lists там,
+            // где их нет или где лежит заглушка. Без этого движок читает
+            // ipset-all.txt из одной строки (203.0.113.113/32) и не ловит
+            // ничего: YouTube остаётся закрытым, хотя обход «включён».
+            // На Windows это делает AppHost при старте; здесь — тоже.
+            List<RestoreEntry> restored = BundledLists.Restore();
+
+            if (restored.Count > 0)
+            {
+                int fixedCount = 0;
+
+                foreach (RestoreEntry entry in restored)
+                    if (entry.Restored) fixedCount++;
+
+                if (fixedCount > 0)
+                    Log.Info("LIST", "списки восстановлены из поставки: " + fixedCount + " из " + restored.Count);
+            }
 
             Log.Info("APP", AppInfo.Summary());
 
@@ -47,7 +68,19 @@ namespace AutoZapret.Linux
             _port = IntArg(args, "--port", 8080);
             if (HasFlag(args, "--no-browser")) _openBrowser = false;
 
+            _strategyOverride = StringArg(args, "--strategy");
+
             if (HasFlag(args, "--selftest")) return SelfTest();
+
+            // ---- команды без интерфейса: для скриптов и службы
+            //
+            // Нужны, потому что служба не может «нажать кнопку»: systemd
+            // запускает процесс и ждёт, пока он работает. Без этих команд
+            // единственным способом включить обход было бы поднимать сервер
+            // и дёргать WebSocket, что для службы абсурдно.
+            if (HasFlag(args, "--start")) return RunCli(start: true);
+            if (HasFlag(args, "--stop")) return RunCli(start: false);
+            if (HasFlag(args, "--status")) return PrintStatus();
 
             _bridge = new Bridge();
 
@@ -373,6 +406,115 @@ namespace AutoZapret.Linux
             Log.Info("APP", "выход");
         }
 
+        // ------------------------------------------------------------------ CLI
+
+        /// <summary>
+        /// Включить или выключить обход без интерфейса.
+        ///
+        /// Для службы: systemd запускает `AutoZapret --start` как foreground-
+        /// процесс, и пока он жив, обход работает. `--stop` нужен для ручной
+        /// остановки и для случая, когда предыдущий процесс остался.
+        /// </summary>
+        private static int RunCli(bool start)
+        {
+            if (!AppInfo.IsAdmin)
+            {
+                Console.Error.WriteLine("нужны права root: sudo " + AppInfo.Name + (start ? " --start" : " --stop"));
+                return 3;
+            }
+
+            NfqwsEngine engine = new NfqwsEngine();
+
+            if (!start)
+            {
+                bool was = engine.Stop();
+                Console.WriteLine(was ? "обход выключен" : "обход уже был выключен");
+                return 0;
+            }
+
+            string problem = NfqwsEngine.Problem;
+            if (problem != null) { Console.Error.WriteLine(problem); return 3; }
+
+            Settings settings = Settings.Current;
+
+            StrategyStore store = new StrategyStore();
+            store.Load(Path.Combine(Paths.StrategiesDir, "strategies.v1.json"));
+            try { store.LoadCustom(Paths.CustomStrategiesFile); } catch { }
+
+            // --strategy <id>: выбрать стратегию не трогая настройки.
+            // Нужно для перебора на живой машине: какая из 141 пробивает
+            // именно этого провайдера, видно только опытом.
+            string wanted = _strategyOverride ?? settings.StrategyId;
+
+            Strategy strategy = store.Find(wanted);
+
+            if (strategy == null && !string.IsNullOrEmpty(_strategyOverride))
+            {
+                Console.Error.WriteLine("стратегия «" + _strategyOverride + "» не найдена");
+                return 4;
+            }
+
+            if (strategy == null)
+            {
+                List<Strategy> pool = store.ByEngine("v1");
+
+                if (pool.Count == 0) { Console.Error.WriteLine("нет доступных стратегий"); return 4; }
+
+                strategy = pool[0];
+                Console.WriteLine("стратегия из настроек не найдена, беру «" + strategy.Name + "»");
+            }
+
+            string error = engine.Start(strategy, settings.GameFilter);
+
+            if (error != null) { Console.Error.WriteLine(error); return 5; }
+
+            Console.WriteLine("обход включён: " + strategy.Name);
+            Console.WriteLine("остановить: " + AppInfo.Name + " --stop или Ctrl+C");
+
+            ManualResetEventSlim stop = new ManualResetEventSlim(false);
+
+            Console.CancelKeyPress += delegate(object s, ConsoleCancelEventArgs e)
+            {
+                e.Cancel = true;
+                stop.Set();
+            };
+
+            // SIGTERM: так systemd просит остановиться. Без обработчика правила
+            // nftables остались бы висеть после остановки службы, и сеть
+            // продолжила бы отдавать пакеты в несуществующую очередь.
+            AppDomain.CurrentDomain.ProcessExit += delegate { engine.Stop(); };
+
+            using (PosixSignalRegistration.Create(PosixSignal.SIGTERM, ctx =>
+            {
+                ctx.Cancel = true;
+                stop.Set();
+            }))
+            {
+                stop.Wait();
+            }
+
+            engine.Stop();
+            Console.WriteLine("обход выключен");
+
+            return 0;
+        }
+
+        private static int PrintStatus()
+        {
+            NfqwsEngine engine = new NfqwsEngine();
+            Settings settings = Settings.Current;
+
+            Console.WriteLine("версия:    " + AppInfo.Version);
+            Console.WriteLine("система:   " + AppInfo.OsDescription);
+            Console.WriteLine("root:      " + (AppInfo.IsAdmin ? "да" : "нет"));
+            Console.WriteLine("nfqws:     " + (NfqwsEngine.Ready ? NfqwsEngine.BinaryPath : "НЕ НАЙДЕН"));
+            Console.WriteLine("firewall:  " + (Firewall.Backend ?? "нет ни nft, ни iptables"));
+            Console.WriteLine("стратегия: " + settings.StrategyId);
+            Console.WriteLine("обход:     " + (engine.IsRunning ? "включён" : "выключен"));
+
+            return 0;
+        }
+
         // ------------------------------------------------------------------ аргументы
 
         private static bool HasFlag(string[] args, string flag)
@@ -395,6 +537,19 @@ namespace AutoZapret.Linux
             }
 
             return fallback;
+        }
+
+        private static string StringArg(string[] args, string name)
+        {
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (!string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase)) continue;
+                if (i + 1 >= args.Length) continue;
+
+                return args[i + 1];
+            }
+
+            return null;
         }
 
         // ------------------------------------------------------------------ selftest

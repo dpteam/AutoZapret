@@ -539,6 +539,23 @@ namespace AutoZapret.Lists
                 clean.AppendLine("# hosts — пересоздан AutoZapret");
                 clean.AppendLine("# Восстановить прежнее: Списки → Hosts → Восстановить");
                 clean.AppendLine("127.0.0.1 localhost");
+
+                // Имя машины обязательно: без него часть программ (и sudo на
+                // Debian) не может разрешить собственное имя и ждёт таймаут.
+                // На Linux для этого исторически отдельный адрес 127.0.1.1 —
+                // так прописано в штатном /etc/hosts Debian и Ubuntu, и часть
+                // служб рассчитывает именно на него.
+                string hostName = SafeHostName();
+
+                if (hostName.Length > 0 && hostName != "localhost")
+                {
+#if WINDOWS
+                    clean.AppendLine("127.0.0.1 " + hostName);
+#else
+                    clean.AppendLine("127.0.1.1 " + hostName);
+#endif
+                }
+
                 clean.AppendLine("::1 localhost");
 
                 AtomicFile.WriteAllText(SystemPath, clean.ToString(), new UTF8Encoding(false));
@@ -554,6 +571,40 @@ namespace AutoZapret.Lists
             {
                 Log.Exception("HOSTS", "пересоздание hosts", ex);
                 return ex.Message;
+            }
+        }
+
+        /// <summary>
+        /// Имя этой машины — без домена и без падения на любых странностях.
+        ///
+        /// Environment.MachineName может бросить или вернуть пустое на
+        /// нестандартной системе, а падать из-за этого в функции, которая
+        /// восстанавливает hosts, нельзя: человек и так пришёл чинить.
+        /// </summary>
+        private static string SafeHostName()
+        {
+            try
+            {
+                string name = Environment.MachineName;
+
+                if (string.IsNullOrWhiteSpace(name)) return "";
+
+                name = name.Trim();
+
+                // В hosts допустимы буквы, цифры, дефис и точка. Всё прочее
+                // сделало бы строку невалидной и сломало разбор.
+                StringBuilder clean = new StringBuilder(name.Length);
+
+                foreach (char c in name)
+                {
+                    if (char.IsLetterOrDigit(c) || c == '-' || c == '.') clean.Append(c);
+                }
+
+                return clean.ToString();
+            }
+            catch
+            {
+                return "";
             }
         }
 

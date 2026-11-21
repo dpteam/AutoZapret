@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Threading;
 using AutoZapret.Core;
 using AutoZapret.Zapret;
 
@@ -151,6 +152,84 @@ namespace AutoZapret.Linux
             return args;
         }
 
+        /// <summary>
+        /// Убить остатки своего nfqws от прошлого запуска.
+        ///
+        /// Зачем. Если предыдущий экземпляр не успел убраться (упал, его убили
+        /// извне, или приложение перезапустили через pkill по имени), его nfqws
+        /// продолжает держать очередь 200. Новый тогда падает с
+        /// `nfq_create_queue(): Operation not permitted`, и снаружи это
+        /// «обход не включается», хотя списки и правила в порядке.
+        ///
+        /// Убиваем ТОЛЬКО свой: по пути к бинарнику. На машине может стоять
+        /// чужой zapret, и трогать его нельзя.
+        /// </summary>
+        private static void KillStaleInstances()
+        {
+            string ours = BinaryPath;
+
+            try
+            {
+                foreach (string dir in Directory.GetDirectories("/proc"))
+                {
+                    string name = Path.GetFileName(dir);
+
+                    int pid;
+                    if (!int.TryParse(name, out pid)) continue;
+                    if (pid == Process.GetCurrentProcess().Id) continue;
+
+                    string exe;
+
+                    try { exe = new FileInfo(Path.Combine(dir, "exe")).LinkTarget; }
+                    catch { continue; }
+
+                    if (exe == null || exe != ours) continue;
+
+                    Log.Warn("NFQWS", "найден остаток прошлого запуска (pid " + pid + "), убираю");
+
+                    try
+                    {
+                        Process stale = Process.GetProcessById(pid);
+                        stale.Kill(true);
+                        stale.WaitForExit(2000);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warn("NFQWS", "не убился pid " + pid + ": " + ex.Message);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("NFQWS", "поиск остатков: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Свободна ли очередь NFQUEUE. Проверяем по /proc/net/netfilter:
+        /// там есть строка на каждую занятую очередь.
+        /// </summary>
+        private static bool QueueIsFree()
+        {
+            try
+            {
+                if (!File.Exists("/proc/net/netfilter/nfnetlink_queue")) return true;
+
+                foreach (string line in File.ReadAllLines("/proc/net/netfilter/nfnetlink_queue"))
+                {
+                    string[] parts = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+
+                    if (parts.Length > 0 && parts[0] == QueueNumber.ToString()) return false;
+                }
+
+                return true;
+            }
+            catch
+            {
+                return true;
+            }
+        }
+
         public string Start(Strategy strategy, string gameFilter)
         {
             lock (_gate)
@@ -170,6 +249,18 @@ namespace AutoZapret.Linux
 
                 if (backend == null)
                     return "нет ни nftables, ни iptables: пакеты некуда направлять";
+
+                // Остатки прошлого запуска держат очередь — убираем их ДО
+                // постановки правил, иначе новый nfqws не сможет подключиться
+                // и молча получит «Operation not permitted».
+                KillStaleInstances();
+
+                for (int attempt = 0; attempt < 10 && !QueueIsFree(); attempt++)
+                    Thread.Sleep(300);
+
+                if (!QueueIsFree())
+                    return "очередь " + QueueNumber + " занята чужим процессом: " +
+                           "остановите другой zapret или смените номер очереди";
 
                 // Порты берём из самой стратегии: если она слушает только 443,
                 // нет смысла гнать через очередь ещё и 80.

@@ -96,11 +96,22 @@ foreach ($file in $files) {
                 $j++
             }
 
-            # Ищем shell: у этого шага (он идёт после run: на том же уровне)
+            # Ищем shell: у этого шага. Он может стоять как до run:, так и после —
+            # в моём linux-блоке он идёт перед run:, и проверка, смотревшая
+            # только вперёд, объявляла правильный bash «синтаксической ошибкой
+            # PowerShell».
             $shellIsBash = $false
-            for ($k = $j; $k -lt [Math]::Min($j + 4, $lines.Count); $k++) {
-                if ($lines[$k] -match '^\s*shell:\s*bash') { $shellIsBash = $true; break }
+
+            for ($k = $i - 1; $k -ge 0; $k--) {
                 if ($lines[$k] -match '^\s*-\s+name:') { break }
+                if ($lines[$k] -match '^\s*shell:\s*bash') { $shellIsBash = $true; break }
+            }
+
+            if (-not $shellIsBash) {
+                for ($k = $j; $k -lt [Math]::Min($j + 4, $lines.Count); $k++) {
+                    if ($lines[$k] -match '^\s*-\s+name:') { break }
+                    if ($lines[$k] -match '^\s*shell:\s*bash') { $shellIsBash = $true; break }
+                }
             }
 
             if ($isLinuxJob -or $shellIsBash) {

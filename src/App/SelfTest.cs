@@ -5162,7 +5162,28 @@ namespace AutoZapret.App
                 AutoZapret.Lists.HostsEditor.Dedupe("# keep\r\n1.1.1.1 a.com\r\n")
                     .IndexOf("# keep", StringComparison.Ordinal) >= 0, "ok");
 
-            // ---- localhost не должен теряться.
+            // ---- «пересоздать hosts» пишет имя машины, а не только localhost
+            //
+            // Без имени машины sudo на Debian и часть программ ждут таймаут,
+            // пытаясь разрешить собственное имя. На Linux для этого отдельный
+            // адрес 127.0.1.1 — так прописано в штатном /etc/hosts.
+            //
+            // Файл не трогаем: проверяем, что имя машины читается и что оно
+            // допустимо в hosts. Саму запись проверяем по собранному тексту.
+            string machineName = Environment.MachineName;
+
+            Check("hosts: имя машины известно", !string.IsNullOrEmpty(machineName), machineName);
+
+            bool nameIsValid = true;
+
+            foreach (char c in machineName)
+            {
+                if (char.IsLetterOrDigit(c) || c == '-' || c == '.') continue;
+                nameIsValid = false;
+                break;
+            }
+
+            Check("hosts: имя машины допустимо в hosts", nameIsValid, machineName);
             //
             // В стандартном hosts Windows есть «127.0.0.1 localhost» (обычно
             // закомментированная). Если её раскомментировали или её добавила
