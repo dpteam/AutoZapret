@@ -107,6 +107,98 @@ try {
 
         Write-Host "содержимое проверено: $($names.Count) файлов, все обязательные на месте"
     } finally { $zip.Dispose() }
+
+    # ---------------------------------------------------------------- Linux
+    #
+    # Установщик для Linux — это единственный путь, которым человек получает
+    # программу, и он качает архив САМ. Поэтому проверяем то, что ломается
+    # молча: определение версии и работоспособность скрипта.
+    #
+    # Первый прогон нашёл здесь настоящий баг: `/releases/latest` для проекта,
+    # где все релизы помечены пререлизом, редиректит на общий список, а не на
+    # тег. Установка у пользователя упала бы на «не смог узнать версию» либо
+    # пошла бы качать `vlocation: https://...`.
+    Write-Host ''
+    Write-Host '== Linux: install.sh =='
+
+    $installer = Join-Path $root 'linux\install.sh'
+
+    if (-not (Test-Path $installer)) {
+        throw 'нет linux\install.sh'
+    }
+
+    $text = Get-Content $installer -Raw
+
+    # Только код, без комментариев: в комментарии `/releases/latest` упомянут
+    # именно как неправильный, и проверка «есть ли строка» краснела бы на
+    # объяснении. Это уже второй раз за день, когда поиск слов вместо
+    # конструкций даёт ложное срабатывание.
+    $code = ($text -split "`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
+
+    if ($code -match '/releases/latest') {
+        throw "linux\install.sh использует /releases/latest: для пререлизов (все релизы до 1.0.0) он не даёт тег. Нужен releases.atom"
+    }
+
+    if ($text -match "`r") {
+        throw "linux\install.sh с CRLF: bash скажет `"`$'\r': command not found`""
+    }
+
+    Write-Host '  нет /releases/latest, переводы строк LF'
+
+    # Синтаксис — если в системе есть bash (Git for Windows его приносит).
+    # Синтаксис — только настоящим bash. `bash` из PATH на Windows — это
+    # лончер WSL, он передаёт путь в Linux, где диска E: нет, и проверка
+    # падала бы с «No such file» на правильном файле. Git for Windows несёт
+    # обычный bash, который понимает пути Windows.
+    $bashCandidates = @(
+        (Join-Path $env:ProgramFiles 'Git\bin\bash.exe'),
+        (Join-Path $env:ProgramFiles 'Git\usr\bin\bash.exe'),
+        (Join-Path ${env:ProgramFiles(x86)} 'Git\bin\bash.exe')
+    )
+
+    $bash = $bashCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+
+    if ($bash) {
+        # Путь — в прямых слешах: для bash обратный слеш это escape.
+        & $bash -n $installer.Replace('\', '/')
+
+        if ($LASTEXITCODE -ne 0) { throw 'linux\install.sh: синтаксическая ошибка' }
+
+        Write-Host "  синтаксис ok ($([System.IO.Path]::GetFileName($bash)))"
+    } else {
+        Write-Host '  [skip] Git for Windows не найден, синтаксис проверит CI на Linux'
+    }
+
+    # Определение версии — тем же кодом, что в скрипте, и по-настоящему.
+    # Сеть может отсутствовать: это предупреждение, а не провал, потому что
+    # пакет к этому моменту уже собран.
+    Write-Host ''
+    Write-Host '== Linux: определение последней версии =='
+
+    try {
+        $atom = Invoke-WebRequest -Uri 'https://github.com/dpteam/AutoZapret/releases.atom' `
+                                  -UseBasicParsing -TimeoutSec 20
+
+        $m = [regex]::Match($atom.Content, '/releases/tag/(v[0-9]+\.[0-9]+\.[0-9]+)')
+
+        if (-not $m.Success) { throw 'в фиде нет ни одного тега версии' }
+
+        Write-Host ("  последняя версия: " + $m.Groups[1].Value)
+
+        # Версия в csproj не должна отставать от последнего тега — иначе
+        # самообновление зациклится (это уже случалось, см. check-version.ps1).
+        $csproj = Get-Content (Join-Path $root 'AutoZapret.csproj') -Raw
+        $declared = [regex]::Match($csproj, '<Version>([^<]+)</Version>').Groups[1].Value
+        $tagged = $m.Groups[1].Value.TrimStart('v')
+
+        if ([version]$declared -lt [version]$tagged) {
+            throw "версия в csproj ($declared) ниже последнего тега ($tagged): самообновление зациклится"
+        }
+
+        Write-Host "  версия в csproj: $declared (не ниже тега)"
+    } catch {
+        Write-Host ("  [warn] сеть или GitHub недоступны: " + $_.Exception.Message)
+    }
 }
 finally {
     Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
