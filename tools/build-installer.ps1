@@ -114,6 +114,40 @@ if (-not (Test-Path (Join-Path $publishDir 'engine\bin\winws.exe'))) {
     Fail 'в publish\ нет engine\bin\winws.exe — установщик получится без движка. Запустите tools\fetch-engine.ps1'
 }
 
+# ---------------------------------------------------------------- stage
+
+# Установщик берёт файлы из stage\AutoZapret — того же каталога, что и
+# портативный архив. Локально готовим его из publish\, добавляя то, что
+# докладывает шаг сборки пакета в CI (иконку, лицензию, readme).
+$stage = Join-Path $root 'stage\AutoZapret'
+
+if (Test-Path $stage) { Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue }
+New-Item -ItemType Directory -Path $stage -Force | Out-Null
+
+Write-Host 'раскладка stage\AutoZapret...'
+
+robocopy $publishDir $stage /E /XO /NJH /NJS /NDL /NFL /NP /R:1 /W:1 | Out-Null
+if ($LASTEXITCODE -ge 8) { Fail "robocopy publish -> stage вернул $LASTEXITCODE" }
+$global:LASTEXITCODE = 0
+
+foreach ($pair in @(
+    @{ from = 'assets\AutoZapret.ico'; to = 'AutoZapret.ico' },
+    @{ from = 'LICENSE';              to = 'LICENSE' },
+    @{ from = 'README.md';            to = 'README.md' }
+)) {
+    $src = Join-Path $root $pair.from
+    if (Test-Path $src) {
+        Copy-Item $src (Join-Path $stage $pair.to) -Force
+    }
+    else {
+        Write-Host ("  [warn] нет " + $pair.from)
+    }
+}
+
+if (-not (Test-Path (Join-Path $stage 'engine\bin\winws.exe'))) {
+    Fail 'в stage\AutoZapret нет engine\bin\winws.exe — установщик получится без движка'
+}
+
 # ---------------------------------------------------------------- ISCC
 
 $env:AUTOZAPRET_VERSION = $Version

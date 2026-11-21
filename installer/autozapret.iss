@@ -99,17 +99,20 @@ Name: "autostart";   Description: "Запускать {#AppName} вместе с
 Name: "defender";    Description: "Добавить исключение в Защитник Windows для папки программы (WinDivert помечается как RiskTool и иногда удаляется)"; GroupDescription: "Совместимость:"; Flags: unchecked
 
 [Files]
-; Всё, что собрал publish.cmd: exe, WebView2Loader.dll, engine\, assets\, tools\, licenses\.
-; Без "skipifsourcedoesntexist": если публикации нет, ISCC падает на сборке
+; Всё, что собрано для портативного архива: exe, WebView2Loader.dll, иконка,
+; engine\, assets\, tools\, licenses\, README и LICENSE.
+;
+; Источник — stage\AutoZapret: это ровно тот каталог, который получает человек
+; из zip. В GitHub Actions установщик собирается из него же, отдельной сборки
+; нет — иначе два артефакта одного продукта разъезжаются (в publish\ нет
+; engine\, его докладывает шаг сборки пакета).
+;
+; Локально tools\build-installer.ps1 готовит такой же stage\AutoZapret из
+; publish\, чтобы обе среды собирали установщик одинаково.
+;
+; Без "skipifsourcedoesntexist": если пакет не собран, ISCC падает на сборке
 ; с внятным путём, а не выпускает установщик, который ничего не ставит.
-Source: "..\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-
-; Иконка рядом с exe: без неё трей рисует уменьшенную копию из exe и выглядит мылом.
-Source: "..\assets\AutoZapret.ico"; DestDir: "{app}"; Flags: ignoreversion
-
-; Лицензия нужна и в папке программы: страница лицензии в установщике её
-; показывает, но не копирует, а человек должен найти её потом без интернета.
-Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\stage\AutoZapret\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#AppName}";        Filename: "{app}\{#AppExe}"

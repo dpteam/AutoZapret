@@ -236,10 +236,14 @@ jobs:
       - name: Build installer
         shell: pwsh
         run: |
-          # Установщик собирается из ТОГО ЖЕ publish\, что и портативный архив:
-          # две разные сборки одного продукта неизбежно разъедутся.
-          if (-not (Test-Path 'publish/engine/bin/winws.exe')) {
-            throw "publish/engine missing - an installer without the engine installs a program that cannot work"
+          # Установщик берёт файлы из stage\AutoZapret — ровно того каталога,
+          # который собран для портативного архива. Отдельной сборки нет:
+          # две сборки одного продукта неизбежно разъедутся.
+          if (-not (Test-Path 'stage/AutoZapret/AutoZapret.exe')) {
+            throw "stage/AutoZapret is missing - the portable package step must run first"
+          }
+          if (-not (Test-Path 'stage/AutoZapret/engine/bin/winws.exe')) {
+            throw "engine is missing from the staged package - an installer without it cannot work"
           }
 
           $env:AUTOZAPRET_VERSION = '${{ steps.version.outputs.value }}'
