@@ -3,7 +3,8 @@
 #
 #   sudo ./install.sh                  поставить последнюю версию
 #   sudo ./install.sh --version 0.3.0  конкретную версию
-#   sudo ./install.sh --remove         удалить
+#   sudo ./install.sh --remove         удалить программу, сохранив настройки
+#   sudo ./install.sh --remove --purge удалить всё, включая настройки
 #   sudo ./install.sh --status         что установлено
 #
 # Что делает:
@@ -31,18 +32,27 @@ die()  { echo ""; echo "[ОШИБКА] $*"; exit 1; }
 
 VERSION=""
 ACTION="install"
+PURGE="0"
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --version) VERSION="${2:-}"; shift 2 ;;
         --remove|--uninstall) ACTION="remove"; shift ;;
         --status) ACTION="status"; shift ;;
+        --purge) PURGE="1"; shift ;;
         --help|-h)
             sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *) die "неизвестный аргумент: $1 (см. --help)" ;;
     esac
 done
+
+# --purge имеет смысл только вместе с удалением. Иначе человек напишет
+# `sudo ./install.sh --purge` в надежде на что-то и получит обычную установку,
+# молча проигнорировав флаг.
+if [ "$PURGE" = "1" ] && [ "$ACTION" != "remove" ]; then
+    die "--purge работает только с --remove: sudo $0 --remove --purge"
+fi
 
 # ---------------------------------------------------------------- статус
 
@@ -77,11 +87,40 @@ if [ "$ACTION" = "remove" ]; then
     systemctl daemon-reload
     say "unit-файл удалён"
 
-    rm -rf "$PREFIX"
-    say "файлы удалены"
+    # Настройки по умолчанию НЕ трогаем: в них выбранная стратегия, свои
+    # стратегии и журналы. Человек, который удалил программу и поставил её
+    # заново, ждёт, что обход продолжит работать как раньше, а не что его
+    # выбор пропал. Полное удаление — отдельным флагом, чтобы это было
+    # осознанное действие, а не побочный эффект.
+    if [ "$PURGE" = "1" ]; then
+        rm -rf "$PREFIX"
+        say "файлы и настройки удалены"
+        echo ""
+        echo "Готово. Ничего не осталось."
+    else
+        # Сначала уносим data в сторону: rm -rf "$PREFIX" снёс бы и её.
+        if [ -d "$PREFIX/data" ]; then
+            KEEPDIR="$(mktemp -d)"
+            cp -a "$PREFIX/data" "$KEEPDIR/data"
 
-    echo ""
-    echo "Готово. Настройки оставлены в $PREFIX/data — их удалили вместе с папкой."
+            rm -rf "$PREFIX"
+            mkdir -p "$PREFIX"
+            cp -a "$KEEPDIR/data" "$PREFIX/data"
+            rm -rf "$KEEPDIR"
+
+            say "файлы удалены, настройки сохранены"
+            echo ""
+            echo "Готово. Программы больше нет, настройки остались в $PREFIX/data."
+            echo "  поставить заново: sudo ./install.sh   (стратегия и свои списки вернутся)"
+            echo "  удалить и их:     sudo $0 --remove --purge"
+        else
+            rm -rf "$PREFIX"
+            say "файлы удалены"
+            echo ""
+            echo "Готово. Настроек не было, удалять больше нечего."
+        fi
+    fi
+
     echo "Если настраивали systemd-юниты руками — проверьте: systemctl list-units | grep zapret"
     exit 0
 fi
