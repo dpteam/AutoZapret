@@ -382,5 +382,9 @@
   "все": "all",
   "Свой набор": "My own set",
   "Вставьте строки hosts — «адрес имя», можно прямо с комментариями и лишними строками, разберётся. Набор сохранится и будет применяться галочкой, как остальные": "Paste hosts lines - \"address name\". Comments and extra lines are fine, they get parsed out. The set is saved and applied with a checkbox like the rest",
-  "Сохранить набор": "Save set"
+  "Сохранить набор": "Save set",
+  "Исправления": "Fixes",
+  "Готовые паки под конкретную проблему — добавляются к обходу, а не заменяют его": "Ready-made packs for a specific problem - they add to the bypass instead of replacing it",
+  "Паки исправлений": "Fix packs",
+  "Отметьте нужное и примените. Каждый пак меняет только своё: домены уходят в личный список обхода, правило игры — отдельным профилем к выбранной стратегии. Всё видно и обратимо": "Tick what you need and apply. Each pack changes only its own thing: domains go to your personal bypass list, a game rule becomes a separate profile of the selected strategy. Everything is visible and reversible"
 }

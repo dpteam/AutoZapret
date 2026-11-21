@@ -353,6 +353,13 @@
             send("fakes.scan");
             send("hosts.raw.get");
         }
+        if (name === "fixes") {
+            // Карточка hosts переехала сюда, поэтому её данные нужны здесь.
+            // Иначе экран открывается пустым, а человек думает, что наборов нет.
+            send("hosts.fixes");
+            send("hosts.raw.get");
+            send("fixes.list");
+        }
         if (name === "proxy") {
             send("proxy.state");
         }
@@ -3802,6 +3809,138 @@
         updateFixesSelected();
     }
 
+    /// Паки исправлений: домены в личный список обхода, правило — профилем
+    /// к стратегии. Показываем, что именно проверено и чем пак может помешать:
+    /// «нажал, стало хуже, а меня не предупредили» — это наша ошибка, не его.
+    function renderFixPacks(msg) {
+        var list = document.getElementById("fixes-packs-list");
+        if (!list) return;
+
+        list.innerHTML = "";
+
+        var items = msg.items || [];
+
+        if (items.length === 0) {
+            var empty = document.createElement("div");
+            empty.className = "row-hint";
+            empty.textContent = "паков нет";
+            list.appendChild(empty);
+            updatePacksSelected();
+            return;
+        }
+
+        items.forEach(function (p) {
+            var kindBadge = p.isHostlist
+                ? '<span class="badge">домены</span>'
+                : '<span class="badge">правило</span>';
+
+            var count = p.count > 0
+                ? '<span class="badge">' + p.count +
+                  (p.isHostlist ? " доменов" : " аргументов") + "</span>"
+                : "";
+
+            // Проверено — это не «доверьтесь», а что именно было измерено.
+            // Без этой строки пак выглядит как реклама.
+            var checked = p.checked
+                ? '<span class="fix-note">проверено: ' + p.checked + "</span>"
+                : "";
+
+            var warn = p.warning
+                ? '<span class="fix-note diag-warn">' + p.warning + "</span>"
+                : "";
+
+            var row = document.createElement("label");
+            row.className = "fix-row";
+
+            row.innerHTML =
+                '<input type="checkbox" data-pack-id="' + p.id + '"' +
+                    ' data-pack-name="' + String(p.name || "").replace(/"/g, "&quot;") + '">' +
+                '<span class="fix-body">' +
+                    '<span class="fix-head">' +
+                        '<span class="fix-name">' + p.name + "</span>" +
+                        kindBadge +
+                        count +
+                    "</span>" +
+                    (p.note ? '<span class="fix-note">' + p.note + "</span>" : "") +
+                    warn +
+                    checked +
+                "</span>";
+
+            list.appendChild(row);
+        });
+
+        list.querySelectorAll("input[data-pack-id]").forEach(function (box) {
+            box.addEventListener("change", updatePacksSelected);
+        });
+
+        updatePacksSelected();
+    }
+
+    function updatePacksSelected() {
+        var label = document.getElementById("fixes-selected");
+        if (!label) return;
+
+        var boxes = document.querySelectorAll("#fixes-packs-list input[data-pack-id]");
+        var chosen = 0;
+
+        boxes.forEach(function (b) { if (b.checked) chosen++; });
+
+        label.textContent = boxes.length === 0
+            ? ""
+            : "выбрано " + chosen + " из " + boxes.length;
+
+        label.className = "row-hint mono " + (chosen > 0 ? "diag-ok" : "");
+    }
+
+    function initFixPacks() {
+        var all = document.getElementById("btn-fixes-all");
+        var none = document.getElementById("btn-fixes-none");
+        var apply = document.getElementById("btn-fixes-apply");
+
+        if (all) all.addEventListener("click", function () {
+            document.querySelectorAll("#fixes-packs-list input[data-pack-id]").forEach(function (b) { b.checked = true; });
+            updatePacksSelected();
+        });
+
+        if (none) none.addEventListener("click", function () {
+            document.querySelectorAll("#fixes-packs-list input[data-pack-id]").forEach(function (b) { b.checked = false; });
+            updatePacksSelected();
+        });
+
+        if (apply) apply.addEventListener("click", function () {
+            var ids = [];
+            var names = [];
+            var warnings = [];
+
+            document.querySelectorAll("#fixes-packs-list input[data-pack-id]").forEach(function (b) {
+                if (!b.checked) return;
+                ids.push(b.getAttribute("data-pack-id"));
+                names.push(b.getAttribute("data-pack-name"));
+            });
+
+            if (ids.length === 0) {
+                var st = document.getElementById("fixes-status");
+                if (st) {
+                    st.textContent = "Отметьте галочками, что применить";
+                    st.className = "row-hint diag-warn";
+                }
+                return;
+            }
+
+            // Предупреждение показываем ДО применения, а не после: пак с
+            // правилом для игры меняет то, чем человек пользуется сейчас.
+            if (!window.confirm(
+                "Применить: " + names.join(", ") + "?\n\n" +
+                "Домены уйдут в личный список обхода (list-general-user.txt) — " +
+                "его видно на экране «Списки».\n" +
+                "Правило игры станет отдельной стратегией: её надо будет выбрать " +
+                "на главной, само оно не включится.")) return;
+
+            busyBtn("btn-fixes-apply", "Применяю…");
+            send("fixes.apply", { ids: ids });
+        });
+    }
+
     function renderHosts(msg) {
         // Кнопки возвращаем по id, а не через переменную из другого замыкания:
         // раньше здесь стояла ссылка на `apply` из initHosts, которой в этой
@@ -4336,6 +4475,30 @@
                 renderHostsFixes(msg);
                 break;
 
+            case "fixes.packs":
+                renderFixPacks(msg);
+                break;
+
+            case "fixes.applied":
+            {
+                var fixSt = document.getElementById("fixes-status");
+
+                if (fixSt) {
+                    fixSt.textContent = msg.summary || "";
+                    fixSt.className = "row-hint " + (msg.ok ? "diag-ok" : "diag-warn");
+                }
+
+                idleBtn("btn-fixes-apply");
+
+                // Создалась стратегия — обновляем список на главной, иначе
+                // человек ищет её там и не находит: список пришёл при старте.
+                if (msg.created && msg.created.length > 0) {
+                    send("strategy.list");
+                }
+
+                break;
+            }
+
             case "hosts.fixes.updated":
                 renderHostsUpdated(msg);
                 break;
@@ -4484,6 +4647,7 @@
         initCustomStrategies();
         initLists();
         initHosts();
+        initFixPacks();
         initProxy();
         initRelayHelp();
         initUpdates();
@@ -4556,6 +4720,9 @@
         // Результаты перебора стратегий: нужно проверять, что строка про
         // подтверждение победителя действительно появляется и говорит правду.
         renderTestResult: renderTestResult,
+        // Паки исправлений: проверяем, что предупреждение и «что проверено»
+        // видны до применения, а не прячутся в логе.
+        renderFixPacks: renderFixPacks,
         plural: plural,
         renderServiceStale: renderServiceStale,
         renderServiceResult: renderServiceResult,

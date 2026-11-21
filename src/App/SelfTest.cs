@@ -113,6 +113,9 @@ namespace AutoZapret.App
                 Section("маршруты большого hosts");
                 TestOptimizedRoutes();
 
+                Section("паки исправлений");
+                TestFixPacks();
+
                 Section("фейки");
                 TestPayloads();
 
@@ -2055,6 +2058,180 @@ namespace AutoZapret.App
 
             Check("ловушки: счётчик совпадает с файлом", counted == hosts.Count,
                 counted + " против " + hosts.Count);
+        }
+
+        /// <summary>
+        /// Паки исправлений: то, что добавляется к обходу, а не к hosts.
+        ///
+        /// Проверяем три вещи, каждая из которых уже ломалась или могла сломать:
+        ///   * пак для игры ОБЯЗАН содержать cutoff — без него winws пишет
+        ///     TRASH FLOOD и отправляет подставной пакет на каждый пакет игры;
+        ///   * домены пака не должны дублироваться при повторном применении,
+        ///     иначе личный список растёт при каждом нажатии;
+        ///   * правило добавляется ОТДЕЛЬНЫМ профилем к копии стратегии,
+        ///     а не меняет выбранную — иначе вернуть прежнее поведение нельзя.
+        /// </summary>
+        private static void TestFixPacks()
+        {
+            List<AutoZapret.Lists.FixPack> packs = AutoZapret.Lists.FixPacks.Load();
+
+            Check("паки: каталог читается", packs.Count > 0, packs.Count + " шт.");
+
+            if (packs.Count == 0) return;
+
+            AutoZapret.Lists.FixPack tekken = null;
+            AutoZapret.Lists.FixPack aws = null;
+
+            foreach (AutoZapret.Lists.FixPack p in packs)
+            {
+                if (p.Id == "tekken8-udp") tekken = p;
+                if (p.Id == "aws-cloudflare") aws = p;
+            }
+
+            Check("паки: TEKKEN 8 есть", tekken != null, tekken == null ? "НЕТ" : tekken.Name);
+            Check("паки: AWS / Cloudflare есть", aws != null, aws == null ? "НЕТ" : aws.Name);
+
+            if (tekken != null)
+            {
+                Check("паки: TEKKEN 8 — это правило, а не список",
+                    tekken.IsStrategy && !tekken.IsHostlist, tekken.Kind);
+
+                // Главная защита: без cutoff движок шлёт фейк на каждый пакет.
+                bool hasCutoff = false;
+                bool hasAnyProtocol = false;
+                bool hasStun = false;
+
+                foreach (string arg in tekken.Args)
+                {
+                    if (arg.StartsWith("--dpi-desync-cutoff=", StringComparison.Ordinal)) hasCutoff = true;
+                    if (arg.StartsWith("--dpi-desync-any-protocol", StringComparison.Ordinal)) hasAnyProtocol = true;
+                    if (arg.IndexOf("stun.bin", StringComparison.OrdinalIgnoreCase) >= 0) hasStun = true;
+                }
+
+                Check("паки: TEKKEN 8 содержит cutoff (иначе TRASH FLOOD)", hasCutoff,
+                    hasCutoff ? "ok" : "НЕТ — движок зальёт фейками");
+                Check("паки: TEKKEN 8 включает any-protocol", hasAnyProtocol, hasAnyProtocol ? "ok" : "НЕТ");
+                Check("паки: TEKKEN 8 использует stun.bin", hasStun, hasStun ? "ok" : "НЕТ");
+
+                // Файл фейка должен существовать, иначе winws откажется стартовать.
+                string stun = Path.Combine(Paths.EngineBinDir, "stun.bin");
+                Check("паки: stun.bin на месте", File.Exists(stun), File.Exists(stun) ? "ok" : stun);
+            }
+
+            if (aws != null)
+            {
+                Check("паки: AWS — это список домнов",
+                    aws.IsHostlist && !aws.IsStrategy, aws.Kind);
+
+                Check("паки: в AWS 47 домнов", aws.Entries.Count == 47,
+                    aws.Entries.Count + " шт.");
+
+                Check("паки: в AWS нет дублей",
+                    aws.Entries.Count == new HashSet<string>(aws.Entries, StringComparer.OrdinalIgnoreCase).Count,
+                    aws.Entries.Count.ToString());
+
+                // Те три, которые реально режутся, должны быть в списке.
+                string[] blocked = { "cloudflaressl.com", "cloudflarestatus.com", "pages.dev" };
+
+                List<string> lost = new List<string>();
+
+                foreach (string d in blocked)
+                    if (!aws.Entries.Exists(x => string.Equals(x, d, StringComparison.OrdinalIgnoreCase)))
+                        lost.Add(d);
+
+                Check("паки: проверенно заблокированные домены в списке", lost.Count == 0,
+                    lost.Count == 0 ? "ok" : string.Join(", ", lost.ToArray()));
+            }
+
+            // ---- слияние списка: повтор не должен плодить строки
+            int added;
+            int already;
+
+            string once = AutoZapret.Lists.FixPacks.MergeHostlist(
+                "# мой список\r\n\r\n", new[] { "a.com", "b.com" }, out added, out already);
+
+            Check("список: домены добавлены", added == 2, added + " шт.");
+            Check("список: комментарий сохранён",
+                once.IndexOf("# мой список", StringComparison.Ordinal) >= 0, "ok");
+
+            string twice = AutoZapret.Lists.FixPacks.MergeHostlist(
+                once, new[] { "a.com", "b.com" }, out added, out already);
+
+            Check("список: повтор ничего не добавил", added == 0, added + " шт.");
+            Check("список: повтор увидел уже добавленное", already == 2, already + " шт.");
+            Check("список: повтор не изменил текст", twice == once,
+                twice == once ? "ok" : "текст разошёлся");
+
+            // Регистр не должен создавать дубль: в списках домены пишут по-разному.
+            AutoZapret.Lists.FixPacks.MergeHostlist(once, new[] { "A.COM" }, out added, out already);
+            Check("список: регистр не создаёт дубль", added == 0, added + " шт.");
+
+            // ---- правило добавляется отдельным профилем к КОПИИ стратегии
+            AutoZapret.Zapret.Strategy baseStrategy = new AutoZapret.Zapret.Strategy
+            {
+                Id = "base.test",
+                Name = "базовая",
+                Engine = "v1"
+            };
+
+            baseStrategy.GlobalArgs.Add("--wf-tcp=80,443");
+            baseStrategy.GlobalArgs.Add("--wf-udp=443");
+
+            baseStrategy.Profiles.Add(new AutoZapret.Zapret.StrategyProfile
+            {
+                Name = "http",
+                Args = new List<string> { "--filter-tcp=80", "--dpi-desync=split2" }
+            });
+
+            string error = null;
+            AutoZapret.Zapret.Strategy built = tekken == null
+                ? null
+                : AutoZapret.Lists.FixPacks.BuildStrategy(tekken, baseStrategy, out error);
+
+            if (tekken != null)
+            {
+                Check("правило: стратегия собралась", built != null, built == null ? error : built.Name);
+
+                if (built != null)
+                {
+                    Check("правило: профилей стало на один больше",
+                        built.Profiles.Count == baseStrategy.Profiles.Count + 1,
+                        built.Profiles.Count + " против " + baseStrategy.Profiles.Count);
+
+                    Check("правило: прежний профиль сохранён",
+                        built.Profiles[0].Args.Exists(a => a.IndexOf("split2", StringComparison.Ordinal) >= 0),
+                        "ok");
+
+                    Check("правило: новая стратегия помечена своей", built.Custom, built.Custom ? "ok" : "НЕТ");
+                    Check("правило: имя говорит, откуда взялось",
+                        built.Name.IndexOf("TEKKEN", StringComparison.OrdinalIgnoreCase) >= 0, built.Name);
+
+                    // Исходная стратегия не должна измениться: иначе «применил
+                    // фикс» молча переписывает то, чем человек пользуется.
+                    Check("правило: исходная стратегия не изменилась",
+                        baseStrategy.Profiles.Count == 1 &&
+                        baseStrategy.Profiles[0].Args.Count == 2,
+                        baseStrategy.Profiles.Count + " профилей");
+
+                    // Аргументы пака должны попасть в общий список для winws.
+                    List<string> all = built.BuildArguments(
+                        new Dictionary<string, string>(StringComparer.Ordinal)
+                        {
+                            { "GAME_UDP", "1024-65535" },
+                            { "BIN", "C:\\bin" }
+                        });
+
+                    Check("правило: cutoff попал в аргументы",
+                        all.Exists(a => a.StartsWith("--dpi-desync-cutoff=", StringComparison.Ordinal)), "ok");
+
+                    Check("правило: плейсхолдер GAME_UDP раскрыт",
+                        all.Exists(a => a.IndexOf("1024-65535", StringComparison.Ordinal) >= 0), "ok");
+
+                    Check("правило: путь к stun.bin раскрыт",
+                        all.Exists(a => a.IndexOf("C:\\bin", StringComparison.Ordinal) >= 0 &&
+                                        a.IndexOf("stun.bin", StringComparison.Ordinal) >= 0), "ok");
+                }
+            }
         }
 
         /// <summary>

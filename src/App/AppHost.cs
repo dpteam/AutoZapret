@@ -1748,6 +1748,122 @@ namespace AutoZapret.App
                 RunInBackground("hosts-restore", RestoreHostsUi);
             });
 
+            // ---- паки исправлений: то, что добавляется к обходу, а не к hosts
+            //
+            // Здесь живут случаи, которые адресом не лечатся: игра, у которой
+            // DPI режет первое UDP-рукопожатие, или домены, которые провайдер
+            // режет по имени. Каждый пак знает свой вид и применяется своим
+            // способом — притворяться, что всё это «записи в hosts», значит
+            // врать о том, что произойдёт.
+            bridge.Register("fixes.list", msg => SendFixPacks());
+
+            bridge.Register("fixes.apply", msg =>
+            {
+                List<string> ids = new List<string>();
+
+                List<object> raw = Json.GetArray(msg, "ids");
+                if (raw != null)
+                    foreach (object item in raw)
+                    {
+                        string id = item as string;
+                        if (!string.IsNullOrEmpty(id)) ids.Add(id);
+                    }
+
+                if (ids.Count == 0)
+                {
+                    bridge.Send(WebBridge.Msg("fixes.applied", "ok", false,
+                        "summary", "ничего не выбрано"));
+                    return;
+                }
+
+                RunInBackground("fixes-apply", () =>
+                {
+                    List<string> done = new List<string>();
+                    List<string> failed = new List<string>();
+                    List<string> created = new List<string>();
+
+                    foreach (string id in ids)
+                    {
+                        FixPack pack = null;
+
+                        foreach (FixPack candidate in FixPacks.Load())
+                            if (string.Equals(candidate.Id, id, StringComparison.OrdinalIgnoreCase))
+                                pack = candidate;
+
+                        if (pack == null) { failed.Add(id + ": не найден"); continue; }
+
+                        if (pack.IsHostlist)
+                        {
+                            int added;
+                            int alreadyThere;
+
+                            string error = FixPacks.ApplyHostlist(pack, out added, out alreadyThere);
+
+                            if (error != null) { failed.Add(pack.Name + ": " + error); continue; }
+
+                            done.Add(added > 0
+                                ? pack.Name + " +" + added + " доменов"
+                                : pack.Name + " (уже было " + alreadyThere + ")");
+
+                            continue;
+                        }
+
+                        if (pack.IsStrategy)
+                        {
+                            Strategy baseStrategy = _zapret.Strategies.Find(_settings.StrategyId);
+
+                            if (baseStrategy == null)
+                            {
+                                failed.Add(pack.Name + ": не выбрана стратегия — сначала выберите её на главной");
+                                continue;
+                            }
+
+                            string error;
+                            Strategy built = FixPacks.BuildStrategy(pack, baseStrategy, out error);
+
+                            if (built == null) { failed.Add(pack.Name + ": " + error); continue; }
+
+                            string newId = "fix." + pack.Id;
+
+                            string written = _zapret.SaveCustomStrategy(
+                                built, newId, built.Name, built.Note);
+
+                            if (!string.Equals(written, newId, StringComparison.Ordinal))
+                            {
+                                failed.Add(pack.Name + ": " + written);
+                                continue;
+                            }
+
+                            created.Add(newId);
+                            done.Add(pack.Name + " → стратегия «" + built.Name + "»");
+                            continue;
+                        }
+
+                        failed.Add(pack.Name + ": неизвестный вид «" + pack.Kind + "»");
+                    }
+
+                    List<string> parts = new List<string>();
+
+                    if (done.Count > 0) parts.Add(string.Join(", ", done.ToArray()));
+                    if (failed.Count > 0) parts.Add("не вышло: " + string.Join(", ", failed.ToArray()));
+
+                    // Стратегия не выбирается сама: человек должен видеть, что
+                    // именно появилось, и сам решить, включать ли. Иначе «нажал
+                    // фикс» молча меняет то, чем он пользуется.
+                    if (created.Count > 0)
+                        parts.Add("новая стратегия в списке на главной — выберите её, чтобы включить");
+
+                    Log.Info("FIX", "паки: " + string.Join(" | ", parts.ToArray()));
+
+                    bridge.Send(WebBridge.Msg("fixes.applied",
+                        "ok", failed.Count == 0,
+                        "summary", string.Join(" · ", parts.ToArray()),
+                        "created", created));
+
+                    SendFixPacks();
+                });
+            });
+
             // Убрать только наш блок, сохранив записи пользователя. Это то, что
             // нужно, когда hosts после «Обновить» ломает именно обход: бэкап
             // может быть старее, а чужие записи трогать нельзя.
@@ -3030,6 +3146,39 @@ namespace AutoZapret.App
             }
 
             _form.Bridge.Send(WebBridge.Msg("hosts.fixes", "items", items));
+        }
+
+        /// <summary>
+        /// Паки исправлений для экрана «Исправления».
+        ///
+        /// Отдаём всё, что нужно, чтобы человек решил сам: что делает пак, что
+        /// именно проверено, чем он может помешать и сколько в нём записей.
+        /// Скрыть предупреждение «может помешать» — значит получить «нажал,
+        /// стало хуже, а меня не предупредили».
+        /// </summary>
+        private void SendFixPacks()
+        {
+            List<object> items = new List<object>();
+
+            foreach (FixPack pack in FixPacks.Load())
+            {
+                int count = pack.IsHostlist ? pack.Entries.Count : pack.Args.Count;
+
+                items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    { "id", pack.Id },
+                    { "name", pack.Name },
+                    { "kind", pack.Kind },
+                    { "note", pack.Note ?? "" },
+                    { "warning", pack.Warning ?? "" },
+                    { "checked", pack.Checked ?? "" },
+                    { "count", (long)count },
+                    { "isHostlist", pack.IsHostlist },
+                    { "isStrategy", pack.IsStrategy }
+                });
+            }
+
+            _form.Bridge.Send(WebBridge.Msg("fixes.packs", "items", items));
         }
 
         /// <summary>Состояние системного DoH — для карточки в диагностике.</summary>

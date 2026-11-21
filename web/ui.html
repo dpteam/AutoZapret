@@ -34,6 +34,7 @@
       <button class="nav-item" data-screen="diag"><span class="nav-icon">⚕</span> Диагностика</button>
       <button class="nav-item" data-screen="proxy"><span class="nav-icon">✈</span> Telegram</button>
       <button class="nav-item" data-screen="lists"><span class="nav-icon">▤</span> Списки</button>
+      <button class="nav-item" data-screen="fixes"><span class="nav-icon">✚</span> Исправления</button>
       <button class="nav-item" data-screen="logs"><span class="nav-icon">≡</span> Логи</button>
       <button class="nav-item" data-screen="settings"><span class="nav-icon">⚙</span> Настройки</button>
       <button class="nav-item" data-screen="about"><span class="nav-icon">ⓘ</span> О программе</button>
@@ -931,7 +932,77 @@
         <div class="row-hint" id="hosts-raw-status"></div>
       </div>
 
+
+
+      <div class="card" data-advanced>
+        <div class="card-title">Фейк-payload'ы</div>
+        <div class="row">
+          <div>
+            <div class="row-label">Библиотека .bin</div>
+            <div class="row-hint" id="fakes-summary">—</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="text" id="fakes-search" placeholder="поиск по домену…" style="min-width:180px">
+            <button class="btn" id="btn-fakes-scan">Проверить</button>
+          </div>
+        </div>
+        <div id="fakes-list" class="diag-list" style="margin-top:10px;display:none"></div>
+
+        <div class="row" style="margin-top:14px;align-items:flex-start">
+          <div style="flex:1">
+            <div class="row-label">Собрать фейк под свой домен</div>
+            <div class="row-hint">
+              Синтетический ClientHello с настоящим ключом ECDH. Не слепок браузера —
+              но для DPI выглядит как обычный TLS
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="text" id="fake-sni" placeholder="example.com" style="min-width:170px">
+            <select id="fake-type">
+              <option value="tls">TLS</option>
+              <option value="quic">QUIC</option>
+            </select>
+            <button class="btn primary" id="btn-fake-generate">Собрать</button>
+          </div>
+        </div>
+        <div id="fake-result" class="row-hint" style="margin-top:8px;display:none"></div>
+      </div>
+    </section>
+
+    <!-- ============================================================ ИСПРАВЛЕНИЯ -->
+    <section class="screen" id="screen-fixes">
+      <h1>Исправления</h1>
+      <p class="subtitle">Готовые паки под конкретную проблему — добавляются к обходу, а не заменяют его</p>
+
       <div class="card">
+        <div class="card-title">Паки исправлений</div>
+
+        <div class="row">
+          <div>
+            <div class="row-label">Что добавить</div>
+            <div class="row-hint">
+              Отметьте нужное и примените. Каждый пак меняет только своё:
+              домены уходят в личный список обхода, правило игры — отдельным
+              профилем к выбранной стратегии. Всё видно и обратимо
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn" id="btn-fixes-all">Выбрать все</button>
+            <button class="btn" id="btn-fixes-none">Снять все</button>
+          </div>
+        </div>
+
+        <div class="diag-list fix-scroll" id="fixes-packs-list" style="margin-top:10px"></div>
+
+        <div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap">
+          <button class="btn primary" id="btn-fixes-apply">Применить выбранные</button>
+          <span class="row-hint mono" id="fixes-selected"></span>
+        </div>
+
+        <div class="row-hint" id="fixes-status"></div>
+      </div>
+
+<div class="card">
         <div class="card-title">Фиксы и списки hosts</div>
 
         <div class="row">
@@ -980,40 +1051,6 @@
         </div>
 
         <div class="row-hint" id="hosts-fixes-status"></div>
-      </div>
-
-      <div class="card" data-advanced>
-        <div class="card-title">Фейк-payload'ы</div>
-        <div class="row">
-          <div>
-            <div class="row-label">Библиотека .bin</div>
-            <div class="row-hint" id="fakes-summary">—</div>
-          </div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <input type="text" id="fakes-search" placeholder="поиск по домену…" style="min-width:180px">
-            <button class="btn" id="btn-fakes-scan">Проверить</button>
-          </div>
-        </div>
-        <div id="fakes-list" class="diag-list" style="margin-top:10px;display:none"></div>
-
-        <div class="row" style="margin-top:14px;align-items:flex-start">
-          <div style="flex:1">
-            <div class="row-label">Собрать фейк под свой домен</div>
-            <div class="row-hint">
-              Синтетический ClientHello с настоящим ключом ECDH. Не слепок браузера —
-              но для DPI выглядит как обычный TLS
-            </div>
-          </div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <input type="text" id="fake-sni" placeholder="example.com" style="min-width:170px">
-            <select id="fake-type">
-              <option value="tls">TLS</option>
-              <option value="quic">QUIC</option>
-            </select>
-            <button class="btn primary" id="btn-fake-generate">Собрать</button>
-          </div>
-        </div>
-        <div id="fake-result" class="row-hint" style="margin-top:8px;display:none"></div>
       </div>
     </section>
 
