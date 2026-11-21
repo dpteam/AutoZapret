@@ -446,6 +446,47 @@ namespace AutoZapret.Linux
 
             check("nfqws найден", NfqwsEngine.Ready, NfqwsEngine.BinaryPath);
 
+            // ---- firewall: команды строятся правильно
+            //
+            // Сами правила без root не поставить, но их состав проверить можно
+            // и нужно: ошибка в строке правила означает, что обход не заработает
+            // уже на живой системе, и искать её там дорого.
+            string backend = Firewall.Backend;
+            check("firewall найден", backend != null, backend ?? "ни nft, ни iptables");
+
+            if (backend != null)
+            {
+                List<string[]> setup = Firewall.SetupCommands(backend, "80,443", "443");
+                List<string[]> teardown = Firewall.TeardownCommands(backend);
+
+                check("правила строятся", setup.Count > 0, setup.Count + " команд");
+                check("снятие правил есть", teardown.Count > 0, teardown.Count + " команд");
+
+                // Главное для безопасности: без bypass смерть nfqws = мёртвая сеть.
+                bool hasBypass = setup.Exists(c => Array.IndexOf(c, "bypass") >= 0);
+                check("в правилах есть bypass", hasBypass, hasBypass ? "ok" : "НЕТ — сеть умрёт при падении");
+
+                // Главное для скорости: только первые пакеты соединения.
+                bool hasLimit = setup.Exists(c =>
+                    Array.IndexOf(c, "1-6") >= 0 || Array.IndexOf(c, "1:6") >= 0);
+                check("обход только первых пакетов", hasLimit, hasLimit ? "ok" : "НЕТ — будет медленно");
+
+                // Номер очереди должен совпадать с тем, что слушает nfqws.
+                bool sameQueue = setup.Exists(c => Array.IndexOf(c, Firewall.QueueNumber.ToString()) >= 0);
+                check("очередь совпадает с nfqws", sameQueue, Firewall.QueueNumber.ToString());
+            }
+
+            // ---- порты из аргументов стратегии
+            string tcp, udp;
+            Firewall.PortsFromArgs(
+                new List<string> { "--filter-tcp=80,443", "--filter-udp=443", "--filter-tcp=12" },
+                out tcp, out udp);
+
+            check("порты: tcp собран", tcp == "443,80", tcp);
+            check("порты: udp собран", udp == "443", udp);
+            check("порт 12 (игровой фильтр выключен) отброшен",
+                !tcp.Contains("12"), tcp);
+
             Console.WriteLine();
             Console.WriteLine("RESULT: " + (failed == 0 ? "ok" : failed + " failed") + ", " + passed + " ok");
 

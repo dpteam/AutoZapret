@@ -28,12 +28,12 @@ namespace AutoZapret.Linux
     /// </summary>
     public sealed class NfqwsEngine
     {
-        public const int QueueNumber = 200;
+        public const int QueueNumber = Firewall.QueueNumber;
 
         private readonly object _gate = new object();
         private Process _process;
         private string _strategyName = "";
-        private readonly List<string[]> _appliedRules = new List<string[]>();
+        private string _backend = "";
 
         public event Action<bool, string> StateChanged;
 
@@ -166,12 +166,29 @@ namespace AutoZapret.Linux
 
                 if (args.Count == 0) return "у стратегии нет аргументов для nfqws";
 
+                string backend = Firewall.Backend;
+
+                if (backend == null)
+                    return "нет ни nftables, ни iptables: пакеты некуда направлять";
+
+                // Порты берём из самой стратегии: если она слушает только 443,
+                // нет смысла гнать через очередь ещё и 80.
+                string tcpPorts, udpPorts;
+                Firewall.PortsFromArgs(args, out tcpPorts, out udpPorts);
+
+                if (tcpPorts.Length == 0 && udpPorts.Length == 0)
+                {
+                    // У стратегии нет явных портов — берём стандартные.
+                    tcpPorts = "80,443";
+                    udpPorts = "443";
+                }
+
                 // Правила ставим ДО запуска процесса: иначе первые пакеты уйдут
                 // в очередь, которую никто не читает, и соединение зависнет.
-                string rulesError = ApplyRules();
+                string rulesError = ApplyRules(backend, tcpPorts, udpPorts);
                 if (rulesError != null) return rulesError;
 
-                List<string> full = new List<string> { "--qnum=" + QueueNumber };
+                List<string> full = new List<string> { "--qnum=" + Firewall.QueueNumber };
                 full.AddRange(args);
 
                 try
@@ -191,11 +208,12 @@ namespace AutoZapret.Linux
 
                     if (_process == null)
                     {
-                        RemoveRules();
+                        RemoveRules(backend);
                         return "nfqws не запустился";
                     }
 
                     _strategyName = strategy.Name;
+                    _backend = backend;
 
                     // Читаем вывод в фоне: иначе pipe заполнится и процесс встанет.
                     _process.OutputDataReceived += (s, e) => { if (e.Data != null) Log.Info("NFQWS", e.Data); };
@@ -203,14 +221,15 @@ namespace AutoZapret.Linux
                     _process.BeginOutputReadLine();
                     _process.BeginErrorReadLine();
 
-                    Log.Info("NFQWS", "запущен: " + strategy.Name + " (аргументов " + full.Count + ")");
+                    Log.Info("NFQWS", "запущен: " + strategy.Name +
+                                      " (backend " + backend + ", tcp " + tcpPorts + ", udp " + udpPorts + ")");
 
                     Raise(true, "");
                     return null;
                 }
                 catch (Exception ex)
                 {
-                    RemoveRules();
+                    RemoveRules(backend);
                     Log.Warn("NFQWS", "не запустился: " + ex.Message);
                     return "не запустился: " + ex.Message;
                 }
@@ -245,7 +264,7 @@ namespace AutoZapret.Linux
 
                 // Правила убираем ВСЕГДА, даже если процесс уже умер: иначе
                 // пакеты продолжат уходить в несуществующую очередь.
-                RemoveRules();
+                RemoveRules(_backend);
 
                 _strategyName = "";
 
@@ -256,122 +275,62 @@ namespace AutoZapret.Linux
             }
         }
 
-        // ------------------------------------------------------------------ iptables
+        // ------------------------------------------------------------------ правила
 
-        /// <summary>
-        /// Правила из docs/iptables.txt самого zapret, для трафика этой машины.
-        ///
-        /// POSTROUTING видит и локально созданные пакеты (они проходят
-        /// OUTPUT -> POSTROUTING), поэтому отдельных правил для OUTPUT не нужно.
-        /// </summary>
-        private static List<string[]> DesiredRules()
+        private string ApplyRules(string backend, string tcpPorts, string udpPorts)
         {
-            List<string[]> rules = new List<string[]>();
-
-            rules.Add(new[]
+            foreach (string[] cmd in Firewall.SetupCommands(backend, tcpPorts, udpPorts))
             {
-                "-t", "mangle", "-I", "POSTROUTING",
-                "-p", "tcp", "-m", "multiport", "--dports", "80,443",
-                "-m", "connbytes", "--connbytes-dir=original",
-                "--connbytes-mode=packets", "--connbytes", "1:6",
-                "-m", "mark", "!", "--mark", "0x40000000/0x40000000",
-                "-j", "NFQUEUE", "--queue-num", QueueNumber.ToString(), "--queue-bypass"
-            });
+                string error;
 
-            rules.Add(new[]
-            {
-                "-t", "mangle", "-I", "POSTROUTING",
-                "-p", "tcp", "--dport", "443",
-                "-m", "mark", "!", "--mark", "0x40000000/0x40000000",
-                "-j", "NFQUEUE", "--queue-num", QueueNumber.ToString(), "--queue-bypass"
-            });
+                // Подготовительные команды (удаление остатков, создание цепочек)
+                // могут законно падать: удалять нечего. Ошибкой считаем только
+                // сами правила — их отсутствие означает, что обход не заработает.
+                bool isPreparatory = IsPreparatory(cmd);
 
-            rules.Add(new[]
-            {
-                "-t", "mangle", "-I", "POSTROUTING",
-                "-p", "udp", "--dport", "443",
-                "-m", "mark", "!", "--mark", "0x40000000/0x40000000",
-                "-j", "NFQUEUE", "--queue-num", QueueNumber.ToString(), "--queue-bypass"
-            });
+                Firewall.Run(cmd, out error);
 
-            return rules;
-        }
-
-        private string ApplyRules()
-        {
-            _appliedRules.Clear();
-
-            foreach (string[] rule in DesiredRules())
-            {
-                string error = RunIptables(rule);
-
-                if (error != null)
+                if (error != null && !isPreparatory)
                 {
-                    RemoveRules();
-                    return "не удалось поставить правило iptables: " + error;
+                    RemoveRules(backend);
+                    return "правило не поставилось (" + string.Join(" ", cmd) + "): " + error;
                 }
-
-                _appliedRules.Add(rule);
             }
 
-            Log.Info("NFQWS", "правила iptables поставлены: " + _appliedRules.Count);
+            Log.Info("NFQWS", "правила " + backend + " поставлены: tcp " + tcpPorts + ", udp " + udpPorts);
             return null;
         }
 
-        private void RemoveRules()
+        /// <summary>
+        /// Подготовительная ли команда: удаление остатков или создание цепочки.
+        /// Такие команды падают штатно, когда удалять нечего.
+        /// </summary>
+        private static bool IsPreparatory(string[] cmd)
         {
-            for (int i = _appliedRules.Count - 1; i >= 0; i--)
+            for (int i = 0; i < cmd.Length; i++)
             {
-                string[] rule = (string[])_appliedRules[i];
-                string[] del = (string[])rule.Clone();
-
-                // -I заменяем на -D: та же строка, но удаление.
-                for (int j = 0; j < del.Length; j++)
-                {
-                    if (del[j] == "-I") { del[j] = "-D"; break; }
-                }
-
-                string error = RunIptables(del);
-
-                if (error != null)
-                    Log.Warn("NFQWS", "правило не убралось: " + error);
+                if (cmd[i] == "-D" || cmd[i] == "-F" || cmd[i] == "-X" || cmd[i] == "-N") return true;
+                if (cmd[i] == "delete") return true;
+                if (cmd[i] == "add" && i + 1 < cmd.Length && cmd[i + 1] == "chain") return true;
             }
 
-            if (_appliedRules.Count > 0) Log.Info("NFQWS", "правила iptables убраны");
-            _appliedRules.Clear();
+            return false;
         }
 
-        private static string RunIptables(string[] args)
+        private void RemoveRules(string backend)
         {
-            try
+            if (string.IsNullOrEmpty(backend)) return;
+
+            foreach (string[] cmd in Firewall.TeardownCommands(backend))
             {
-                ProcessStartInfo psi = new ProcessStartInfo("iptables")
-                {
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true
-                };
+                string error;
+                Firewall.Run(cmd, out error);
 
-                foreach (string a in args) psi.ArgumentList.Add(a);
-
-                using (Process p = Process.Start(psi))
-                {
-                    if (p == null) return "iptables не запустился";
-
-                    string stderr = p.StandardError.ReadToEnd();
-                    p.WaitForExit(5000);
-
-                    if (p.ExitCode != 0)
-                        return string.IsNullOrEmpty(stderr) ? "код " + p.ExitCode : stderr.Trim();
-
-                    return null;
-                }
+                // Не ругаемся: если правил уже нет — это нормальный случай
+                // (например, Stop() после падения процесса).
             }
-            catch (Exception ex)
-            {
-                return ex.Message;
-            }
+
+            Log.Info("NFQWS", "правила " + backend + " убраны");
         }
 
         private void Raise(bool running, string error)
