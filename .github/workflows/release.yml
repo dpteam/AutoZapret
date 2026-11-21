@@ -27,6 +27,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # При ручном запуске собирать надо тот тег, который попросили, а не
+          # ветку, с которой нажали кнопку. Иначе workflow_dispatch собирает
+          # master и публикует его под чужим тегом.
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@v4
@@ -55,7 +60,13 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          $tag = '${{ github.ref_name }}'
+          # Два пути: push тега (ref_name = v1.2.3) и ручной запуск
+          # (inputs.tag = v1.2.3, а ref_name = имя ветки).
+          $tag = '${{ inputs.tag }}'
+
+          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = '${{ github.ref_name }}' }
+
+          $tag = $tag.Trim()
           $v = $tag.TrimStart('v', 'V')
 
           if ($v -notmatch '^\d+\.\d+\.\d+$') {
@@ -445,9 +456,12 @@ jobs:
             checksums.txt
 
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
+        # Ручной запуск тоже должен публиковать: иначе workflow_dispatch
+        # собирает пакеты и молча ничего не выкладывает.
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: |
             AutoZapret-portable.zip
             AutoZapret-*-setup.exe
