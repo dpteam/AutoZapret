@@ -157,3 +157,8 @@ preview-bridge.html
 # Linux: сборка рядом с исходниками (dotnet build кладёт bin/obj в каталог проекта).
 linux/bin/
 linux/obj/
+
+# Linux: build output and the test package. Not for the repo - the binary is
+# 37 MB and the tarball 32 MB, they are built, not stored.
+linux/dist/
+
