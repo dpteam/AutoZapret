@@ -110,6 +110,9 @@ namespace AutoZapret.App
                 Section("ловушки кэшей YouTube");
                 TestYoutubeTraps();
 
+                Section("маршруты большого hosts");
+                TestOptimizedRoutes();
+
                 Section("фейки");
                 TestPayloads();
 
@@ -2052,6 +2055,144 @@ namespace AutoZapret.App
 
             Check("ловушки: счётчик совпадает с файлом", counted == hosts.Count,
                 counted + " против " + hosts.Count);
+        }
+
+        /// <summary>
+        /// Маршруты большого набора hosts.
+        ///
+        /// В наборе был stub-адрес 191.217.212.16 («WLRUS / regional transit»),
+        /// на который висели 148 имён. Он отвечал на любой SNI сертификатом
+        /// для bretthart.top, поэтому браузер отказывался открывать Claude,
+        /// ChatGPT, Gemini, Spotify, x.ai и авторизацию Xbox — все 148 записей
+        /// были сломаны, и проверить это можно было только соединением.
+        ///
+        /// Здесь ловим возврат такого адреса и требуем, чтобы ключевые имена
+        /// вели не на него.
+        /// </summary>
+        private static void TestOptimizedRoutes()
+        {
+            string path = Path.Combine(Paths.BaseDir, "assets", "hosts", "hosts-optimized.txt");
+
+            Check("маршруты: файл на месте", File.Exists(path), path);
+
+            if (!File.Exists(path)) return;
+
+            string text = File.ReadAllText(path);
+
+            // Адрес-заглушка, который отдавал чужой сертификат.
+            //
+            // Смотрим только строки с данными: в шапке файла этот адрес
+            // упоминается намеренно — как объяснение, что было сломано.
+            bool stubInData = false;
+
+            foreach (string raw in text.Replace("\r\n", "\n").Split('\n'))
+            {
+                string line = raw.Trim();
+                if (line.Length == 0 || line.StartsWith("#", StringComparison.Ordinal)) continue;
+                if (line.StartsWith("191.217.212.16", StringComparison.Ordinal)) stubInData = true;
+            }
+
+            Check("маршруты: адрес-заглушка 191.217.212.16 убран", !stubInData,
+                stubInData ? "ЕСТЬ В ДАННЫХ" : "ok");
+
+            Dictionary<string, string> hostToIp =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            int routes = 0;
+            int blocks = 0;
+            int badLines = 0;
+            string firstBad = "";
+
+            foreach (string raw in text.Replace("\r\n", "\n").Split('\n'))
+            {
+                string line = raw.Trim();
+
+                if (line.Length == 0) continue;
+                if (line.StartsWith("#", StringComparison.Ordinal)) continue;
+
+                string[] parts = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+
+                System.Net.IPAddress parsed;
+
+                if (parts.Length < 2 || !System.Net.IPAddress.TryParse(parts[0], out parsed))
+                {
+                    badLines++;
+                    if (firstBad.Length == 0) firstBad = line;
+                    continue;
+                }
+
+                for (int i = 1; i < parts.Length; i++)
+                {
+                    string host = parts[i].ToLowerInvariant();
+
+                    if (parts[0] == "0.0.0.0" || parts[0].StartsWith("127.", StringComparison.Ordinal) ||
+                        parts[0] == "::1")
+                    {
+                        blocks++;
+                        continue;
+                    }
+
+                    routes++;
+
+                    if (hostToIp.ContainsKey(host))
+                    {
+                        badLines++;
+                        if (firstBad.Length == 0) firstBad = "дубль: " + host;
+                        continue;
+                    }
+
+                    hostToIp[host] = parts[0];
+                }
+            }
+
+            Check("маршруты: все строки разбираются", badLines == 0,
+                badLines == 0 ? routes + " маршрутов" : firstBad);
+
+            Check("маршруты: набор не пустой", routes >= 900, routes + " шт.");
+            Check("маршруты: блокировки на месте", blocks >= 200, blocks + " шт.");
+
+            // Ключевые имена, которые были сломаны, — теперь должны вести не на заглушку.
+            // Проверяем не «есть в файле», а «ведёт на конкретный проверенный адрес»:
+            // иначе тест пройдёт и при возврате мусора.
+            string[][] mustWork =
+            {
+                new[] { "gemini.google.com", "142.251.152.2" },
+                new[] { "claude.ai", "160.79.104.10" },
+                new[] { "chatgpt.com", "8.47.69.5" },
+                new[] { "spotify.com", "35.186.224.24" },
+                new[] { "api.openai.com", "162.159.140.245" },
+                new[] { "xsts.auth.xboxlive.com", "20.201.200.49" }
+            };
+
+            List<string> wrong = new List<string>();
+
+            foreach (string[] pair in mustWork)
+            {
+                string ip;
+
+                if (!hostToIp.TryGetValue(pair[0], out ip) || ip != pair[1])
+                    wrong.Add(pair[0] + " -> " + (ip ?? "нет") + " (ожидался " + pair[1] + ")");
+            }
+
+            Check("маршруты: ключевые сервисы на проверенных адресах", wrong.Count == 0,
+                wrong.Count == 0 ? "ok" : string.Join("; ", wrong.ToArray()));
+
+            // Приватные адреса в маршрутах бессмысленны: вне чужой сети они не работают.
+            List<string> privateOnes = new List<string>();
+
+            foreach (KeyValuePair<string, string> pair in hostToIp)
+            {
+                string ip = pair.Value;
+
+                if (ip.StartsWith("10.", StringComparison.Ordinal) ||
+                    ip.StartsWith("192.168.", StringComparison.Ordinal))
+                {
+                    privateOnes.Add(pair.Key + " -> " + ip);
+                }
+            }
+
+            Check("маршруты: приватных адресов нет", privateOnes.Count == 0,
+                privateOnes.Count == 0 ? "ok" : string.Join(", ", privateOnes.ToArray()));
         }
 
         private static void TestHosts()
