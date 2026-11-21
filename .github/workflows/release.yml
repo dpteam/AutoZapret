@@ -140,8 +140,11 @@ jobs:
           done
 
           # The executable bit INSIDE the archive. This is the check whose
+          # `sed 's|^\./||'` here would be wrong: in the verbose listing the
+          # name is at the END of the line (`./AutoZapret`), so the prefix is
+          # stripped everywhere, not only at the start.
           # absence let a release ship with 0644 on the binaries.
-          tar tzvf autozapret-linux-x64.tar.gz | sed 's|^\./||' > /tmp/verbose.txt
+          tar tzvf autozapret-linux-x64.tar.gz | sed 's|\./||g' > /tmp/verbose.txt
 
           for need in AutoZapret engine/bin/nfqws install.sh; do
             mode=$(grep -E " ${need}$" /tmp/verbose.txt | head -1 | cut -d' ' -f1)
