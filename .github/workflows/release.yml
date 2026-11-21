@@ -325,11 +325,24 @@ jobs:
         run: |
           # Установщик считается тем же способом, что и архив: человек должен
           # иметь возможность сверить оба файла перед запуском.
-          Get-ChildItem -Filter 'AutoZapret-portable.zip','AutoZapret-*-setup.exe' -ErrorAction SilentlyContinue | ForEach-Object {
-            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-            "$h  $($_.Name)" | Out-File -FilePath 'checksums.txt' -Encoding ASCII -Append
-            Write-Host "$h  $($_.Name)"
-          }
+          #
+          # -Filter принимает ОДНУ строку, а -Include без -Recurse не работает
+          # с -Path '.'; массив принимает только -Path.
+          Get-ChildItem -Path 'AutoZapret-portable.zip','AutoZapret-*-setup.exe' -File |
+            ForEach-Object {
+              $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              "$h  $($_.Name)" | Out-File -FilePath 'checksums.txt' -Encoding ASCII -Append
+              Write-Host "$h  $($_.Name)"
+            }
+
+          if (-not (Test-Path 'checksums.txt')) { throw "no checksums produced" }
+
+          # Оба файла обязаны быть в списке: без строки для установщика
+          # проверка скачанного бессмысленна.
+          $text = Get-Content 'checksums.txt' -Raw
+          if ($text -notmatch 'AutoZapret-portable\.zip') { throw "checksums.txt has no zip entry" }
+          if ($text -notmatch 'AutoZapret-.*-setup\.exe') { throw "checksums.txt has no installer entry" }
+          Write-Host "checksums.txt: 2 entries"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
