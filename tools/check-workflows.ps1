@@ -7,6 +7,58 @@ $files = Get-ChildItem (Join-Path $root '.github\workflows') -Filter '*.yml'
 $total = 0
 $failed = 0
 
+# ---------------------------------------------------------------------------
+# Структура YAML: работы на верхнем уровне jobs.
+#
+# Зачем отдельно от синтаксиса скриптов. Дописанная работа с отступом 6 вместо
+# 2 делает файл невалидным, и GitHub отвечает «conclusion: failure» с
+# `total_count: 0` работ — то есть падает ДО запуска чего-либо, и в логах нет
+# ни строчки. Именно так уехал linux-джоб: скрипты внутри были правильные.
+#
+# Как проверяем. Полноценного YAML-парсера в PowerShell нет, поэтому берём
+# якорь, который есть у каждой работы, — `runs-on:`. Внутри jobs он обязан
+# быть на отступе 4 (работа на 2 + 2). Если работа уехала на 6, то runs-on
+# окажется на 8, и это видно. Первая версия проверки запоминала отступ только
+# первой работы и потому пропускала сдвинутую вторую.
+# ---------------------------------------------------------------------------
+foreach ($file in $files) {
+    $lines = [System.IO.File]::ReadAllLines($file.FullName, [System.Text.Encoding]::UTF8)
+    $problems = New-Object System.Collections.ArrayList
+    $runsOnCount = 0
+
+    for ($n = 0; $n -lt $lines.Count; $n++) {
+        $line = $lines[$n]
+
+        # табы в YAML запрещены
+        if ($line -match "`t") {
+            [void]$problems.Add(("строка {0}: табуляция (YAML запрещает)" -f ($n + 1)))
+            continue
+        }
+
+        if ($line -match '^(\s*)runs-on:') {
+            $runsOnCount++
+            $indent = $Matches[1].Length
+
+            if ($indent -ne 4) {
+                [void]$problems.Add(("строка {0}: runs-on на отступе {1}, а нужен 4 — значит работа не на отступе 2, и GitHub файл не разберёт" -f ($n + 1), $indent))
+            }
+        }
+    }
+
+    if ($runsOnCount -eq 0) {
+        [void]$problems.Add('ни одной работы с runs-on — файл подозрительный')
+    }
+
+    if ($problems.Count -gt 0) {
+        $failed++
+        Write-Host ("[FAIL] {0} :: структура YAML" -f $file.Name) -ForegroundColor Red
+        foreach ($p in $problems) { Write-Host ("       " + $p) -ForegroundColor Red }
+    }
+    else {
+        Write-Host ("[ok]   {0} :: структура YAML ({1} работ)" -f $file.Name, $runsOnCount)
+    }
+}
+
 foreach ($file in $files) {
     $lines = [System.IO.File]::ReadAllLines($file.FullName, [System.Text.Encoding]::UTF8)
     $i = 0
