@@ -9,6 +9,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using AutoZapret.Core;
+using AutoZapret.Diag;
 using AutoZapret.Linux;
 using AutoZapret.Lists;
 using AutoZapret.Zapret;
@@ -81,6 +82,11 @@ namespace AutoZapret.Linux
             if (HasFlag(args, "--start")) return RunCli(start: true);
             if (HasFlag(args, "--stop")) return RunCli(start: false);
             if (HasFlag(args, "--status")) return PrintStatus();
+
+            // Проверка DNS на подмену. Не требует root: это обычные запросы
+            // к DNS и HTTPS. Поэтому годится и в termux на телефоне, где
+            // обход включить нельзя, а понять, подменяют ли DNS, нужно.
+            if (HasFlag(args, "--dns-check")) return RunDnsCheck(args);
 
             _bridge = new Bridge();
 
@@ -515,6 +521,87 @@ namespace AutoZapret.Linux
             return 0;
         }
 
+        // ------------------------------------------------------------------ DNS
+
+        /// <summary>
+        /// Проверка DNS на подмену без интерфейса и без root.
+        ///
+        ///   AutoZapret --dns-check
+        ///   AutoZapret --dns-check youtube.com discord.com
+        ///
+        /// Возвращает 0, если подмены не найдено, и 1, если найдена: так это
+        /// можно использовать в скрипте и в termux на телефоне.
+        ///
+        /// Тот же смысл, что у `curl -I --doh-url https://cloudflare-dns.com/dns-query`,
+        /// но показывает оба ответа рядом и называет причину.
+        /// </summary>
+        private static int RunDnsCheck(string[] args)
+        {
+            List<string> hosts = new List<string>();
+
+            foreach (string a in args)
+            {
+                if (a.StartsWith("-", StringComparison.Ordinal)) continue;
+                if (a.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)) continue;
+
+                // Аргументы — это имена хостов; остальное (пути, флаги) пропускаем.
+                if (a.IndexOf('.') > 0 && a.IndexOf('/') < 0 && a.IndexOf('\\') < 0)
+                    hosts.Add(a);
+            }
+
+            // Первый аргумент — путь к самому exe, его в список не берём.
+            if (hosts.Count > 0 && hosts[0].IndexOf(AppInfo.Name, StringComparison.OrdinalIgnoreCase) >= 0)
+                hosts.RemoveAt(0);
+
+            if (hosts.Count == 0) hosts = DnsCheck.DefaultHosts();
+
+            Console.WriteLine("проверка DNS на подмену");
+            Console.WriteLine("сравниваю ответ системного DNS с ответом DoH");
+            Console.WriteLine("");
+
+            DnsCheckReport report = DnsCheck.Run(hosts, 5000);
+
+            foreach (DnsCheckRow row in report.Rows)
+            {
+                string sys = row.SystemText();
+                string doh = row.DohText();
+
+                string mark;
+
+                switch (row.Verdict)
+                {
+                    case "ok": mark = "[ok]  "; break;
+                    case "differs": mark = "[~]   "; break;
+                    case "no-answer": mark = "[?]   "; break;
+                    default: mark = "[!]   "; break;
+                }
+
+                Console.WriteLine(mark + row.Host);
+                Console.WriteLine("        системный: " + (sys.Length > 0 ? sys : "нет ответа"));
+                Console.WriteLine("        DoH:       " + (doh.Length > 0 ? doh : "нет ответа"));
+
+                if (row.Detail.Length > 0) Console.WriteLine("        " + row.Detail);
+            }
+
+            Console.WriteLine("");
+
+            if (report.DohWorks)
+                Console.WriteLine("DoH-сервер: " + report.DohServer);
+            else
+                Console.WriteLine("DoH-сервер: недоступен");
+
+            Console.WriteLine(report.Summary());
+
+            if (!report.DohWorks)
+            {
+                Console.WriteLine("");
+                Console.WriteLine("Если DoH не работает, проверить подмену нечем. Проверьте вручную:");
+                Console.WriteLine("  curl -v -I --doh-url https://cloudflare-dns.com/dns-query https://github.com");
+            }
+
+            return report.ProblemCount == 0 && report.DohWorks ? 0 : 1;
+        }
+
         // ------------------------------------------------------------------ аргументы
 
         private static bool HasFlag(string[] args, string flag)
@@ -621,6 +708,38 @@ namespace AutoZapret.Linux
                     !args.Exists(a => a.Contains("${")),
                     args.Find(a => a.Contains("${")) ?? "ok");
             }
+
+            // ---- распознавание подмены DNS
+            //
+            // Проверяем не «работает ли сеть» (это зависит от машины), а саму
+            // логику: заглушки должны опознаваться, а настоящие адреса — НЕТ.
+            // Второе важнее первого: проверка, которая объявляет подменой
+            // обычный geo-DNS, будет отключена после второго ложного сигнала,
+            // и настоящую подмену уже никто не увидит.
+            check("заглушка 0.0.0.0 опознана",
+                DnsCheck.StubReason(IPAddress.Parse("0.0.0.0")).Length > 0,
+                DnsCheck.StubReason(IPAddress.Parse("0.0.0.0")));
+
+            check("заглушка 198.18.x (fake-IP) опознана",
+                DnsCheck.StubReason(IPAddress.Parse("198.18.0.1")).Length > 0,
+                DnsCheck.StubReason(IPAddress.Parse("198.18.0.1")));
+
+            check("приватный 10.x опознан",
+                DnsCheck.StubReason(IPAddress.Parse("10.1.2.3")).Length > 0,
+                DnsCheck.StubReason(IPAddress.Parse("10.1.2.3")));
+
+            check("приватный 192.168.x опознан",
+                DnsCheck.StubReason(IPAddress.Parse("192.168.1.1")).Length > 0,
+                DnsCheck.StubReason(IPAddress.Parse("192.168.1.1")));
+
+            // Отрицательный случай: настоящий адрес НЕ должен считаться заглушкой.
+            check("настоящий адрес не считается заглушкой",
+                DnsCheck.StubReason(IPAddress.Parse("140.82.121.4")).Length == 0,
+                "140.82.121.4 (github)");
+
+            check("адрес Google не считается заглушкой",
+                DnsCheck.StubReason(IPAddress.Parse("142.251.157.119")).Length == 0,
+                "142.251.157.119 (google)");
 
             // Движок ставит установщик рядом с бинарником. В CI его нет, и это
             // не провал: проверять надо то, что собрали мы, а не то, что должны

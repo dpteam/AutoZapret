@@ -72,6 +72,7 @@ namespace AutoZapret.App
                 return 0;
             }
             if (HasFlag(args, "--probe")) return Diag.DiagCommand.RunProbe(args);
+            if (HasFlag(args, "--dns-check")) return Diag.DnsCheckCommand.Run(args);
             if (HasFlag(args, "--strategies")) return Diag.DiagCommand.RunStrategies(args);
             if (HasFlag(args, "--import-strategies")) return Diag.DiagCommand.RunImportStrategies(args);
             if (HasFlag(args, "--check-bats")) return Diag.DiagCommand.RunCheckBats(args);

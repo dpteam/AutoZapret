@@ -61,6 +61,10 @@
          а не отвечали «не реализовано». -->
     <Compile Include="../src/Diag/ConnectivityProbe.cs" />
 
+    <!-- Проверка DNS на подмену: сравнение системного ответа с DoH.
+         Тоже чистый BCL, поэтому работает и на Linux. -->
+    <Compile Include="../src/Diag/DnsCheck.cs" />
+
     <!-- Своё -->
     <Compile Include="*.cs" />
   </ItemGroup>

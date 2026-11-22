@@ -402,6 +402,30 @@
         </div>
       </div>
 
+      <!-- Проверка DNS стоит рядом с проверкой сети, потому что это парный
+           вопрос: «сайт не открылся» и «сайт открылся не туда» — разные
+           поломки. Вторая не лечится ни одной стратегией, и без этой карточки
+           человек перебирает обход там, где виноват провайдерский DNS. -->
+      <div class="card">
+        <div class="card-title">Шаг 1в — не подменяют ли DNS</div>
+        <div class="row">
+          <div>
+            <div class="row-label">Сравнить системный DNS с DoH</div>
+            <div class="row-hint">
+              Если ответ подменён на заглушку, обход ни при чём
+              <span class="dim">· ~5 s</span>
+            </div>
+          </div>
+          <button class="btn diag-run-btn" id="btn-diag-dns">Проверить</button>
+        </div>
+        <div id="diag-dns-result" style="display:none;margin-top:12px">
+          <div class="diag-list" id="diag-dns-list"></div>
+          <div class="row" style="margin-top:10px">
+            <div class="row-hint" id="diag-dns-summary"></div>
+          </div>
+        </div>
+      </div>
+
       <div class="card">
         <div class="card-title">Шаг 1б — видит ли драйвер трафик</div>
         <div class="row">

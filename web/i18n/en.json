@@ -388,5 +388,8 @@
   "Паки исправлений": "Fix packs",
   "Отметьте нужное и примените. Каждый пак меняет только своё: домены уходят в личный список обхода, правило игры — отдельным профилем к выбранной стратегии. Всё видно и обратимо": "Tick what you need and apply. Each pack changes only its own thing: domains go to your personal bypass list, a game rule becomes a separate profile of the selected strategy. Everything is visible and reversible",
   "Запущено без прав root — обход не включится.": "Running without root — the bypass cannot be enabled.",
-  "nfqws открывает сокет к ядру и ставит правила iptables — это разрешено только root.": "nfqws opens a kernel socket and installs iptables rules — only root may do that."
+  "nfqws открывает сокет к ядру и ставит правила iptables — это разрешено только root.": "nfqws opens a kernel socket and installs iptables rules — only root may do that.",
+  "Шаг 1в — не подменяют ли DNS": "Step 1c — is DNS being tampered with",
+  "Сравнить системный DNS с DoH": "Compare system DNS with DoH",
+  "Если ответ подменён на заглушку, обход ни при чём": "If the answer is replaced with a stub, the bypass is not the problem"
 }

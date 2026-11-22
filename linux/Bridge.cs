@@ -272,6 +272,10 @@ namespace AutoZapret.Linux
                     StartProbe();
                     break;
 
+                case "dns.check":
+                    StartDnsCheck();
+                    break;
+
                 case "diag.test":
                     StartSweep(Json.GetInt(message, "count", 5));
                     break;
@@ -486,6 +490,61 @@ namespace AutoZapret.Linux
 
             thread.IsBackground = true;
             thread.Name = "probe-loop";
+            thread.Start();
+        }
+
+        /// <summary>
+        /// Проверка DNS на подмену: системный ответ против DoH.
+        ///
+        /// Root не нужен — это обычные DNS-запросы и HTTPS. Поэтому работает
+        /// и там, где обход включить нельзя.
+        /// </summary>
+        private void StartDnsCheck()
+        {
+            if (!BeginBusy("проверка DNS")) return;
+
+            Thread thread = new Thread(delegate()
+            {
+                try
+                {
+                    DnsCheckReport report = DnsCheck.Run(DnsCheck.DefaultHosts(), 5000);
+
+                    List<object> items = new List<object>();
+
+                    foreach (DnsCheckRow row in report.Rows)
+                    {
+                        items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                        {
+                            { "host", row.Host },
+                            { "system", row.SystemText() },
+                            { "doh", row.DohText() },
+                            { "verdict", row.Verdict },
+                            { "detail", row.Detail }
+                        });
+                    }
+
+                    Send(Msg("dns.check",
+                        "items", items,
+                        "summary", report.Summary(),
+                        "problem", report.ProblemCount > 0 || !report.DohWorks,
+                        "dohServer", report.DohServer,
+                        "dohWorks", report.DohWorks));
+
+                    Log.Info("DNS", report.Summary());
+                }
+                catch (Exception ex)
+                {
+                    Log.Exception("DNS", "проверка подмены", ex);
+                    Send(Msg("error", "message", "проверка DNS: " + ex.Message));
+                }
+                finally
+                {
+                    EndBusy();
+                }
+            });
+
+            thread.IsBackground = true;
+            thread.Name = "dns-check";
             thread.Start();
         }
 

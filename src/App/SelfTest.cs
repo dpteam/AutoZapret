@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Net;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
@@ -175,6 +176,9 @@ namespace AutoZapret.App
 
                 Section("безопасность системного DNS");
                 TestDnsSafety();
+
+                Section("проверка DNS на подмену");
+                TestDnsSpoofing();
 
                 Section("служба");
                 TestServiceManager();
@@ -7281,6 +7285,108 @@ namespace AutoZapret.App
         ///   * состояние по умолчанию — «выключено», без запасного сервера;
         ///   * StatusText не врёт.
         /// </summary>
+        /// <summary>
+        /// Распознавание подмены DNS.
+        ///
+        /// Проверяем саму логику, а не состояние сети: сеть зависит от машины,
+        /// и провал из-за провайдера — не повод краснеть CI. Важнее всего
+        /// ОТРИЦАТЕЛЬНЫЙ случай: настоящий адрес не должен считаться заглушкой.
+        /// Проверка, которая объявляет подменой обычный geo-DNS, будет
+        /// отключена после второго ложного сигнала, и настоящую подмену уже
+        /// никто не увидит.
+        /// </summary>
+        private static void TestDnsSpoofing()
+        {
+            string zero = Diag.DnsCheck.StubReason(IPAddress.Parse("0.0.0.0"));
+            Check("DNS-подмена: 0.0.0.0 опознан", zero.Length > 0, zero);
+
+            string fake = Diag.DnsCheck.StubReason(IPAddress.Parse("198.18.0.1"));
+            Check("DNS-подмена: fake-IP 198.18/15 опознан", fake.Length > 0, fake);
+
+            string private10 = Diag.DnsCheck.StubReason(IPAddress.Parse("10.1.2.3"));
+            Check("DNS-подмена: приватный 10.x опознан", private10.Length > 0, private10);
+
+            string private192 = Diag.DnsCheck.StubReason(IPAddress.Parse("192.168.1.1"));
+            Check("DNS-подмена: приватный 192.168.x опознан", private192.Length > 0, private192);
+
+            string cgnat = Diag.DnsCheck.StubReason(IPAddress.Parse("100.64.0.1"));
+            Check("DNS-подмена: CGNAT 100.64/10 опознан", cgnat.Length > 0, cgnat);
+
+            // Настоящие адреса не должны попадать под подозрение.
+            string github = Diag.DnsCheck.StubReason(IPAddress.Parse("140.82.121.4"));
+            Check("DNS-подмена: адрес GitHub не заглушка", github.Length == 0, "140.82.121.4");
+
+            string google = Diag.DnsCheck.StubReason(IPAddress.Parse("142.251.157.119"));
+            Check("DNS-подмена: адрес Google не заглушка", google.Length == 0, "142.251.157.119");
+
+            string cloudflare = Diag.DnsCheck.StubReason(IPAddress.Parse("104.16.132.229"));
+            Check("DNS-подмена: адрес Cloudflare не заглушка", cloudflare.Length == 0, "104.16.132.229");
+
+            // Список целей не должен быть пустым: иначе проверка «пройдёт»,
+            // ничего не проверив.
+            Check("DNS-подмена: есть цели по умолчанию",
+                Diag.DnsCheck.DefaultHosts().Count > 0,
+                Diag.DnsCheck.DefaultHosts().Count + " шт.");
+
+            // ---- вердикт целиком, на подготовленных данных
+            //
+            // Сеть тут не участвует: собираем строку руками и смотрим, что
+            // решит Judge. Это единственный способ проверить «поймает ли
+            // проверка подмену» без подменяющего провайдера.
+            Diag.DnsCheckRow spoofed = new Diag.DnsCheckRow
+            {
+                Host = "test",
+                System = new List<IPAddress> { IPAddress.Parse("0.0.0.0") },
+                Doh = new List<IPAddress> { IPAddress.Parse("140.82.121.4") }
+            };
+
+            Diag.DnsCheck.Judge(spoofed);
+            Check("DNS-подмена: заглушка даёт вердикт stub", spoofed.Verdict == "stub", spoofed.Verdict);
+
+            Diag.DnsCheckRow same = new Diag.DnsCheckRow
+            {
+                Host = "test",
+                System = new List<IPAddress> { IPAddress.Parse("140.82.121.4") },
+                Doh = new List<IPAddress> { IPAddress.Parse("140.82.121.4") }
+            };
+
+            Diag.DnsCheck.Judge(same);
+            Check("DNS-подмена: одинаковый ответ даёт ok", same.Verdict == "ok", same.Verdict);
+
+            Diag.DnsCheckRow differ = new Diag.DnsCheckRow
+            {
+                Host = "test",
+                System = new List<IPAddress> { IPAddress.Parse("140.82.121.4") },
+                Doh = new List<IPAddress> { IPAddress.Parse("140.82.121.3") }
+            };
+
+            Diag.DnsCheck.Judge(differ);
+            Check("DNS-подмена: разные адреса — differs, а не тревога",
+                differ.Verdict == "differs", differ.Verdict);
+
+            Diag.DnsCheckRow silent = new Diag.DnsCheckRow
+            {
+                Host = "test",
+                System = new List<IPAddress>(),
+                Doh = new List<IPAddress> { IPAddress.Parse("140.82.121.4") }
+            };
+
+            Diag.DnsCheck.Judge(silent);
+            Check("DNS-подмена: молчащий системный DNS — no-system",
+                silent.Verdict == "no-system", silent.Verdict);
+
+            Diag.DnsCheckRow noDoh = new Diag.DnsCheckRow
+            {
+                Host = "test",
+                System = new List<IPAddress> { IPAddress.Parse("140.82.121.4") },
+                Doh = new List<IPAddress>()
+            };
+
+            Diag.DnsCheck.Judge(noDoh);
+            Check("DNS-подмена: без DoH судить нельзя — no-doh",
+                noDoh.Verdict == "no-doh", noDoh.Verdict);
+        }
+
         private static void TestDnsSafety()
         {
             // Резолвер не запущен — самопроверка обязана отказать.
@@ -7319,7 +7425,6 @@ namespace AutoZapret.App
             // у человека. Проверяем только согласованность чтения.
             bool enabled = AutoZapret.Core.SystemDns.IsEnabled;
             string text = AutoZapret.Core.SystemDns.StatusText();
-
             Check("DNS: состояние читается без исключений",
                 text.Length > 0, text);
 

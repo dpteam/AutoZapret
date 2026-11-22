@@ -1830,6 +1830,14 @@
             send("diag.probe");
         });
 
+        var dnsCheck = document.getElementById("btn-diag-dns");
+        if (dnsCheck) dnsCheck.addEventListener("click", function () {
+            dnsCheck.disabled = true;
+            dnsCheck.textContent = "Проверяю…";
+            document.getElementById("diag-dns-result").style.display = "none";
+            send("dns.check");
+        });
+
         var deep = document.getElementById("btn-diag-deep");
         if (deep) deep.addEventListener("click", function () {
             deep.disabled = true;
@@ -2239,7 +2247,8 @@
     // Иначе «Проверить сеть» и «Подобрать» запускаются вместе и спорят за winws.
     var diagRunIds = [
         "btn-diag-sys", "btn-diag-bundle", "btn-diag-bundle-deep",
-        "btn-diag-probe", "btn-diag-deep", "btn-diag-tcp16", "btn-diag-test"
+        "btn-diag-probe", "btn-diag-deep", "btn-diag-tcp16", "btn-diag-test",
+        "btn-diag-dns"
     ];
 
     /**
@@ -2509,6 +2518,46 @@
             sum.style.marginTop = "10px";
             sum.textContent = msg.summary;
             box.appendChild(sum);
+        }
+
+        box.style.display = "";
+    }
+
+    // Проверка DNS на подмену.
+    //
+    // Показываем ОБА ответа рядом, а не только вердикт: человек, который видит
+    // «системный 0.0.0.0, DoH 140.82.121.4», понимает причину сразу, а
+    // «подмена найдена» без чисел заставляет верить на слово.
+    function renderDnsCheck(msg) {
+        var btn = document.getElementById("btn-diag-dns");
+        if (btn) { btn.disabled = false; btn.textContent = "Проверить"; }
+
+        var box = document.getElementById("diag-dns-result");
+        var list = document.getElementById("diag-dns-list");
+        if (!box || !list) return;
+
+        var items = msg.items || [];
+        list.innerHTML = "";
+
+        items.forEach(function (r) {
+            var bad = r.verdict === "stub" || r.verdict === "no-system" || r.verdict === "no-doh";
+            var note = r.verdict === "differs" ? "~" : (bad ? "✕" : "OK");
+
+            var div = document.createElement("div");
+            div.className = "diag-row";
+            div.innerHTML =
+                '<span class="badge ' + (bad ? "bad" : (r.verdict === "differs" ? "warn" : "ok")) + '">' + note + '</span>' +
+                '<span class="name">' + r.host + '</span>' +
+                '<span class="verdict ' + (bad ? "diag-bad" : (r.verdict === "differs" ? "diag-warn" : "diag-ok")) + '">' +
+                (r.system || "нет ответа") + '</span>' +
+                '<span class="detail">DoH: ' + (r.doh || "нет ответа") + (r.detail ? " · " + r.detail : "") + '</span>';
+            list.appendChild(div);
+        });
+
+        var summary = document.getElementById("diag-dns-summary");
+        if (summary) {
+            summary.textContent = msg.summary || "";
+            summary.className = "row-hint " + (msg.problem ? "diag-bad" : "");
         }
 
         box.style.display = "";
@@ -4363,6 +4412,10 @@
 
             case "diag.probe":
                 renderProbeResult(msg);
+                break;
+
+            case "dns.check":
+                renderDnsCheck(msg);
                 break;
 
             case "diag.system":

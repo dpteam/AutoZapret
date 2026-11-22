@@ -729,6 +729,14 @@ namespace AutoZapret.App
             bridge.Register("diag.probe", msg =>
                 RunDiag("probe", "проверка сети без обхода", RunProbeUi, true));
 
+            // Проверка DNS на подмену: системный ответ против DoH.
+            //
+            // Права администратора не нужны (обычные DNS-запросы и HTTPS),
+            // поэтому это первое, что имеет смысл предложить человеку, у
+            // которого «сайт открывается, но не туда».
+            bridge.Register("dns.check", msg =>
+                RunDiag("dns-check", "проверка DNS", RunDnsCheckUi, false));
+
             bridge.Register("diag.tcp16", msg =>
             {
                 int count = Json.GetInt(msg, "count", 8);
@@ -4503,6 +4511,48 @@ namespace AutoZapret.App
                 summary += " · zapret'ом не лечится: " + string.Join(", ", proxyOnly.ToArray());
 
             _form.Bridge.Send(WebBridge.Msg("diag.probe", "items", items, "summary", summary));
+        }
+
+        /// <summary>
+        /// Проверка DNS на подмену: системный ответ против DoH.
+        ///
+        /// Показываем оба ответа рядом, а не только вердикт: человек, который
+        /// видит «системный 0.0.0.0, DoH 140.82.121.4», понимает причину
+        /// сразу, а «подмена найдена» без чисел заставляет верить на слово.
+        /// </summary>
+        private void RunDnsCheckUi(CancellationToken token)
+        {
+            DiagProgress("сравниваю системный DNS с DoH…");
+
+            DnsCheckReport report = DnsCheck.Run(DnsCheck.DefaultHosts(), 5000);
+
+            if (DiagCancelled(token, "dns.check", "проверка остановлена"))
+                return;
+
+            List<object> items = new List<object>();
+
+            foreach (DnsCheckRow row in report.Rows)
+            {
+                items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    { "host", row.Host },
+                    { "system", row.SystemText() },
+                    { "doh", row.DohText() },
+                    { "verdict", row.Verdict },
+                    { "detail", row.Detail }
+                });
+            }
+
+            string summary = report.Summary();
+
+            _form.Bridge.Send(WebBridge.Msg("dns.check",
+                "items", items,
+                "summary", summary,
+                "problem", report.ProblemCount > 0 || !report.DohWorks,
+                "dohServer", report.DohServer,
+                "dohWorks", report.DohWorks));
+
+            Log.Info("DNS", summary);
         }
 
         private void RunTcp16Ui(int count, CancellationToken token)
