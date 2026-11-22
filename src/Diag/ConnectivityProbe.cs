@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -200,26 +201,60 @@ namespace AutoZapret.Diag
 
         // ------------------------------------------------------------------ curl
 
+        /// <summary>
+        /// Имя исполняемого файла curl на этой платформе.
+        ///
+        /// На Windows — `curl.exe`, на Linux — `curl`. Захардкоженный `curl.exe`
+        /// на Linux не находится никогда, и проверка молча уходила в HttpClient:
+        /// без `--resolve` (то есть без проверки конкретного адреса) и с именами
+        /// исключений вместо причин.
+        /// </summary>
+        private static string CurlExe
+        {
+            get { return OperatingSystem.IsWindows() ? "curl.exe" : "curl"; }
+        }
+
+        private static bool? _hasCurl;
+
+        /// <summary>
+        /// Есть ли curl. Проверяем запуском, а не `where`:
+        ///
+        ///   * `where` — команда Windows, на Linux её нет, и проверка всегда
+        ///     отвечала «нет», хотя curl есть в любом Debian;
+        ///   * результат кешируется: при переборе 141 стратегии по 7 целей это
+        ///     987 запусков, и каждый лишний процесс — это время впустую.
+        /// </summary>
         private static bool HasCurl()
         {
+            if (_hasCurl.HasValue) return _hasCurl.Value;
+
+            bool found = false;
+
             try
             {
                 ProcessStartInfo psi = new ProcessStartInfo
                 {
-                    FileName = "where",
-                    Arguments = "curl.exe",
+                    FileName = CurlExe,
+                    Arguments = "--version",
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true
                 };
+
                 using (Process p = Process.Start(psi))
                 {
-                    p.WaitForExit(3000);
-                    return p.ExitCode == 0;
+                    if (p != null)
+                    {
+                        p.WaitForExit(3000);
+                        found = p.HasExited && p.ExitCode == 0;
+                    }
                 }
             }
-            catch { return false; }
+            catch { found = false; }
+
+            _hasCurl = found;
+            return found;
         }
 
         private static ProbeResult CheckWithCurl(ProbeTarget target, int timeoutSec)
@@ -289,7 +324,7 @@ namespace AutoZapret.Diag
             {
                 ProcessStartInfo psi = new ProcessStartInfo
                 {
-                    FileName = "curl.exe",
+                    FileName = CurlExe,
                     // -4: только IPv4. Без этого на машинах с «мёртвым» IPv6
                     // все проверки падают, хотя браузер открывает сайт.
                     // errormsg + код возврата: «none соединения» не говорит ничего,
@@ -422,12 +457,52 @@ namespace AutoZapret.Diag
                 sw.Stop();
                 result.ElapsedMs = (int)sw.ElapsedMilliseconds;
                 result.Ok = false;
-                Exception inner = ex;
-                while (inner.InnerException != null) inner = inner.InnerException;
-                result.Error = inner.GetType().Name;
+                result.Error = HumanError(ex);
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Причина человеческими словами вместо имени класса исключения.
+        ///
+        /// «TaskCanceledException» в интерфейсе не объясняет ничего: человек
+        /// видит строку из мира .NET и не понимает, ждать ему, менять
+        /// стратегию или идти к провайдеру. Таймаут, отказ в соединении и
+        /// молчащий DNS — разные причины с разными выводами.
+        /// </summary>
+        private static string HumanError(Exception ex)
+        {
+            Exception inner = ex;
+            while (inner.InnerException != null) inner = inner.InnerException;
+
+            if (inner is TaskCanceledException || inner is OperationCanceledException) return "таймаут";
+
+            SocketException socket = inner as SocketException;
+
+            if (socket != null)
+            {
+                switch (socket.SocketErrorCode)
+                {
+                    case SocketError.HostNotFound:
+                    case SocketError.NoData:
+                        return "DNS не отвечает";
+                    case SocketError.ConnectionRefused:
+                        return "отказ в соединении";
+                    case SocketError.TimedOut:
+                        return "таймаут";
+                    case SocketError.NetworkUnreachable:
+                    case SocketError.HostUnreachable:
+                        return "сеть недоступна";
+                    default:
+                        return "нет соединения";
+                }
+            }
+
+            string message = inner.Message ?? "";
+            if (message.Length > 60) message = message.Substring(0, 60);
+
+            return message.Length > 0 ? message : inner.GetType().Name;
         }
 
         private static HttpClient CreateClient()

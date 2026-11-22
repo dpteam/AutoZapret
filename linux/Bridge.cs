@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using AutoZapret.Core;
+using AutoZapret.Diag;
 using AutoZapret.Zapret;
 
 namespace AutoZapret.Linux
@@ -33,6 +34,12 @@ namespace AutoZapret.Linux
         private DateTime _startedAt = DateTime.MinValue;
         private bool _strategiesLoaded;
         private NetStats _lastNetSample;
+
+        // Долгие операции (проверка, перебор) идут в своём потоке и должны
+        // уметь останавливаться: перебор 141 стратегии — это часы, и
+        // единственный способ прекратить его иначе — закрыть программу.
+        private CancellationTokenSource _busy;
+        private string _busyName = "";
 
         public Bridge()
         {
@@ -244,6 +251,48 @@ namespace AutoZapret.Linux
                     break;
                 }
 
+                case "logs.get":
+                {
+                    List<object> lines = new List<object>();
+
+                    foreach (LogEntry entry in Log.Snapshot()) lines.Add(entry.ToLine());
+
+                    Send(Msg("logs", "lines", lines, "file", Log.CurrentFile ?? ""));
+                    break;
+                }
+
+                case "logs.clear":
+                {
+                    Log.Clear();
+                    Send(Msg("logs", "lines", new List<object>(), "file", Log.CurrentFile ?? ""));
+                    break;
+                }
+
+                case "diag.probe":
+                    StartProbe();
+                    break;
+
+                case "diag.test":
+                    StartSweep(Json.GetInt(message, "count", 5));
+                    break;
+
+                case "diag.cancel":
+                    CancelBusy();
+                    break;
+
+                case "diag.targets":
+                {
+                    // Сколько целей будет проверяться. Нужно ДО запуска: иначе
+                    // «проверило не всё» выясняется после долгого ожидания.
+                    List<ProbeTarget> targets = ConnectivityProbe.ZapretTargets();
+
+                    Send(Msg("diag.targets",
+                        "count", targets.Count,
+                        "source", "стандартный список",
+                        "note", targets.Count + " целей"));
+                    break;
+                }
+
                 default:
                     // Остальные действия (диагностика, hosts, прокси, обновления)
                     // на Linux ещё не реализованы. Молчать нельзя: иначе кнопка
@@ -349,6 +398,481 @@ namespace AutoZapret.Linux
                 "autoStartProtect", _settings.AutoStart,
                 "reconnectOnStrategy", _settings.ReconnectOnStrategy,
                 "serviceRestartOnStrategy", false));
+        }
+
+        // ------------------------------------------------------------------ проверки
+
+        /// <summary>
+        /// Проверка доступности без обхода: что открывается, а что нет.
+        ///
+        /// Это первое, что нужно человеку на новой машине: пока неизвестно,
+        /// что именно заблокировано, любая стратегия — угадывание.
+        /// </summary>
+        private void StartProbe()
+        {
+            if (!BeginBusy("проверка сети")) return;
+
+            CancellationToken token = _busy.Token;
+
+            Thread thread = new Thread(delegate()
+            {
+                bool wasRunning = _engine.IsRunning;
+                Strategy previous = wasRunning ? _store.Find(_settings.StrategyId) : null;
+
+                try
+                {
+                    // Кнопка говорит «проверка сети БЕЗ обхода», значит и мерить
+                    // надо без него: с включённым nfqws результат показывает
+                    // работу обхода, а не то, что блокирует провайдер.
+                    if (wasRunning) _engine.Stop();
+
+                    ConnectivityProbe probe = new ConnectivityProbe();
+
+                    // Цели только «zapret»: Telegram по HTTPS десинком не лечится,
+                    // и держать его в этой проверке значит обещать невозможное.
+                    ProbeReport report = probe.CheckAll(ConnectivityProbe.ZapretTargets(), 10, 4, token);
+
+                    if (token.IsCancellationRequested)
+                    {
+                        Send(Msg("diag.probe", "items", new List<object>(),
+                                 "summary", "проверка остановлена", "cancelled", true));
+                        return;
+                    }
+
+                    List<object> items = new List<object>();
+
+                    foreach (ProbeResult r in report.Results)
+                    {
+                        items.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                        {
+                            { "name", r.Name },
+                            { "ok", r.Ok },
+                            { "detail", r.Ok
+                                ? r.Status + " · " + r.ElapsedMs + " мс"
+                                : (r.Error.Length > 0 ? r.Error : "нет ответа") }
+                        });
+                    }
+
+                    string summary = "работает " + report.OkCount + " из " + report.Total;
+
+                    // «0 из 6» без причины не говорит ничего: то ли провайдер
+                    // режет, то ли DNS не отвечает, то ли сети нет вовсе.
+                    string why = report.FailureSummary();
+                    if (why.Length > 0) summary += " · не открылось: " + why;
+
+                    Send(Msg("diag.probe", "items", items, "summary", summary));
+                }
+                catch (Exception ex)
+                {
+                    Log.Exception("DIAG", "проверка сети", ex);
+                    Send(Msg("error", "message", "проверка сети: " + ex.Message));
+                }
+                finally
+                {
+                    // Обход был включён до проверки — возвращаем его. Иначе
+                    // человек нажал «Проверить» и остался без обхода, решив,
+                    // что сломалась программа.
+                    if (wasRunning && previous != null)
+                    {
+                        string error = _engine.Start(previous, _settings.GameFilter);
+
+                        if (error != null) Log.Warn("DIAG", "обход не вернулся после проверки: " + error);
+                    }
+
+                    SendState();
+                    EndBusy();
+                }
+            });
+
+            thread.IsBackground = true;
+            thread.Name = "probe-loop";
+            thread.Start();
+        }
+
+        /// <summary>
+        /// Перебор стратегий: включить каждую, проверить, выключить.
+        ///
+        /// Зачем на Linux: у другого провайдера рабочая стратегия другая, и
+        /// узнать её можно только опытом. На Windows это делает StrategyTester,
+        /// но он завязан на WinDivert и живёт в App; здесь — тот же порядок
+        /// действий, только через nfqws.
+        /// </summary>
+        private void StartSweep(int count)
+        {
+            if (!AppInfo.IsAdmin)
+            {
+                // Без root nfqws не откроет сокет к ядру, и каждая стратегия
+                // «не запустилась». Честнее сказать это сразу, чем показывать
+                // таблицу из нулей и заставлять искать причину.
+                //
+                // Служба упомянута не для полноты: она держит очередь 200, и
+                // пока она работает, перебор упрётся в «очередь занята» —
+                // снаружи это «перебор не работает».
+                string hint = "перебору нужны права root: остановите службу " +
+                              "(sudo systemctl stop autozapret) и запустите программу через sudo";
+
+                Log.Warn("DIAG", hint);
+                Send(Msg("diag.test", "items", new List<object>(), "summary", hint));
+                Send(Msg("notice", "text", hint));
+                return;
+            }
+
+            if (!BeginBusy("перебор стратегий")) return;
+
+            CancellationToken token = _busy.Token;
+
+            Thread thread = new Thread(delegate() { Sweep(count, token); });
+
+            thread.IsBackground = true;
+            thread.Name = "sweep-loop";
+            thread.Start();
+        }
+
+        private void Sweep(int count, CancellationToken token)
+        {
+            List<Strategy> pool = SweepOrder();
+
+            int total = count <= 0 || count >= pool.Count ? pool.Count : count;
+
+            List<ProbeTarget> targets = ConnectivityProbe.ZapretTargets();
+            ConnectivityProbe probe = new ConnectivityProbe();
+
+            List<object> items = new List<object>();
+
+            DateTime started = DateTime.UtcNow;
+
+            // Если обход уже работал, вернём его в конце: иначе после перебора
+            // человек остаётся без обхода и не понимает, почему.
+            string previousId = _settings.StrategyId;
+
+            bool cancelled = false;
+
+            try
+            {
+                for (int i = 0; i < total; i++)
+                {
+                    if (token.IsCancellationRequested) { cancelled = true; break; }
+
+                    Strategy strategy = pool[i];
+
+                    Send(Msg("diag.progress",
+                        "index", i + 1,
+                        "total", total,
+                        "line", strategy.Name,
+                        "elapsedSec", (long)(DateTime.UtcNow - started).TotalSeconds));
+
+                    Dictionary<string, object> item = TryStrategy(strategy, probe, targets, token);
+
+                    items.Add(item);
+
+                    // Победителя подтверждаем сразу: перебирать дальше, зная,
+                    // что уже есть рабочая, но не зная, держится ли она, —
+                    // это способ найти «работает через раз».
+                    int okCount = Convert.ToInt32(item["okCount"]);
+                    int allTargets = Convert.ToInt32(item["total"]);
+
+                    if (okCount == allTargets && allTargets > 0)
+                    {
+                        Confirm(strategy, probe, targets, item, token);
+                        cancelled = token.IsCancellationRequested;
+                        break;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Exception("DIAG", "перебор", ex);
+                Send(Msg("error", "message", "перебор: " + ex.Message));
+            }
+            finally
+            {
+                try { _engine.Stop(); } catch { }
+
+                // Возвращаем прежнюю стратегию, если она была выбрана.
+                if (previousId != null && previousId.Length > 0 && !token.IsCancellationRequested)
+                {
+                    Strategy previous = _store.Find(previousId);
+
+                    if (previous != null)
+                    {
+                        string error = _engine.Start(previous, _settings.GameFilter);
+                        if (error != null) Log.Warn("DIAG", "прежняя стратегия не вернулась: " + error);
+                    }
+                }
+
+                SendState();
+                EndBusy();
+            }
+
+            string summary = SweepSummary(items, cancelled);
+
+            Send(Msg("diag.test", "items", items, "summary", summary, "cancelled", cancelled));
+
+            Log.Info("DIAG", "перебор: " + summary);
+        }
+
+        /// <summary>
+        /// Порядок перебора.
+        ///
+        /// Свои стратегии — первыми. На Windows это уже ловили: перебор брал
+        /// первые N по алфавиту id, и импортированные стратегии не проверялись
+        /// вообще — человек добавлял набор и не видел его в результатах.
+        /// </summary>
+        private List<Strategy> SweepOrder()
+        {
+            List<Strategy> all = _store.ByEngine("v1");
+            List<Strategy> ordered = new List<Strategy>(all.Count);
+
+            foreach (Strategy s in all) if (s.Custom) ordered.Add(s);
+            foreach (Strategy s in all) if (!s.Custom) ordered.Add(s);
+
+            return ordered;
+        }
+
+        private Dictionary<string, object> TryStrategy(Strategy strategy, ConnectivityProbe probe,
+                                                       List<ProbeTarget> targets, CancellationToken token)
+        {
+            int okCount = 0;
+            int total = targets.Count;
+            int avgMs = 0;
+            bool alive = false;
+            string startError = null;
+            List<string> failed = new List<string>();
+            string reasons = "";
+
+            try
+            {
+                startError = _engine.Start(strategy, _settings.GameFilter);
+
+                if (startError == null)
+                {
+                    // Дать процессу подняться: правила уже стоят, но очередь
+                    // подхватывается не мгновенно, и первая проба иначе
+                    // показывает таймаут на рабочей стратегии.
+                    for (int wait = 0; wait < 12 && !_engine.IsRunning; wait++) Thread.Sleep(100);
+                    Thread.Sleep(400);
+
+                    alive = _engine.IsRunning;
+
+                    if (alive && !token.IsCancellationRequested)
+                    {
+                        ProbeReport report = probe.CheckAll(targets, 10, 4, token);
+
+                        okCount = report.OkCount;
+                        avgMs = report.AvgMs;
+                        reasons = report.FailureSummary();
+
+                        foreach (ProbeResult r in report.Results)
+                            if (!r.Ok) failed.Add(r.Name);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                startError = ex.Message;
+            }
+            finally
+            {
+                try { _engine.Stop(); } catch { }
+            }
+
+            if (startError != null) reasons = startError;
+
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                { "id", strategy.Id },
+                { "name", strategy.Name },
+                { "okCount", okCount },
+                { "total", total },
+                { "avgMs", avgMs },
+                { "score", Score(okCount, total, avgMs, alive) },
+                { "failed", failed },
+                { "reasons", reasons },
+                { "breakdown", "" },
+                { "confirmRequired", 0 },
+                { "confirmRounds", 0 },
+                { "confirmTotal", 0 }
+            };
+        }
+
+        /// <summary>
+        /// Повторная проверка победителя.
+        ///
+        /// Один замер — это один замер: DPI мог не успеть распознать, сеть
+        /// дёрнуться. На Windows без этого получалось «проверил — 6/6,
+        /// поставил — не работает». Три захода с паузой, нужно два.
+        /// </summary>
+        private void Confirm(Strategy strategy, ConnectivityProbe probe, List<ProbeTarget> targets,
+                             Dictionary<string, object> item, CancellationToken token)
+        {
+            const int rounds = 3;
+            const int required = 2;
+
+            int passed = 0;
+
+            for (int round = 0; round < rounds; round++)
+            {
+                if (token.IsCancellationRequested) break;
+
+                Send(Msg("diag.progress",
+                    "line", "подтверждаю «" + strategy.Name + "»: заход " + (round + 1) + " из " + rounds));
+
+                Thread.Sleep(700);
+
+                string error = _engine.Start(strategy, _settings.GameFilter);
+
+                if (error != null) continue;
+
+                for (int wait = 0; wait < 12 && !_engine.IsRunning; wait++) Thread.Sleep(100);
+                Thread.Sleep(400);
+
+                try
+                {
+                    if (_engine.IsRunning)
+                    {
+                        ProbeReport report = probe.CheckAll(targets, 10, 4, token);
+
+                        if (report.OkCount == report.Total && report.Total > 0) passed++;
+                    }
+                }
+                finally
+                {
+                    try { _engine.Stop(); } catch { }
+                }
+            }
+
+            item["confirmRequired"] = required;
+            item["confirmRounds"] = passed;
+            item["confirmTotal"] = rounds;
+        }
+
+        /// <summary>
+        /// Оценка стратегии: сколько целей пробила, минус штраф за медленность.
+        ///
+        /// Простая и объяснимая арифметика намеренно: сложный балл, который
+        /// нельзя пересчитать в голове, человеку ничего не говорит.
+        /// </summary>
+        private static int Score(int okCount, int total, int avgMs, bool alive)
+        {
+            if (!alive || total == 0) return 0;
+
+            int score = (int)Math.Round(100.0 * okCount / total);
+
+            if (okCount == 0) return 0;
+
+            // Больше 3 секунд на цель — уже заметно в браузере.
+            if (avgMs > 3000) score -= 10;
+            else if (avgMs > 1500) score -= 5;
+
+            return score < 0 ? 0 : score;
+        }
+
+        private static string SweepSummary(List<object> items, bool cancelled)
+        {
+            if (items.Count == 0) return cancelled ? "перебор остановлен" : "нет стратегий для перебора";
+
+            Dictionary<string, object> best = null;
+            int bestOk = -1;
+            int bestScore = -1;
+
+            foreach (object o in items)
+            {
+                Dictionary<string, object> item = o as Dictionary<string, object>;
+                if (item == null) continue;
+
+                int ok = Convert.ToInt32(item["okCount"]);
+                int score = Convert.ToInt32(item["score"]);
+
+                if (ok > bestOk || (ok == bestOk && score > bestScore))
+                {
+                    best = item;
+                    bestOk = ok;
+                    bestScore = score;
+                }
+            }
+
+            string text = "проверено " + items.Count;
+
+            if (best != null && bestOk > 0)
+            {
+                text += " · лучшая: «" + best["name"] + "» " + bestOk + "/" + best["total"] +
+                        ", счёт " + bestScore;
+
+                int rounds = Convert.ToInt32(best["confirmRounds"]);
+                int required = Convert.ToInt32(best["confirmRequired"]);
+
+                if (required > 0)
+                    text += rounds >= required
+                        ? " · подтверждена " + rounds + " из " + best["confirmTotal"]
+                        : " · повторная проверка не прошла";
+            }
+            else
+            {
+                text += " · ни одна не пробила ни одной цели";
+            }
+
+            if (cancelled) text += " · остановлено";
+
+            return text;
+        }
+
+        // ------------------------------------------------------------------ долгие операции
+
+        /// <summary>
+        /// Начать долгую операцию. Вторая одновременная не запускается: две
+        /// пробы сразу делят канал и обе показывают неправду.
+        /// </summary>
+        private bool BeginBusy(string name)
+        {
+            lock (_gate)
+            {
+                if (_busy != null)
+                {
+                    Send(Msg("notice", "text", "уже идёт: " + _busyName));
+                    return false;
+                }
+
+                _busy = new CancellationTokenSource();
+                _busyName = name;
+            }
+
+            // diag.state, а не только подсказка: страница по нему блокирует
+            // остальные кнопки проверок и включает «Отменить». Без этого
+            // «Проверить» и «Подобрать» можно запустить одновременно, и они
+            // начинают спорить за очередь nfqws.
+            Send(Msg("diag.state", "running", true, "title", name));
+            Send(Msg("diag.busy", "message", name + "…"));
+            return true;
+        }
+
+        private void EndBusy()
+        {
+            lock (_gate)
+            {
+                if (_busy != null) { _busy.Dispose(); _busy = null; }
+                _busyName = "";
+            }
+
+            // Снять «идёт проверка» обязательно на любом выходе, включая
+            // ошибку: иначе кнопки остаются заблокированными навсегда, и
+            // снаружи это «программа зависла».
+            Send(Msg("diag.state", "running", false, "title", ""));
+        }
+
+        private void CancelBusy()
+        {
+            CancellationTokenSource busy;
+
+            lock (_gate) { busy = _busy; }
+
+            if (busy == null)
+            {
+                Send(Msg("notice", "text", "нечего останавливать"));
+                return;
+            }
+
+            busy.Cancel();
+            Log.Info("DIAG", "остановка: " + _busyName);
         }
 
         public void SendStrategies()

@@ -2334,6 +2334,28 @@
         }
     }
 
+    // Всплывающее сообщение поверх любого экрана.
+    //
+    // Раньше ответ ядра «здесь не поддержано» приходил типом notice, которого
+    // в этом switch нет: он попадал в default и уходил в console.debug. То есть
+    // человек нажимал кнопку и не получал ничего — а это неотличимо от
+    // «программа сломалась».
+    var toastTimer = null;
+
+    function showToast(message) {
+        var el = document.getElementById("toast");
+        if (!el) return;
+
+        el.textContent = message || "";
+        el.classList.add("visible");
+
+        if (toastTimer) window.clearTimeout(toastTimer);
+
+        toastTimer = window.setTimeout(function () {
+            el.classList.remove("visible");
+        }, 6000);
+    }
+
     var lastBestStrategy = null;
 
     function renderBundle(msg) {
@@ -4643,6 +4665,17 @@
                     setTuneRunning(false);
                     text("custom-strategies-status", "Подбор прерван ошибкой: " + (msg.message || ""));
                 }
+
+                // Ошибка должна быть видна, а не только в консоли: у неё не
+                // всегда есть свой блок на странице (например, ответ на
+                // действие, которого на этом экране нет).
+                showToast(msg.message || t("Ошибка"));
+                break;
+
+            case "notice":
+                // Ядро сообщает, что действие здесь не поддержано, или даёт
+                // подсказку, которой нет своего места в разметке.
+                showToast(msg.text || msg.message || "");
                 break;
 
             default:

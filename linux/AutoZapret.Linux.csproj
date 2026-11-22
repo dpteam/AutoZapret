@@ -56,6 +56,11 @@
     <Compile Include="../src/Zapret/EngineInstaller.cs" />
     <Compile Include="../src/Zapret/FakeSweeper.cs" />
 
+    <!-- Проверка доступности: обычные сокеты и HttpClient, ничего Windows.
+         Нужна, чтобы «Проверить» и перебор стратегий работали как на Windows,
+         а не отвечали «не реализовано». -->
+    <Compile Include="../src/Diag/ConnectivityProbe.cs" />
+
     <!-- Своё -->
     <Compile Include="*.cs" />
   </ItemGroup>

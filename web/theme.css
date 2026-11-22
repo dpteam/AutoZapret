@@ -667,6 +667,39 @@ input:focus, select:focus { border-color: var(--accent-blue); }
     margin-bottom: 16px;
 }
 
+/* Всплывающее сообщение поверх любого экрана.
+   Зачем отдельный элемент: ядро отвечает «это действие здесь не поддержано»,
+   и раньше такой ответ уходил в неизвестный тип — то есть в console.debug.
+   Снаружи это «нажал кнопку, ничего не произошло». Подсказка диагностики не
+   подходит: она живёт на одном экране, а нажать могли на другом.
+
+   Цвета только через переменные: тема переопределяет их, и литерал здесь
+   сделал бы тост нечитаемым в светлой теме. */
+.toast {
+    position: fixed;
+    left: 50%;
+    bottom: 28px;
+    transform: translateX(-50%) translateY(12px);
+    max-width: min(560px, calc(100vw - 40px));
+    padding: 12px 18px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    border: 1px solid var(--border-light);
+    color: var(--text-primary);
+    box-shadow: var(--shadow);
+    font-size: 13px;
+    line-height: 1.45;
+    z-index: 999;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .18s ease, transform .18s ease;
+}
+
+.toast.visible {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
 .notice.warn {
     background: rgba(240,180,41,.07);
     border-color: rgba(240,180,41,.2);
