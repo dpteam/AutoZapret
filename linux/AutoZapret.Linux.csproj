@@ -31,9 +31,9 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
 
-    <Version>0.3.2</Version>
-    <FileVersion>0.3.2.0</FileVersion>
-    <AssemblyVersion>0.3.2.0</AssemblyVersion>
+    <Version>0.3.3</Version>
+    <FileVersion>0.3.3.0</FileVersion>
+    <AssemblyVersion>0.3.3.0</AssemblyVersion>
   </PropertyGroup>
 
   <ItemGroup>
