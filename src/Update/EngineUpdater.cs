@@ -4,7 +4,9 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Net;
+using System.Net.Http;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using AutoZapret.Core;
 using AutoZapret.Zapret;
@@ -114,6 +116,18 @@ namespace AutoZapret.Update
         public const string VersionUrl =
             "https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/main/.service/version.txt";
 
+        /// <summary>
+        /// Апстрим движка: bol-van/zapret.
+        ///
+        /// Зачем проверять отдельно: наш движок приходит пересобранным из
+        /// Flowseal, а тот берёт исходники bol-van. Нумерация у них разная, и
+        /// «у bol-van вышло новее» НЕ значит «надо обновляться»: Flowseal
+        /// пересобирает с патчами, и его версия может опережать тег bol-van.
+        /// Поэтому это сведение, а не предложение обновиться — иначе человек
+        /// гонится за тегом и теряет рабочий движок.
+        /// </summary>
+        public const string UpstreamAtom = "https://github.com/bol-van/zapret/releases.atom";
+
         private readonly string _engineDir;
         private readonly string _backupDir;
 
@@ -155,12 +169,49 @@ namespace AutoZapret.Update
             check.LatestVersion = latest;
             check.Url = "https://github.com/Flowseal/zapret-discord-youtube";
 
-            check.Message = check.HasUpdate
+            // Апстрим bol-van — отдельной строкой. Нумерация другая, поэтому
+            // это сведение, а не повод обновляться (см. комментарий у
+            // UpstreamAtom).
+            string upstream = UpstreamVersion();
+
+            string message = check.HasUpdate
                 ? "доступна версия " + latest + " (сейчас " + (current.Length > 0 ? current : "нет") + ")"
                 : "установлена последняя версия";
 
+            if (upstream.Length > 0) message += " · апстрим zapret: " + upstream;
+
+            check.Message = message;
+
             Log.Info("UPD", "движок: " + check.Message);
             return check;
+        }
+
+        /// <summary>
+        /// Последний тег bol-van/zapret. Пусто — не узнали (нет сети).
+        ///
+        /// Через atom-фид, а не API: у API лимит 60 запросов в час на адрес, и
+        /// при частых проверках он кончается молча, показывая «не удалось».
+        /// </summary>
+        public static string UpstreamVersion()
+        {
+            try
+            {
+                using (HttpClient http = new HttpClient())
+                {
+                    http.Timeout = TimeSpan.FromSeconds(10);
+
+                    string atom = http.GetStringAsync(UpstreamAtom).GetAwaiter().GetResult();
+
+                    Match m = Regex.Match(atom, "/releases/tag/(v?[0-9][0-9A-Za-z.\\-]*)");
+
+                    return m.Success ? m.Groups[1].Value : "";
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Debug("UPD", "апстрим zapret: " + ex.Message);
+                return "";
+            }
         }
 
         /// <summary>

@@ -26,7 +26,7 @@ namespace AutoZapret.Update
     /// </summary>
     public sealed class SelfUpdater
     {
-        public const string Owner = "DPT";
+        public const string Owner = "dpteam";
         public const string Repo = "AutoZapret";
 
         private static readonly TimeSpan CacheTtl = TimeSpan.FromHours(1);
@@ -189,8 +189,12 @@ namespace AutoZapret.Update
                 HttpWebResponse response = ex.Response as HttpWebResponse;
                 if (response != null)
                 {
-                    Log.Debug("UPD", "API вернул " + (int)response.StatusCode);
+                    Log.Debug("UPD", "GET " + url + " -> " + (int)response.StatusCode);
                     response.Dispose();
+                }
+                else
+                {
+                    Log.Debug("UPD", "GET " + url + " -> " + ex.Status + ": " + ex.Message);
                 }
                 return null;
             }
@@ -209,7 +213,14 @@ namespace AutoZapret.Update
                 // порядок в Atom — по дате, а не по номеру
                 string best = null;
 
-                foreach (Match match in Regex.Matches(xml, @"<id>tag:github\.com[^<]*?/(v?[\d][^<]*)</id>"))
+                // Группа версии — без слеша и до самого `</id>`.
+                //
+                // Прежний шаблон `/(v?[\d][^<]*)</id>` захватывал ещё и номер
+                // репозитория: `<id>tag:github.com,2008:Repository/1444877497/v0.3.2</id>`
+                // давал `1444877497/v0.3.2`, SanitizeTag такое отбрасывал, и
+                // запасной путь не срабатывал НИКОГДА — при недоступном API
+                // проверка обновлений всегда отвечала «не удалось».
+                foreach (Match match in Regex.Matches(xml, @"<id>tag:github\.com[^<]*?/(v?[0-9][0-9A-Za-z.\-]*)</id>"))
                 {
                     string tag = SanitizeTag(match.Groups[1].Value, IsBeta);
                     if (tag == null) continue;

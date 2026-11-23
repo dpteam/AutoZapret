@@ -183,6 +183,9 @@ namespace AutoZapret.App
                 Section("перевод стратегий v1 в v2");
                 TestV2Converter();
 
+                Section("источники обновлений");
+                TestUpdateSources();
+
                 Section("служба");
                 TestServiceManager();
 
@@ -7516,6 +7519,73 @@ namespace AutoZapret.App
             Diag.DnsCheck.Judge(noDoh);
             Check("DNS-подмена: без DoH судить нельзя — no-doh",
                 noDoh.Verdict == "no-doh", noDoh.Verdict);
+        }
+
+        /// <summary>
+        /// Источники обновлений.
+        ///
+        /// Проверяем адреса, а не константы: ошибка «владелец репозитория
+        /// написан как DPT вместо dpteam» выглядит правильно в коде и делает
+        /// самообновление неработающим навсегда — программа честно сообщает
+        /// «не удалось проверить», и человек считает, что виноват интернет.
+        /// Ровно это и было найдено: API отвечал 403, лента — 404.
+        ///
+        /// Сети может не быть: тогда Skip, а не провал.
+        /// </summary>
+        private static void TestUpdateSources()
+        {
+            string atom = "https://github.com/" + AutoZapret.Update.SelfUpdater.Owner +
+                          "/" + AutoZapret.Update.SelfUpdater.Repo + "/releases.atom";
+
+            Check("обновления: адрес релизов собран", atom.IndexOf("//github.com/", StringComparison.Ordinal) > 0, atom);
+
+            try
+            {
+                System.Net.HttpWebRequest request = (System.Net.HttpWebRequest)System.Net.WebRequest.Create(atom);
+                request.UserAgent = "AutoZapret/" + AppInfo.Version;
+                request.Timeout = 8000;
+                request.Method = "HEAD";
+
+                using (System.Net.HttpWebResponse response = (System.Net.HttpWebResponse)request.GetResponse())
+                {
+                    int code = (int)response.StatusCode;
+
+                    Check("обновления: лента релизов доступна", code == 200, "HTTP " + code);
+                }
+            }
+            catch (System.Net.WebException ex)
+            {
+                System.Net.HttpWebResponse response = ex.Response as System.Net.HttpWebResponse;
+
+                if (response == null)
+                {
+                    // Нет сети — это не поломка кода.
+                    Skip("обновления: лента релизов доступна", "нет сети");
+                }
+                else
+                {
+                    int code = (int)response.StatusCode;
+                    response.Dispose();
+
+                    // 404 = неверный владелец или имя репозитория. Это всегда
+                    // ошибка в коде, а не «нет сети»: GitHub на существующий
+                    // репозиторий отвечает 200 и без авторизации.
+                    Check("обновления: лента релизов доступна", false,
+                        "HTTP " + code + " — проверьте Owner/Repo в SelfUpdater");
+                }
+            }
+            catch (Exception ex)
+            {
+                Skip("обновления: лента релизов доступна", ex.Message);
+            }
+
+            // Апстрим движка: тот же принцип, другая константа.
+            string upstream = AutoZapret.Update.EngineUpdater.UpstreamVersion();
+
+            if (upstream.Length == 0)
+                Skip("обновления: апстрим zapret доступен", "нет сети");
+            else
+                Check("обновления: апстрим zapret доступен", true, upstream);
         }
 
         private static void TestDnsSafety()
