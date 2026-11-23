@@ -65,9 +65,16 @@ try {
 
     $zipPath = Join-Path $work 'AutoZapret-portable.zip'
 
-    # ВАЖНО: -Path $stage (папка целиком), а не "$stage/*".
-    # Со звёздочкой содержимое ложится в корень архива и проверка ниже падает.
-    Compress-Archive -Path $stage -DestinationPath $zipPath -Force
+    # Упаковка через tools\pack-zip.ps1, а НЕ Compress-Archive.
+    #
+    # PowerShell 5.1 пишет в zip обратные слеши, и такой архив распаковывается
+    # в один файл вместо дерева каталогов — программа после этого не находит
+    # ни паки исправлений, ни hosts, ни фейки. Проверка ниже специально
+    # смотрит на разделители, а не нормализует их.
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'tools\pack-zip.ps1') `
+        -Source $stage -Destination $zipPath -Prefix 'AutoZapret'
+
+    if ($LASTEXITCODE -ne 0) { throw "pack-zip failed with $LASTEXITCODE" }
 
     $mb = [int]((Get-Item $zipPath).Length / 1MB)
     Write-Host "package: $mb MB"
@@ -77,15 +84,35 @@ try {
     $zip = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
 
     try {
-        $names = $zip.Entries | ForEach-Object { $_.FullName.Replace('\', '/') }
+        # Разделители — отдельная проверка ДО нормализации. Раньше здесь стояло
+        # `$_.FullName.Replace('\','/')`, то есть проверка намеренно смотрела
+        # сквозь дефект, ради которого она и нужна.
+        $backslash = @($zip.Entries | Where-Object { $_.FullName.Contains('\') })
 
+        if ($backslash.Count -gt 0) {
+            Write-Host ("[FAIL] записей с обратными слешами: " + $backslash.Count)
+            $backslash | Select-Object -First 3 | ForEach-Object { Write-Host ("       " + $_.FullName) }
+            throw "zip has backslash separators - it will extract into a single flat file"
+        }
+
+        $names = $zip.Entries | ForEach-Object { $_.FullName }
+
+        # Состав: всё нужное для работы без интернета.
         $need = @(
             'AutoZapret/AutoZapret.exe',
             'AutoZapret/WebView2Loader.dll',
-            'AutoZapret/assets/strategies/strategies.v1.json',
-            'AutoZapret/assets/fakes/fakes.json',
             'AutoZapret/engine/bin/winws.exe',
+            'AutoZapret/engine/bin/winws2.exe',
             'AutoZapret/engine/bin/WinDivert64.sys',
+            'AutoZapret/engine/lua/blobs.lua',
+            'AutoZapret/assets/strategies/strategies.v1.json',
+            'AutoZapret/assets/strategies/strategies.v2.json',
+            'AutoZapret/assets/fakes/fakes.json',
+            'AutoZapret/assets/fakes/stun.bin',
+            'AutoZapret/assets/lists/ipset-all.txt',
+            'AutoZapret/assets/lists/list-general.txt',
+            'AutoZapret/assets/hosts/fixes.json',
+            'AutoZapret/assets/fixes/packs.json',
             'AutoZapret/tools/fetch-engine.ps1',
             'AutoZapret/LICENSE',
             'AutoZapret/licenses/zapret-MIT.txt',

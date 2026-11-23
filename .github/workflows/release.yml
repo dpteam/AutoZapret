@@ -131,7 +131,14 @@ jobs:
           # grep exits early, tar takes SIGPIPE, the whole pipeline fails.
           tar tzf autozapret-linux-x64.tar.gz | sed 's|^\./||' > /tmp/archive.txt
 
-          for need in AutoZapret engine/bin/nfqws install.sh assets/strategies/strategies.v1.json; do
+          # Everything needed to work OFFLINE: the person may have no network
+          # at all, and there is nothing to download with.
+          for need in AutoZapret engine/bin/nfqws install.sh \
+                      assets/strategies/strategies.v1.json \
+                      assets/strategies/strategies.v2.json \
+                      assets/fakes/fakes.json assets/fakes/stun.bin \
+                      engine/lists/ipset-all.txt engine/lists/list-general.txt \
+                      assets/hosts/fixes.json assets/fixes/packs.json; do
             if ! grep -qx "$need" /tmp/archive.txt; then
               echo "::error::archive has no $need"
               head -25 /tmp/archive.txt
@@ -365,9 +372,15 @@ jobs:
           # Архив кладём ВМЕСТЕ с папкой, а не «содержимым папки»: с
           # `-Path "$stage/*"` PowerShell раскладывает файлы в корень архива, и
           # человек, распаковав, получает AutoZapret.exe вперемешку с assets.
-          # Проверка ниже ждёт префикс `AutoZapret/`, поэтому такой архив она
-          # отклоняет — и это правильно.
-          Compress-Archive -Path $stage -DestinationPath 'AutoZapret-portable.zip' -Force
+          #
+          # Упаковка через tools\pack-zip.ps1, а не Compress-Archive: в
+          # PowerShell 5.1 он пишет обратные слеши, и такой архив распаковывается
+          # в один файл вместо дерева каталогов. На раннере сейчас pwsh 7 и
+          # этого не видно — но зависимость от версии PowerShell в упаковке
+          # релиза нам не нужна.
+          & pwsh -NoProfile -File tools/pack-zip.ps1 -Source $stage -Destination 'AutoZapret-portable.zip' -Prefix 'AutoZapret'
+          if ($LASTEXITCODE -ne 0) { throw "pack-zip failed with $LASTEXITCODE" }
+
           $mb = [int]((Get-Item 'AutoZapret-portable.zip').Length / 1MB)
           Write-Host "package: $mb MB"
           if ($mb -lt 20) { throw "package too small ($mb MB)" }
@@ -376,13 +389,31 @@ jobs:
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path 'AutoZapret-portable.zip'))
           try {
-            $names = $zip.Entries | ForEach-Object { $_.FullName.Replace('\','/') }
+            # Разделители — отдельно и до нормализации: архив с обратными
+            # слешами содержит все файлы и при этом распаковывается в мусор.
+            $backslash = @($zip.Entries | Where-Object { $_.FullName.Contains('\') })
+            if ($backslash.Count -gt 0) {
+              throw ("в архиве " + $backslash.Count + " записей с обратными слешами - распакуется в мусор")
+            }
+
+            $names = $zip.Entries | ForEach-Object { $_.FullName }
+
+            # Всё нужное для работы БЕЗ интернета: у человека может быть плохо
+            # с сетью, и докачивать ему нечем.
             foreach ($need in @('AutoZapret/AutoZapret.exe',
                                 'AutoZapret/WebView2Loader.dll',
-                                'AutoZapret/assets/strategies/strategies.v1.json',
-                                'AutoZapret/assets/fakes/fakes.json',
                                 'AutoZapret/engine/bin/winws.exe',
+                                'AutoZapret/engine/bin/winws2.exe',
                                 'AutoZapret/engine/bin/WinDivert64.sys',
+                                'AutoZapret/engine/lua/blobs.lua',
+                                'AutoZapret/assets/strategies/strategies.v1.json',
+                                'AutoZapret/assets/strategies/strategies.v2.json',
+                                'AutoZapret/assets/fakes/fakes.json',
+                                'AutoZapret/assets/fakes/stun.bin',
+                                'AutoZapret/assets/lists/ipset-all.txt',
+                                'AutoZapret/assets/lists/list-general.txt',
+                                'AutoZapret/assets/hosts/fixes.json',
+                                'AutoZapret/assets/fixes/packs.json',
                                 'AutoZapret/tools/fetch-engine.ps1',
                                 'AutoZapret/LICENSE',
                                 'AutoZapret/licenses/zapret-MIT.txt',

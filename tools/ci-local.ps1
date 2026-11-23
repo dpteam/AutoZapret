@@ -444,8 +444,25 @@ if ($junk.Count -gt 0) {
 $zipName = "autozapret-$Version-$sha.zip"
 $zipPath = Join-Path $artifacts $zipName
 
-if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-Compress-Archive -Path (Join-Path $stageDir '*') -DestinationPath $zipPath -Force
+# Упаковка через свой pack-zip, а НЕ Compress-Archive.
+#
+# PowerShell 5.1 пишет в zip обратные слеши (`assets\fixes\packs.json`).
+# 7-Zip и WinRAR считают обратный слеш частью имени файла, поэтому после
+# распаковки получается один файл со странным именем вместо дерева — и
+# программа не находит ни паки исправлений, ни hosts, ни фейки. Снаружи это
+# «в паке пусто», хотя все файлы в архиве есть.
+#
+# Топ-каталог внутри архива: распаковка не рассыпает файлы по текущему
+# каталогу, а создаёт один подкаталог (имя без версии — обновление поверх
+# старой папки не плодит копии).
+$code = Invoke-Step 'powershell' @('-NoProfile', '-ExecutionPolicy', 'Bypass',
+    '-File', 'tools\pack-zip.ps1',
+    '-Source', $stageDir,
+    '-Destination', $zipPath,
+    '-Prefix', 'AutoZapret')
+
+if ($code -ne 0) { throw "pack-zip failed with $code" }
+
 Remove-Item $stageDir -Recurse -Force -ErrorAction SilentlyContinue
 
 $zipMb = [Math]::Round((Get-Item $zipPath).Length / 1MB, 1)
