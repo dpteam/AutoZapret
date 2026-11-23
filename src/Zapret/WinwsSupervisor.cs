@@ -154,6 +154,33 @@ namespace AutoZapret.Zapret
             SetState(ProtectionState.Starting, null);
 
             List<string> args = strategy.BuildArguments(placeholders);
+
+            // ---- стратегия v1 под движком v2
+            //
+            // zapret 2 не понимает `--dpi-desync*`: у него `--lua-desync*`.
+            // Раньше такая стратегия просто не запускалась, и человек видел
+            // «движок не стартовал» без причины.
+            //
+            // Переводим — но только если перевод ПОЛНЫЙ. Если хоть один
+            // аргумент перевести нельзя, отказываемся целиком: частично
+            // переведённая стратегия запускается и молча ничего не делает,
+            // и виноватым окажется движок.
+            if (kind == EngineKind.V2 && string.Equals(strategy.Engine, "v1", StringComparison.OrdinalIgnoreCase))
+            {
+                Dictionary<string, string> blobs = V2Converter.LoadBlobs(_engine.LuaDir);
+                V2Conversion converted = V2Converter.Convert(args, blobs, strategy.Name);
+
+                if (!converted.Ok)
+                {
+                    Log.Warn("WINWS", "стратегия v1 не переводится на zapret 2: " + converted.Reason);
+                    return "эта стратегия не переводится на zapret 2 — " + converted.Reason +
+                           ". Выберите стратегию из набора v2 или переключитесь на движок zapret 1";
+                }
+
+                Log.Info("WINWS", "стратегия v1 переведена в v2: " + converted.Args.Count + " аргументов");
+                args = converted.Args;
+            }
+
             if (extraArgs != null && extraArgs.Count > 0) args = MergeArgs(args, extraArgs);
 
             args = ApplyWinDivertPriority(kind, args, noPriority, out bool priorityAdded);

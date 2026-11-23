@@ -2642,6 +2642,158 @@ namespace AutoZapret.Diag
         /// --strategies: список стратегий с идентификаторами (для отладки и для --only).
         /// Заодно создаёт кэш strategies.v1.json.
         /// </summary>
+        /// <summary>
+        /// --convert-v2 [id]: перевести стратегию v1 в аргументы winws2.
+        ///
+        /// Зачем команда: перевод — это то, что легко сделать «на глаз» и
+        /// получить стратегию, которая запускается и ничего не делает. Здесь
+        /// видно ровно то, что уйдёт в winws2, и с каким аргументом перевод
+        /// отказался работать.
+        ///
+        /// Код возврата 0 — перевод полный, 1 — есть непереводимые аргументы.
+        /// </summary>
+        public static int RunConvertV2(string[] args)
+        {
+            using (ZapretService svc = new ZapretService())
+            {
+                svc.EnsureStrategies();
+
+                string id = "";
+
+                foreach (string a in args)
+                {
+                    if (a.StartsWith("-", StringComparison.Ordinal)) continue;
+                    if (a.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (a.IndexOf('\\') >= 0 || a.IndexOf('/') >= 0) continue;
+                    id = a;
+                    break;
+                }
+
+                Strategy strategy = id.Length > 0 ? svc.Strategies.Find(id) : null;
+
+                if (strategy == null && id.Length > 0)
+                {
+                    Console.WriteLine("стратегия «" + id + "» не найдена");
+                    return 2;
+                }
+
+                if (strategy == null)
+                {
+                    foreach (Strategy s in svc.Strategies.ByEngine("v1"))
+                    {
+                        strategy = s;
+                        break;
+                    }
+                }
+
+                if (strategy == null)
+                {
+                    Console.WriteLine("нет ни одной стратегии v1");
+                    return 2;
+                }
+
+                Dictionary<string, string> placeholders = svc.Engine.BuildPlaceholders("off");
+                List<string> v1 = strategy.BuildArguments(placeholders);
+
+                Dictionary<string, string> blobs = V2Converter.LoadBlobs(svc.Engine.LuaDir);
+
+                Console.WriteLine("стратегия: " + strategy.Id + " (" + strategy.Name + ")");
+                Console.WriteLine("алиасов в blobs.lua: " + blobs.Count);
+                Console.WriteLine("");
+                Console.WriteLine("v1 (" + v1.Count + " аргументов):");
+                foreach (string a in v1) Console.WriteLine("  " + a);
+
+                V2Conversion converted = V2Converter.Convert(v1, blobs, strategy.Name);
+
+                Console.WriteLine("");
+
+                if (!converted.Ok)
+                {
+                    Console.WriteLine("ПЕРЕВОД НЕВОЗМОЖЕН: " + converted.Reason);
+                    foreach (string u in converted.Unsupported) Console.WriteLine("  не переводится: " + u);
+                    return 1;
+                }
+
+                Console.WriteLine("v2 (" + converted.Args.Count + " аргументов):");
+                foreach (string a in converted.Args) Console.WriteLine("  " + a);
+
+                // Проверка настоящим движком: только он отвечает на вопрос,
+                // примет ли winws2 эту комбинацию. Наличие флага в бинарнике
+                // ничего не значит (см. AGENTS.md).
+                if (!svc.Engine.HasV2)
+                {
+                    Console.WriteLine("");
+                    Console.WriteLine("winws2.exe не установлен — проверить командой --dry-run нельзя");
+                    return 0;
+                }
+
+                string exe = System.IO.Path.Combine(svc.Engine.BinDir, EngineLocator.WinwsV2);
+
+                System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo(exe)
+                {
+                    WorkingDirectory = svc.Engine.BinDir,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+
+                foreach (string a in converted.Args) psi.ArgumentList.Add(a);
+                psi.ArgumentList.Add("--dry-run");
+
+                Console.WriteLine("");
+                Console.WriteLine("проверка: winws2 --dry-run");
+
+                System.Diagnostics.Process p;
+
+                try
+                {
+                    p = System.Diagnostics.Process.Start(psi);
+                }
+                catch (Exception ex)
+                {
+                    // У winws2.exe манифест requireAdministrator: без прав
+                    // Process.Start бросает Win32Exception 740. Это не ошибка
+                    // перевода, и падать на нём нельзя — иначе человек видит
+                    // «Unhandled exception» вместо «запустите от админа».
+                    Console.WriteLine("  не удалось запустить: " + ex.Message);
+                    Console.WriteLine("");
+                    Console.WriteLine("winws2 требует прав администратора. Проверьте вручную:");
+                    Console.WriteLine("  (запустите консоль от администратора)");
+                    Console.WriteLine("  cd " + svc.Engine.BinDir);
+                    Console.WriteLine("  winws2.exe " + string.Join(" ", converted.Args.ToArray()) + " --dry-run");
+
+                    return 0;
+                }
+
+                if (p == null)
+                {
+                    Console.WriteLine("  winws2 не запустился");
+                    return 1;
+                }
+
+                using (p)
+                {
+                    string stdout = p.StandardOutput.ReadToEnd();
+                    string stderr = p.StandardError.ReadToEnd();
+                    p.WaitForExit(20000);
+
+                    foreach (string line in (stdout + stderr).Split('\n'))
+                    {
+                        string trimmed = line.Trim();
+                        if (trimmed.Length > 0) Console.WriteLine("  " + trimmed);
+                    }
+
+                    Console.WriteLine("");
+                    Console.WriteLine(p.ExitCode == 0
+                        ? "winws2 принял конфигурацию"
+                        : "winws2 ОТКАЗАЛ (код " + p.ExitCode + ")");
+
+                    return p.ExitCode == 0 ? 0 : 1;
+                }
+            }
+        }
+
         public static int RunStrategies(string[] args)
         {
             using (ZapretService svc = new ZapretService())

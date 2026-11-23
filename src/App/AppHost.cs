@@ -763,7 +763,16 @@ namespace AutoZapret.App
             bridge.Register("diag.test", msg =>
             {
                 int count = Json.GetInt(msg, "count", 5);
-                RunDiag("test", "подбор стратегий", ct => RunTestUi(count, ct), true);
+
+                // Движок для перебора: пусто — «как в настройках».
+                //
+                // Нужен выбор, потому что у zapret 1 и 2 разные exe и разные
+                // наборы стратегий: рабочая под winws может не работать под
+                // winws2. Без выбора человеку пришлось бы менять движок в
+                // настройках и запускать перебор заново.
+                string engine = Json.GetString(msg, "engine", "");
+
+                RunDiag("test", "подбор стратегий", ct => RunTestUi(count, engine, ct), true);
             });
 
             // Сколько целей будет проверяться и по какому списку.
@@ -4726,7 +4735,7 @@ namespace AutoZapret.App
                 "summary", reason));
         }
 
-        private void RunTestUi(int count, CancellationToken token)
+        private void RunTestUi(int count, string engineOverride, CancellationToken token)
         {
             // Подбор стратегий запускает winws для каждой стратегии — без прав
             // это падало сырым Win32Exception, и выглядело как «подбор сломан».
@@ -4794,14 +4803,30 @@ namespace AutoZapret.App
 
             _zapret.EnsureStrategies();
 
-            // Перебираем стратегии ТЕКУЩЕГО движка: у v2 другой exe и lua,
+            // Перебираем стратегии выбранного движка: у v2 другой exe и lua,
             // стратегии v1 под ним просто не запустятся.
             //
             // Через StrategyEngineFor, а не сырой EngineKind: у «своего»
             // движка (own) стратегии лежат под engine="v1", и ByEngine("own")
             // возвращал пусто — перебор отказывал «для движка own нет
             // стратегий», хотя они есть и именно этот движок их исполняет.
-            string engine = StrategyEngine(_settings.EngineKind);
+            //
+            // engineOverride приходит из интерфейса: человек выбирает, каким
+            // движком подбирать, не меняя основной выбор в настройках.
+            string requested = string.IsNullOrEmpty(engineOverride)
+                ? _settings.EngineKind
+                : engineOverride;
+
+            string engine = StrategyEngine(requested);
+
+            // Движок мог быть выбран, но не установлен: v2 требует winws2.exe,
+            // и без него каждая стратегия «не запустилась». Честнее сказать
+            // это сразу, чем показывать таблицу из нулей.
+            if (string.Equals(engine, "v2", StringComparison.OrdinalIgnoreCase) && !_zapret.Engine.HasV2)
+            {
+                AbortTest("движок zapret 2 (winws2.exe) не установлен — обновите движок на главной");
+                return;
+            }
 
             // Порядок: СНАЧАЛА свои, потом остальные (см. SweepOrder).
             // count <= 0 — «все»: молча проверить 22 из 141 значит соврать
@@ -5633,14 +5658,75 @@ namespace AutoZapret.App
                 return;
             }
 
-            // UI показывает только стратегии выбранного движка
+            // UI показывает только стратегии выбранного движка.
+            //
+            // Исключение — движок v2: там дополнительно показываем стратегии
+            // v1, которые удаётся перевести. Иначе человек с набором .bat от
+            // zapret 1, переключившись на zapret 2, видел пустой список и
+            // решал, что его набор пропал.
+            //
+            // Непереводимые помечаем сразу, а не в момент запуска: выбрать
+            // стратегию и узнать, что она не запустится, — хуже, чем увидеть
+            // это в списке.
             string engine = strategyEngine;
             List<object> items = new List<object>();
+
+            bool addV1 = string.Equals(engine, "v2", StringComparison.OrdinalIgnoreCase);
+
+            List<Dictionary<string, object>> v1List = null;
+            Dictionary<string, string> blobs = null;
+
+            if (addV1)
+            {
+                try
+                {
+                    v1List = _zapret.DescribeStrategies("v1");
+                    blobs = V2Converter.LoadBlobs(_zapret.Engine.LuaDir);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn("WINWS", "список v1 для перевода: " + ex.Message);
+                }
+            }
+
             foreach (Dictionary<string, object> s in list)
             {
                 string itemEngine = s.ContainsKey("engine") ? Convert.ToString(s["engine"]) : "v1";
                 if (!string.Equals(itemEngine, engine, StringComparison.OrdinalIgnoreCase)) continue;
                 items.Add(s);
+            }
+
+            if (addV1 && v1List != null)
+            {
+                foreach (Dictionary<string, object> s in v1List)
+                {
+                    string id = s.ContainsKey("id") ? Convert.ToString(s["id"]) : "";
+
+                    Strategy strategy = id.Length > 0 ? _zapret.Strategies.Find(id) : null;
+                    if (strategy == null) continue;
+
+                    // Проверяем переводимость тем же кодом, которым будем
+                    // запускать: расхождение «в списке можно, при запуске нет»
+                    // — это ложь интерфейса.
+                    List<string> args = strategy.BuildArguments(_zapret.Engine.BuildPlaceholders("off"));
+                    V2Conversion converted = V2Converter.Convert(args, blobs, strategy.Name);
+
+                    Dictionary<string, object> copy =
+                        new Dictionary<string, object>(StringComparer.Ordinal);
+
+                    foreach (KeyValuePair<string, object> kv in s) copy[kv.Key] = kv.Value;
+
+                    copy["engine"] = "v1";
+                    copy["converted"] = true;
+                    copy["convertedOk"] = converted.Ok;
+
+                    copy["note"] = converted.Ok
+                        ? "из zapret 1, переводится на zapret 2"
+                        : "из zapret 1, НЕ переводится на zapret 2: " +
+                          string.Join(", ", converted.Unsupported.ToArray());
+
+                    items.Add(copy);
+                }
             }
 
             _form.Bridge.Send(WebBridge.Msg("strategies",

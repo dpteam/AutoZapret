@@ -504,6 +504,11 @@
             <div class="row-hint">Проверяются только заблокированные цели <span class="dim">· 2–5 min</span></div>
           </div>
           <div style="display:flex;gap:8px;align-items:center">
+            <select id="diag-test-engine" title="Каким движком проверять стратегии">
+              <option value="" selected>движок как в настройках</option>
+              <option value="v1">winws (zapret 1)</option>
+              <option value="v2">winws2 (zapret 2, lua)</option>
+            </select>
             <select id="diag-test-count">
               <option value="5">5 стратегий</option>
               <option value="10">10 стратегий</option>
@@ -515,6 +520,8 @@
           </div>
         </div>
         <div class="row-hint" style="margin-top:6px">
+          «Движок» — каким исполнителем подбирать: у zapret 1 и 2 разные exe и разные
+          наборы стратегий, и рабочая на одном может не работать на другом.
           «Объяснить» запускает одну стратегию с отладочным выводом winws и показывает,
           что он сделал с соединениями. Полезно, когда все стратегии дают нули
         </div>

@@ -180,6 +180,9 @@ namespace AutoZapret.App
                 Section("проверка DNS на подмену");
                 TestDnsSpoofing();
 
+                Section("перевод стратегий v1 в v2");
+                TestV2Converter();
+
                 Section("служба");
                 TestServiceManager();
 
@@ -2075,6 +2078,134 @@ namespace AutoZapret.App
         ///   * правило добавляется ОТДЕЛЬНЫМ профилем к копии стратегии,
         ///     а не меняет выбранную — иначе вернуть прежнее поведение нельзя.
         /// </summary>
+        /// <summary>
+        /// Перевод v1 → v2.
+        ///
+        /// Проверяем не «красиво ли выглядит», а два свойства, которые решают,
+        /// можно ли это показывать человеку:
+        ///   * переводимое переводится (техники, cutoff, wf-фильтры);
+        ///   * непереводимое ОТКАЗЫВАЕТ, а не выкидывается молча.
+        ///
+        /// Второе важнее. Стратегия, из которой тихо убрали половину опций,
+        /// запускается и ничего не делает — и виноватым окажется движок.
+        /// </summary>
+        private static void TestV2Converter()
+        {
+            Dictionary<string, string> blobs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                { "tls_google", "tls_clienthello_www_google_com.bin" },
+                { "quic_google", "quic_initial_www_google_com.bin" }
+            };
+
+            // ---- переводимое
+            List<string> simple = new List<string>
+            {
+                "--filter-tcp=443",
+                "--dpi-desync=multisplit",
+                "--dpi-desync-split-pos=1",
+                "--dpi-desync-cutoff=n3",
+                "--wf-tcp=80,443"
+            };
+
+            AutoZapret.Zapret.V2Conversion ok = AutoZapret.Zapret.V2Converter.Convert(simple, blobs, "test");
+
+            Check("v2-перевод: простая стратегия переводится", ok.Ok, ok.Reason);
+
+            if (ok.Ok)
+            {
+                Check("v2-перевод: cutoff стал out-range",
+                    ok.Args.Exists(a => a == "--out-range=-n3"),
+                    ok.Args.Find(a => a.StartsWith("--out-range", StringComparison.Ordinal)) ?? "НЕТ");
+
+                Check("v2-перевод: wf-tcp стал wf-tcp-out",
+                    ok.Args.Exists(a => a.StartsWith("--wf-tcp-out=", StringComparison.Ordinal)),
+                    "ok");
+
+                Check("v2-перевод: multisplit стал lua-desync с pos",
+                    ok.Args.Exists(a => a.StartsWith("--lua-desync=multisplit", StringComparison.Ordinal) &&
+                                        a.Contains("pos=1")),
+                    ok.Args.Find(a => a.StartsWith("--lua-desync", StringComparison.Ordinal)) ?? "НЕТ");
+
+                Check("v2-перевод: lua-init идёт первым",
+                    ok.Args.Count > 0 && ok.Args[0].StartsWith("--lua-init=", StringComparison.Ordinal),
+                    ok.Args.Count > 0 ? ok.Args[0] : "пусто");
+
+                Check("v2-перевод: у профиля есть имя",
+                    ok.Args.Exists(a => a.StartsWith("--name=", StringComparison.Ordinal)), "ok");
+
+                Check("v2-перевод: пробелов в имени нет",
+                    !ok.Args.Exists(a => a.StartsWith("--name=", StringComparison.Ordinal) && a.Contains(" ")),
+                    "ok");
+            }
+
+            // ---- фейк по файлу → алиас
+            List<string> withFake = new List<string>
+            {
+                "--filter-udp=443",
+                "--dpi-desync=fake",
+                "--dpi-desync-fake-quic=C:\\x\\quic_initial_www_google_com.bin",
+                "--dpi-desync-repeats=6"
+            };
+
+            AutoZapret.Zapret.V2Conversion fake = AutoZapret.Zapret.V2Converter.Convert(withFake, blobs, "fake-test");
+
+            Check("v2-перевод: фейк по файлу становится алиасом",
+                fake.Ok && fake.Args.Exists(a => a.Contains("blob=quic_google")),
+                fake.Ok ? (fake.Args.Find(a => a.Contains("blob=")) ?? "НЕТ") : fake.Reason);
+
+            // ---- непереводимое должно ОТКАЗАТЬ
+            List<string> unknown = new List<string>
+            {
+                "--filter-tcp=443",
+                "--dpi-desync=multisplit",
+                "--dpi-desync-split-pos=1",
+                "--dpi-desync-fooling=datagap"
+            };
+
+            AutoZapret.Zapret.V2Conversion bad = AutoZapret.Zapret.V2Converter.Convert(unknown, blobs, "bad");
+
+            Check("v2-перевод: непереводимый fooling даёт отказ", !bad.Ok, bad.Reason);
+            Check("v2-перевод: причина названа",
+                bad.Unsupported.Count > 0, string.Join(", ", bad.Unsupported.ToArray()));
+
+            // ---- неизвестная техника тоже отказ, а не «пропустим»
+            List<string> unknownTech = new List<string>
+            {
+                "--filter-tcp=443",
+                "--dpi-desync=drop"
+            };
+
+            AutoZapret.Zapret.V2Conversion tech = AutoZapret.Zapret.V2Converter.Convert(unknownTech, blobs, "tech");
+            Check("v2-перевод: неизвестная техника даёт отказ", !tech.Ok, tech.Reason);
+
+            // ---- два разных фейка в одном профиле — отказ
+            List<string> twoBlobs = new List<string>
+            {
+                "--filter-udp=443",
+                "--dpi-desync=fake",
+                "--dpi-desync-fake-quic=C:\\x\\quic_initial_www_google_com.bin",
+                "--dpi-desync-fake-tls=C:\\x\\tls_clienthello_www_google_com.bin"
+            };
+
+            AutoZapret.Zapret.V2Conversion two = AutoZapret.Zapret.V2Converter.Convert(twoBlobs, blobs, "two");
+            Check("v2-перевод: два разных фейка в профиле — отказ", !two.Ok, two.Reason);
+
+            // ---- blobs.lua читается, если движок установлен
+            if (Directory.Exists(Paths.EngineDir))
+            {
+                Dictionary<string, string> real = AutoZapret.Zapret.V2Converter.LoadBlobs(Path.Combine(Paths.EngineDir, "lua"));
+
+                if (real.Count == 0)
+                    Skip("v2-перевод: blobs.lua разобран", "нет lua\\blobs.lua");
+                else
+                    Check("v2-перевод: blobs.lua разобран", real.Count > 0, real.Count + " алиасов");
+            }
+            else
+            {
+                Skip("v2-перевод: blobs.lua разобран", "нет engine");
+            }
+        }
+
         private static void TestFixPacks()
         {
             List<AutoZapret.Lists.FixPack> packs = AutoZapret.Lists.FixPacks.Load();

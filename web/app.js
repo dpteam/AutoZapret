@@ -1860,11 +1860,16 @@
             var raw = document.getElementById("diag-test-count").value;
             var count = raw === "0" ? 0 : (parseInt(raw, 10) || 5);
 
+            // Пустая строка — «как в настройках»: не навязываем движок тому,
+            // кто его уже выбрал осознанно.
+            var engineSel = document.getElementById("diag-test-engine");
+            var engine = engineSel ? engineSel.value : "";
+
             test.disabled = true;
             test.textContent = "Идёт перебор…";
             document.getElementById("diag-test-progress").style.display = "";
             document.getElementById("diag-test-result").style.display = "none";
-            send("diag.test", { count: count });
+            send("diag.test", { count: count, engine: engine });
         });
 
         // Цели для проверки: свои домены или встроенный набор.

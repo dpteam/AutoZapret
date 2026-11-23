@@ -391,5 +391,11 @@
   "nfqws открывает сокет к ядру и ставит правила iptables — это разрешено только root.": "nfqws opens a kernel socket and installs iptables rules — only root may do that.",
   "Шаг 1в — не подменяют ли DNS": "Step 1c — is DNS being tampered with",
   "Сравнить системный DNS с DoH": "Compare system DNS with DoH",
-  "Если ответ подменён на заглушку, обход ни при чём": "If the answer is replaced with a stub, the bypass is not the problem"
+  "Если ответ подменён на заглушку, обход ни при чём": "If the answer is replaced with a stub, the bypass is not the problem",
+  "движок как в настройках": "engine as configured",
+  "winws (zapret 1)": "winws (zapret 1)",
+  "winws2 (zapret 2, lua)": "winws2 (zapret 2, lua)",
+  "Каким движком проверять стратегии": "Which engine to test strategies with",
+  "«Движок» — каким исполнителем подбирать: у zapret 1 и 2 разные exe и разные наборы стратегий, и рабочая на одном может не работать на другом.": "\"Engine\" picks the executor: zapret 1 and 2 use different executables and different strategy sets, and one that works on one may not work on the other.",
+  "«Движок» — каким исполнителем подбирать: у zapret 1 и 2 разные exe и разные наборы стратегий, и рабочая на одном может не работать на другом. «Объяснить» запускает одну стратегию с отладочным выводом winws и показывает, что он сделал с соединениями. Полезно, когда все стратегии дают нули": "\"Engine\" picks the executor: zapret 1 and 2 use different executables and different strategy sets, and one that works on one may not work on the other. \"Explain\" runs a single strategy with winws debug output and shows what it did to the connections. Useful when every strategy scores zero"
 }
