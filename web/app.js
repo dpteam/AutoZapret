@@ -866,6 +866,14 @@
 
         updateStrategyNote(items);
         updateCustomButtons();
+
+        // Галочка «показывать стратегии zapret 1» нужна только под движком v2:
+        // под v1 они и так в списке. Показываем её по движку, а не всегда.
+        var toggleRow = document.getElementById("strategy-v1-toggle-row");
+        if (toggleRow) {
+            toggleRow.style.display =
+                (state.engineKind === "v2") ? "" : "none";
+        }
     }
 
     function hasOption(select, value) {
@@ -1782,6 +1790,15 @@
                 send("strategy.select", { id: strategy.value });
                 updateStrategyNote(strategyItems);
                 updateCustomButtons();
+            });
+        }
+
+        // Показывать ли стратегии zapret 1 при движке v2. По умолчанию нет:
+        // их 141, и список становится вдвое длиннее.
+        var v1Toggle = document.getElementById("strategy-v1-toggle");
+        if (v1Toggle) {
+            v1Toggle.addEventListener("change", function () {
+                send("strategy.list", { includeV1: v1Toggle.checked });
             });
         }
 

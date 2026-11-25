@@ -280,7 +280,21 @@ namespace AutoZapret.App
 
             bridge.Register("toggle", msg => ToggleProtection());
 
-            bridge.Register("strategy.list", msg => PushStrategies());
+            // includeV1 — показать стратегии zapret 1 при движке zapret 2.
+            //
+            // По умолчанию НЕ показываем: их 141, и вместе с набором v2 список
+            // становится вдвое длиннее, хотя нужны они редко.
+            //
+            // Значение меняем ТОЛЬКО если ключ пришёл: список перезапрашивается
+            // ещё и после подбора фейка, и обнуление по умолчанию выключало бы
+            // галочку само.
+            bridge.Register("strategy.list", msg =>
+            {
+                if (msg.ContainsKey("includeV1"))
+                    _includeV1Strategies = Json.GetBool(msg, "includeV1", false);
+
+                PushStrategies();
+            });
             bridge.Register("strategy.select", msg =>
             {
                 string id = Json.GetString(msg, "id", "");
@@ -3083,6 +3097,10 @@ namespace AutoZapret.App
         // Временные стратегии удаляются в конце подбора, поэтому вариант
         // восстанавливается из (стратегия, слот, файл) заново.
         private string _lastTuneStrategyId = "";
+
+        // Показывать ли стратегии zapret 1 при движке zapret 2. Управляется
+        // галочкой в интерфейсе, по умолчанию выключено.
+        private bool _includeV1Strategies;
         private FakeSlot _lastTuneSlot;
 
         // Файлы, которые на последнем подборе прошли хотя бы одну цель.
@@ -5774,7 +5792,12 @@ namespace AutoZapret.App
             string engine = strategyEngine;
             List<object> items = new List<object>();
 
-            bool addV1 = string.Equals(engine, "v2", StringComparison.OrdinalIgnoreCase);
+            // Стратегии zapret 1 при движке v2 — только по явной просьбе
+            // (галочка в интерфейсе). По умолчанию список остаётся обычной
+            // длины: 141 лишняя строка в выпадающем списке — это не «больше
+            // возможностей», а невозможность найти нужное.
+            bool addV1 = _includeV1Strategies &&
+                         string.Equals(engine, "v2", StringComparison.OrdinalIgnoreCase);
 
             List<Dictionary<string, object>> v1List = null;
             Dictionary<string, string> blobs = null;

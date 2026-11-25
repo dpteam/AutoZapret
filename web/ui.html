@@ -109,6 +109,13 @@
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
             <select id="strategy-select" style="min-width:260px"></select>
             <div class="row-hint mono" id="strategy-scan"></div>
+            <!-- Стратегии zapret 1 под движком zapret 2 показываем только по
+                 просьбе: их 141, и вместе с набором v2 список становится
+                 вдвое длиннее, а нужны они редко. -->
+            <label class="row-hint" id="strategy-v1-toggle-row" style="display:none;cursor:pointer">
+              <input type="checkbox" id="strategy-v1-toggle">
+              показывать стратегии zapret 1
+            </label>
           </div>
         </div>
 
