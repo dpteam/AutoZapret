@@ -186,6 +186,9 @@ namespace AutoZapret.App
                 Section("источники обновлений");
                 TestUpdateSources();
 
+                Section("правило остановки подбора фейка");
+                TestFakeTuneStopRule();
+
                 Section("служба");
                 TestServiceManager();
 
@@ -7586,6 +7589,42 @@ namespace AutoZapret.App
                 Skip("обновления: апстрим zapret доступен", "нет сети");
             else
                 Check("обновления: апстрим zapret доступен", true, upstream);
+        }
+
+        /// <summary>
+        /// Правило «когда останавливать подбор фейка».
+        ///
+        /// Здесь был живой баг: у человека заблокирован один домен, первый же
+        /// вариант его открыл, и перебор объявил «полный успех» — остановился
+        /// на первом кандидате. Снаружи это «дальше первого не идёт» и
+        /// «считает один домен идеальным».
+        ///
+        /// Поэтому проверяем именно границу: 1 из 1 и 2 из 2 останавливать
+        /// НЕЛЬЗЯ, а 3 из 3 — можно.
+        /// </summary>
+        private static void TestFakeTuneStopRule()
+        {
+            Check("подбор фейка: 1 из 1 не считается полным успехом",
+                !AutoZapret.Diag.FakeTuner.ShouldStopEarly(1, 1), "продолжаем перебор");
+
+            Check("подбор фейка: 2 из 2 не считается полным успехом",
+                !AutoZapret.Diag.FakeTuner.ShouldStopEarly(2, 2), "продолжаем перебор");
+
+            Check("подбор фейка: 3 из 3 останавливает перебор",
+                AutoZapret.Diag.FakeTuner.ShouldStopEarly(3, 3), "полный успех");
+
+            Check("подбор фейка: 6 из 6 останавливает перебор",
+                AutoZapret.Diag.FakeTuner.ShouldStopEarly(6, 6), "полный успех");
+
+            Check("подбор фейка: 5 из 6 НЕ останавливает",
+                !AutoZapret.Diag.FakeTuner.ShouldStopEarly(5, 6), "продолжаем");
+
+            Check("подбор фейка: 0 целей не останавливает",
+                !AutoZapret.Diag.FakeTuner.ShouldStopEarly(0, 0), "нет данных");
+
+            Check("подбор фейка: порог равен трём",
+                AutoZapret.Diag.FakeTuner.MinTargetsForFullPass == 3,
+                AutoZapret.Diag.FakeTuner.MinTargetsForFullPass.ToString());
         }
 
         private static void TestDnsSafety()

@@ -89,6 +89,31 @@ namespace AutoZapret.Diag
         /// случай, когда человек закрыл окно: мост отменит токен, но если он
         /// этого не сделает, перебор не должен идти сутками.
         /// </summary>
+        /// <summary>
+        /// Сколько целей нужно, чтобы «прошло всё» считалось доказательством.
+        ///
+        /// Одной цели недостаточно. На живом отчёте это выглядело так:
+        /// у человека заблокирован ровно один домен, первый же вариант его
+        /// открыл, перебор объявил «полный успех» и остановился на первом
+        /// кандидате. Снаружи — «подбор не идёт дальше первого», «считает
+        /// один домен идеальным» и «выбора нет».
+        ///
+        /// Три цели — минимум, при котором «прошло всё» хоть что-то значит:
+        /// один домен открывается от любого фейка, три — уже нет.
+        /// </summary>
+        public const int MinTargetsForFullPass = 3;
+
+        /// <summary>
+        /// Стоит ли прекращать перебор: только при убедительном полном проходе.
+        ///
+        /// Чистая функция — её проверяет selftest, потому что именно здесь
+        /// ошибка «1 из 1 = успех» и жила.
+        /// </summary>
+        public static bool ShouldStopEarly(int okCount, int total)
+        {
+            return total >= MinTargetsForFullPass && okCount == total;
+        }
+
         public static FakeTuneResult Run(ZapretService zapret, string strategyId,
                                          int maxCandidates, int maxSlots,
                                          Action<string> progress,
@@ -151,6 +176,19 @@ namespace AutoZapret.Diag
             // Снимок сети до перебора: он же задаёт цели проверки. Без него
             // tester берёт цели по умолчанию, и они могут не совпадать с тем,
             // что реально заблокировано у человека.
+            //
+            // Обход ОСТАНАВЛИВАЕМ. Если он был включён, замер покажет не «что
+            // блокирует провайдер», а «что не пробила текущая стратегия»:
+            // заблокированных целей окажется одна-две, и подбор будет искать
+            // фейк под них. Это и давало «считает один домен идеальным».
+            if (zapret.State == ProtectionState.Running || WinwsSupervisor.AnyWinwsRunning())
+            {
+                try { zapret.Stop(); } catch { }
+
+                if (progress != null)
+                    progress("обход был включён — остановлен, чтобы замер был честным");
+            }
+
             Baseline.Snapshot baseline = Baseline.Measure(new ConnectivityProbe(), 10, false, token,
                                                            ProbeTargets.ForSettings());
 
@@ -160,6 +198,20 @@ namespace AutoZapret.Diag
 
                 result.Error = "не удалось измерить сеть";
                 return result;
+            }
+
+            // Мало заблокированных целей — говорим ДО перебора, а не оставляем
+            // человеку гадать, почему нашёлся один вариант. Подбор по одной
+            // цели ничего не гарантирует: её открывает почти любой фейк.
+            int blockedCount = baseline.Blocked != null ? baseline.Blocked.Count : 0;
+
+            if (blockedCount > 0 && blockedCount < MinTargetsForFullPass)
+            {
+                string note = "заблокировано всего " + blockedCount +
+                              " цели — подбор по такому числу не гарантирует работу";
+
+                result.Warnings.Add(note);
+                if (progress != null) progress("! " + note);
             }
 
             StrategyTester tester = new StrategyTester(zapret, new ConnectivityProbe());
@@ -248,12 +300,26 @@ namespace AutoZapret.Diag
                         progress("  " + candidate.File + " → " + score.Score + " (" +
                                  score.OkCount + "/" + score.Total + ")");
 
-                    // Полный успех: дальше искать нечего, все оставшиеся варианты
-                    // не могут быть лучше «прошло всё».
-                    if (score.OkCount == score.Total && score.Total > 0)
+                    // Полный успех: дальше искать нечего — но только если
+                    // целей достаточно, чтобы «прошло всё» что-то доказывало.
+                    // Иначе перебор вставал на первом кандидате (см.
+                    // MinTargetsForFullPass).
+                    if (ShouldStopEarly(score.OkCount, score.Total))
                     {
                         if (progress != null) progress("полный успех, перебор остановлен");
                         break;
+                    }
+
+                    // Прошло всё, но целей мало: не повод останавливаться и не
+                    // повод молчать — человек должен знать, что проверка слабая.
+                    if (score.Total > 0 && score.OkCount == score.Total)
+                    {
+                        string weak = "проверено всего " + score.Total +
+                                      " цели — это не гарантия, перебор продолжен";
+
+                        if (!result.Warnings.Contains(weak)) result.Warnings.Add(weak);
+
+                        if (progress != null) progress("  " + weak);
                     }
                 }
             }

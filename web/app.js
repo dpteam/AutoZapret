@@ -1349,6 +1349,10 @@
                 text("custom-strategies-status", done + ". Рабочего фейка не нашлось");
             }
 
+            // Остановили, но проверенное уже есть: показываем, чтобы найденное
+            // не пропало. Это же правило записано для перебора стратегий.
+            renderTuneAttempts(msg);
+
             return;
         }
 
@@ -1370,6 +1374,86 @@
 
         text("custom-strategies-status", line);
         appendCustomLog("готово: " + msg.best);
+
+        renderTuneAttempts(msg);
+    }
+
+    // Все проверенные варианты, с возможностью оставить любой.
+    //
+    // Раньше показывался только победитель, и это выглядело как «выбора нет»:
+    // человек не видел, что перебрано ещё десять файлов с близким счётом.
+    // Победитель по счёту — не всегда то, что нужно: у кого-то ломается голос
+    // Discord, и вариант с меньшим счётом, но открытым discord.media полезнее.
+    function renderTuneAttempts(msg) {
+        var box = document.getElementById("tune-results");
+        var list = document.getElementById("tune-attempts");
+        if (!box || !list) return;
+
+        var items = msg.attempts || [];
+
+        // Один вариант — показывать нечего: это не выбор, а единственный ответ.
+        if (items.length < 2) {
+            box.style.display = "none";
+            list.innerHTML = "";
+            return;
+        }
+
+        list.innerHTML = "";
+
+        items.forEach(function (a) {
+            var best = a.file === msg.best;
+            var div = document.createElement("div");
+            div.className = "diag-row";
+
+            var mark = a.total > 0 && a.ok === a.total ? "OK" : (a.ok > 0 ? "~" : "✕");
+            var cls = a.total > 0 && a.ok === a.total ? "ok" : (a.ok > 0 ? "warn" : "bad");
+
+            // Вариант, не прошедший НИ ОДНОЙ цели, оставить нельзя: это
+            // заведомо нерабочая стратегия, и сохранять её как «свою» —
+            // значит выдать человеку поломку под видом результата.
+            var canKeep = a.ok > 0;
+
+            div.innerHTML =
+                '<span class="badge ' + cls + '">' + mark + '</span>' +
+                '<span class="name">' + escapeHtml(a.file) + '</span>' +
+                '<span class="verdict">' + a.ok + '/' + a.total + ' · счёт ' + a.score + '</span>' +
+                '<button class="btn" data-tune-file="' + escapeHtml(a.file) + '"' +
+                ((best || !canKeep) ? ' disabled' : '') + '>' +
+                (best ? 'лучший' : (canKeep ? 'Оставить' : 'не работает')) + '</button>';
+
+            list.appendChild(div);
+        });
+
+        box.style.display = "";
+
+        var buttons = list.querySelectorAll("button[data-tune-file]");
+        for (var i = 0; i < buttons.length; i++) {
+            bindTunePick(buttons[i]);
+        }
+    }
+
+    // Отдельная функция, а не замыкание внутри цикла: в старом стиле страницы
+    // `this` в обработчике статический анализатор считает необъявленной
+    // переменной, и проверка UI падает. Кнопку передаём параметром.
+    function bindTunePick(button) {
+        if (!button) return;
+
+        button.addEventListener("click", function () {
+            var file = button.getAttribute("data-tune-file");
+            if (!file) return;
+
+            button.disabled = true;
+            button.textContent = "Сохраняю…";
+
+            send("strategy.tunePick", { file: file });
+        });
+    }
+
+    function renderTunePicked(msg) {
+        text("custom-strategies-status",
+             msg.ok
+                ? "Оставлен вариант: " + msg.file + (msg.saved ? " — сохранён как своя стратегия" : "")
+                : "Не удалось оставить вариант: " + (msg.error || "неизвестная причина"));
     }
 
     function escapeHtml(s) {
@@ -4393,6 +4477,10 @@
 
             case "strategy.tuned":
                 renderTuned(msg);
+                break;
+
+            case "strategy.tunePicked":
+                renderTunePicked(msg);
                 break;
 
             case "strategy.shared":

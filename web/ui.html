@@ -191,6 +191,15 @@
           <div class="row-hint mono" id="tune-line"></div>
         </div>
 
+        <!-- Результаты подбора: все проверенные варианты, а не только лучший.
+             Победитель не всегда тот, что нужен человеку: он может знать, что
+             у него ломается именно голос, и выбрать вариант, где пробито
+             меньше целей, но открыт нужный ему домен. -->
+        <div id="tune-results" style="display:none;margin-top:10px">
+          <div class="row-hint" style="margin-bottom:6px">Проверенные варианты — нажмите «Оставить», чтобы сохранить любой</div>
+          <div class="diag-list fix-scroll" id="tune-attempts"></div>
+        </div>
+
         <div class="row">
           <div>
             <div class="row-label">Файл для друга (.azconf.json)</div>

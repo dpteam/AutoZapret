@@ -41,9 +41,9 @@
     <ApplicationIcon>assets\AutoZapret.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
 
-    <Version>0.3.3</Version>
-    <FileVersion>0.3.3.0</FileVersion>
-    <AssemblyVersion>0.3.3.0</AssemblyVersion>
+    <Version>0.3.4</Version>
+    <FileVersion>0.3.4.0</FileVersion>
+    <AssemblyVersion>0.3.4.0</AssemblyVersion>
     <Product>AutoZapret</Product>
     <Company>DPT</Company>
     <Copyright>MIT. Обёртка над zapret (bol-van), конфиги Flowseal.</Copyright>

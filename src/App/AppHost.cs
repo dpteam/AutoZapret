@@ -583,6 +583,15 @@ namespace AutoZapret.App
 
                         List<object> attempts = new List<object>();
 
+                        // Запоминаем контекст: по нему человек сможет оставить
+                        // любой проверенный вариант, а не только победителя.
+                        _lastTuneStrategyId = result.StrategyId;
+                        _lastTuneSlot = result.Slot;
+
+                        _lastTunePickable.Clear();
+                        foreach (FakeAttempt a in result.Attempts)
+                            if (a.OkCount > 0) _lastTunePickable.Add(a.File);
+
                         foreach (FakeAttempt attempt in result.Attempts)
                         {
                             attempts.Add(new Dictionary<string, object>(StringComparer.Ordinal)
@@ -621,6 +630,15 @@ namespace AutoZapret.App
             });
 
             bridge.Register("strategy.tuneCancel", msg => CancelFakeTune());
+
+            // Оставить выбранный вариант подбора (не обязательно победителя).
+            bridge.Register("strategy.tunePick", msg =>
+            {
+                string file = Json.GetString(msg, "file", "");
+                if (file.Length == 0) return;
+
+                RunInBackground("fake-tune-pick", () => ApplyTunedFake(file));
+            });
 
             bridge.Register("engine.select", msg =>
             {
@@ -3058,6 +3076,91 @@ namespace AutoZapret.App
                 _tuneCancel = cancel;
                 return true;
             }
+        }
+
+        // Контекст последнего подбора: нужен, чтобы человек мог оставить ЛЮБОЙ
+        // проверенный вариант, а не только автоматического победителя.
+        // Временные стратегии удаляются в конце подбора, поэтому вариант
+        // восстанавливается из (стратегия, слот, файл) заново.
+        private string _lastTuneStrategyId = "";
+        private FakeSlot _lastTuneSlot;
+
+        // Файлы, которые на последнем подборе прошли хотя бы одну цель.
+        // Сохранять остальные нельзя: это заведомо нерабочие варианты.
+        private HashSet<string> _lastTunePickable = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Оставить выбранный при подборе фейк: собрать вариант и сохранить
+        /// как свою стратегию.
+        ///
+        /// Почему не «применить сразу»: сохранённая стратегия видна в списке,
+        /// её можно сравнить с другими и удалить. Применение без сохранения
+        /// оставляло бы человека без ответа на «а что я сейчас включил».
+        /// </summary>
+        private void ApplyTunedFake(string file)
+        {
+            if (_lastTuneSlot == null || _lastTuneStrategyId.Length == 0)
+            {
+                _form.Bridge.Send(WebBridge.Msg("strategy.tunePicked",
+                    "ok", false,
+                    "file", file,
+                    "error", "нет данных последнего подбора — запустите подбор заново"));
+                return;
+            }
+
+            // Защита от сохранения заведомо нерабочего варианта. Интерфейс
+            // такие кнопки блокирует, но проверка живёт здесь, а не только в
+            // разметке: страницу можно открыть в браузере и послать что угодно.
+            if (!_lastTunePickable.Contains(file))
+            {
+                _form.Bridge.Send(WebBridge.Msg("strategy.tunePicked",
+                    "ok", false,
+                    "file", file,
+                    "error", "этот вариант не прошёл ни одной цели — сохранять его нельзя"));
+                return;
+            }
+
+            Strategy strategy = _zapret.Strategies.Find(_lastTuneStrategyId);
+
+            if (strategy == null)
+            {
+                _form.Bridge.Send(WebBridge.Msg("strategy.tunePicked",
+                    "ok", false,
+                    "file", file,
+                    "error", "исходная стратегия больше не существует"));
+                return;
+            }
+
+            Strategy variant = FakeSweeper.Variant(strategy, _lastTuneSlot, file, "__tunepick");
+
+            if (variant == null)
+            {
+                _form.Bridge.Send(WebBridge.Msg("strategy.tunePicked",
+                    "ok", false,
+                    "file", file,
+                    "error", "не удалось собрать вариант с файлом " + file));
+                return;
+            }
+
+            string newId = TunedId(_lastTuneStrategyId, file);
+
+            string written = _zapret.SaveCustomStrategy(
+                variant,
+                newId,
+                strategy.Name + " · " + file,
+                "подбор фейка: " + _lastTuneSlot.Describe());
+
+            bool ok = string.Equals(written, newId, StringComparison.Ordinal);
+
+            Log.Info("DIAG", "выбран фейк " + file + ": " + (ok ? "сохранён как " + newId : written));
+
+            _form.Bridge.Send(WebBridge.Msg("strategy.tunePicked",
+                "ok", ok,
+                "file", file,
+                "saved", ok ? written : "",
+                "error", ok ? "" : written));
+
+            PushStrategies();
         }
 
         private void EndFakeTune(CancellationTokenSource cancel)
