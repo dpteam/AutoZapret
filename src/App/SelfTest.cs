@@ -189,6 +189,9 @@ namespace AutoZapret.App
                 Section("правило остановки подбора фейка");
                 TestFakeTuneStopRule();
 
+                Section("шлюз Telegram и WS-кадры");
+                TestGatewayCheck();
+
                 Section("служба");
                 TestServiceManager();
 
@@ -7625,6 +7628,142 @@ namespace AutoZapret.App
             Check("подбор фейка: порог равен трём",
                 AutoZapret.Diag.FakeTuner.MinTargetsForFullPass == 3,
                 AutoZapret.Diag.FakeTuner.MinTargetsForFullPass.ToString());
+        }
+
+        /// <summary>
+        /// Проверка шлюза и склейки WS-кадров.
+        ///
+        /// Оба места — из тех, где ошибка не видна глазами:
+        ///   * «сертификат от Telegram» проверялся колбэком, который всегда
+        ///     возвращал true (проверки не было вовсе);
+        ///   * фрагментированное WS-сообщение теряло продолжения, и MTProto
+        ///     получал обрезанный пакет.
+        ///
+        /// Проверяем на подготовленных данных: живой сертификат Telegram в CI
+        /// недоступен, а ждать реального сбоя сети — не тест.
+        /// </summary>
+        private static void TestGatewayCheck()
+        {
+            Check("шлюз: имя kws2.web.telegram.org принято",
+                AutoZapret.Proxy.GatewayCheck.IsTelegram(CertFor("kws2.web.telegram.org")), "ok");
+
+            Check("шлюз: подстановочное *.web.telegram.org принято",
+                AutoZapret.Proxy.GatewayCheck.IsTelegram(CertFor("*.web.telegram.org")), "ok");
+
+            Check("шлюз: *.telegram.org принято",
+                AutoZapret.Proxy.GatewayCheck.IsTelegram(CertFor("*.telegram.org")), "ok");
+
+            Check("шлюз: чужой сертификат отвергнут",
+                !AutoZapret.Proxy.GatewayCheck.IsTelegram(CertFor("example.com")), "example.com");
+
+            // Ловушка на «похожее имя»: telegram.org.evil.com не должен
+            // проходить только потому, что содержит telegram.org.
+            Check("шлюз: telegram.org.evil.com отвергнут",
+                !AutoZapret.Proxy.GatewayCheck.IsTelegram(CertFor("telegram.org.evil.com")), "ok");
+
+            Check("шлюз: eviltelegram.org отвергнут",
+                !AutoZapret.Proxy.GatewayCheck.IsTelegram(CertFor("eviltelegram.org")), "ok");
+
+            string described = AutoZapret.Proxy.GatewayCheck.Describe(CertFor("example.com"));
+
+            Check("шлюз: в ошибке видно, чей сертификат",
+                described.IndexOf("example.com", StringComparison.OrdinalIgnoreCase) >= 0, described);
+
+            // ---- главное свойство безопасности
+            //
+            // Подмена выглядит именно так: имя в сертификате правильное
+            // (`telegram.org`), но выдан он сам собой. Принимать такое нельзя —
+            // иначе проверка имени защищает только от ленивого подменщика.
+            System.Security.Cryptography.X509Certificates.X509Certificate2 fakeTelegram =
+                CertFor("kws2.web.telegram.org");
+
+            Check("шлюз: самоподписанный «telegram.org» отвергнут",
+                !AutoZapret.Proxy.GatewayCheck.ValidateTelegram(null, fakeTelegram, null,
+                    System.Net.Security.SslPolicyErrors.RemoteCertificateChainErrors),
+                "цепочка не сходится — отказ");
+
+            Check("шлюз: правильное имя с верной цепочкой принято",
+                AutoZapret.Proxy.GatewayCheck.ValidateTelegram(null, fakeTelegram, null,
+                    System.Net.Security.SslPolicyErrors.None),
+                "имя совпало, цепочка в порядке");
+
+            Check("шлюз: чужое имя с верной цепочкой отвергнуто",
+                !AutoZapret.Proxy.GatewayCheck.ValidateTelegram(null, CertFor("example.com"), null,
+                    System.Net.Security.SslPolicyErrors.None),
+                "имя не telegram.org");
+
+            Check("шлюз: без сертификата — отказ",
+                !AutoZapret.Proxy.GatewayCheck.ValidateTelegram(null, null, null,
+                    System.Net.Security.SslPolicyErrors.None),
+                "сертификата нет");
+
+            // ---- склейка WS-кадров
+            //
+            // Сообщение, разбитое на два кадра: первый без FIN, второй —
+            // продолжение с FIN. Раньше возвращался первый кадр, и «AB»
+            // вместо «ABCD» ломало разбор MTProto.
+            using (System.IO.MemoryStream stream = new System.IO.MemoryStream())
+            {
+                byte[] first = Frame(false, 0x2, Encoding.ASCII.GetBytes("AB"));
+                byte[] second = Frame(true, 0x0, Encoding.ASCII.GetBytes("CD"));
+
+                stream.Write(first, 0, first.Length);
+                stream.Write(second, 0, second.Length);
+                stream.Position = 0;
+
+                AutoZapret.Proxy.WsClient client = new AutoZapret.Proxy.WsClient(stream);
+                byte[] message = client.ReceiveMessage(2000);
+
+                string text = message == null ? "" : Encoding.ASCII.GetString(message);
+
+                Check("WS: фрагменты склеены в одно сообщение", text == "ABCD", "получено: " + text);
+            }
+
+            // Одно целое сообщение (FIN сразу) должно приходить как есть.
+            using (System.IO.MemoryStream stream = new System.IO.MemoryStream())
+            {
+                byte[] frame = Frame(true, 0x2, Encoding.ASCII.GetBytes("XYZ"));
+                stream.Write(frame, 0, frame.Length);
+                stream.Position = 0;
+
+                AutoZapret.Proxy.WsClient client = new AutoZapret.Proxy.WsClient(stream);
+                byte[] message = client.ReceiveMessage(2000);
+
+                string text = message == null ? "" : Encoding.ASCII.GetString(message);
+
+                Check("WS: целое сообщение не испорчено", text == "XYZ", "получено: " + text);
+            }
+        }
+
+        /// <summary>Кадр WS от сервера (без маски): сервер клиенту не маскирует.</summary>
+        private static byte[] Frame(bool fin, int opcode, byte[] payload)
+        {
+            List<byte> frame = new List<byte>();
+
+            frame.Add((byte)((fin ? 0x80 : 0x00) | opcode));
+            frame.Add((byte)(payload.Length & 0x7F));
+            frame.AddRange(payload);
+
+            return frame.ToArray();
+        }
+
+        /// <summary>Самоподписанный сертификат с одним именем в SAN — для проверки.</summary>
+        private static System.Security.Cryptography.X509Certificates.X509Certificate2 CertFor(string dnsName)
+        {
+            System.Security.Cryptography.X509Certificates.CertificateRequest request =
+                new System.Security.Cryptography.X509Certificates.CertificateRequest(
+                    "CN=" + dnsName,
+                    System.Security.Cryptography.RSA.Create(2048),
+                    System.Security.Cryptography.HashAlgorithmName.SHA256,
+                    System.Security.Cryptography.RSASignaturePadding.Pkcs1);
+
+            System.Security.Cryptography.X509Certificates.SubjectAlternativeNameBuilder san =
+                new System.Security.Cryptography.X509Certificates.SubjectAlternativeNameBuilder();
+
+            san.AddDnsName(dnsName);
+            request.CertificateExtensions.Add(san.Build());
+
+            return request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
         }
 
         private static void TestDnsSafety()

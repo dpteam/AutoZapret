@@ -33,7 +33,10 @@ namespace AutoZapret.Proxy
         private readonly Stream _stream;
         private bool _closed;
 
-        private WsClient(Stream stream)
+        // internal, а не private: склейку фрагментов надо проверять на
+        // заранее собранных кадрах. Через Connect этого не сделать — там
+        // живой сокет и рукопожатие.
+        internal WsClient(Stream stream)
         {
             _stream = stream;
         }
@@ -121,6 +124,12 @@ namespace AutoZapret.Proxy
 
         /// <summary>
         /// Читает одно сообщение (склеивая фрагменты). null = соединение закрыто.
+        ///
+        /// Склейка обязательна: сервер вправе разбить сообщение на кадры, и
+        /// продолжения приходят с opcode 0 и БЕЗ флага FIN у предыдущего.
+        /// Раньше первый же кадр возвращался как готовое сообщение, а
+        /// продолжения терялись — MTProto получал обрезанный пакет и падал на
+        /// разборе, а снаружи это выглядело как «соединение рвётся».
         /// </summary>
         public byte[] ReceiveMessage(int timeoutMs)
         {
@@ -131,7 +140,10 @@ namespace AutoZapret.Proxy
 
             while (guard++ < 1000)
             {
-                byte[] frame = ReadFrame(timeoutMs, out int opcode);
+                bool fin;
+                int opcode;
+
+                byte[] frame = ReadFrame(timeoutMs, out opcode, out fin);
                 if (frame == null)
                 {
                     _closed = true;
@@ -154,21 +166,31 @@ namespace AutoZapret.Proxy
                     return null;
                 }
 
+                // Продолжение: дописываем к начатому сообщению.
                 if (opcode == OpContinuation)
                 {
                     if (assembled == null) assembled = new List<byte>();
+
                     assembled.AddRange(frame);
+
+                    if (assembled.Count > MaxMessageLen)
+                    {
+                        _closed = true;
+                        return null;
+                    }
+
+                    if (fin) return assembled.ToArray();
+
                     continue;
                 }
 
                 if (opcode == OpBinary || opcode == OpText)
                 {
-                    if (assembled != null)
-                    {
-                        // предыдущая последовательность не завершилась — считаем мусором
-                        assembled = null;
-                    }
-                    return frame;
+                    if (fin) return frame;
+
+                    // Начало фрагментированного сообщения.
+                    assembled = new List<byte>(frame);
+                    continue;
                 }
             }
 
@@ -176,14 +198,15 @@ namespace AutoZapret.Proxy
             return null;
         }
 
-        private byte[] ReadFrame(int timeoutMs, out int opcode)
+        private byte[] ReadFrame(int timeoutMs, out int opcode, out bool fin)
         {
             opcode = 0;
+            fin = true;
 
             byte[] header = ReadExact(2, timeoutMs);
             if (header == null) return null;
 
-            bool fin = (header[0] & 0x80) != 0;
+            fin = (header[0] & 0x80) != 0;
             opcode = header[0] & 0x0F;
             bool masked = (header[1] & 0x80) != 0;
             long length = header[1] & 0x7F;
@@ -221,9 +244,6 @@ namespace AutoZapret.Proxy
             if (mask != null)
                 for (int i = 0; i < payload.Length; i++)
                     payload[i] ^= mask[i & 3];
-
-            if (!fin && opcode != OpContinuation && opcode != OpBinary && opcode != OpText)
-                return payload;
 
             return payload;
         }
@@ -280,7 +300,7 @@ namespace AutoZapret.Proxy
                 frame.AddRange(masked);
 
                 byte[] bytes = frame.ToArray();
-                _stream.WriteTimeout = timeoutMs;
+                if (_stream.CanTimeout) _stream.WriteTimeout = timeoutMs;
                 _stream.Write(bytes, 0, bytes.Length);
                 _stream.Flush();
                 return true;
@@ -311,7 +331,12 @@ namespace AutoZapret.Proxy
 
             try
             {
-                _stream.ReadTimeout = timeoutMs;
+                // Не у каждого потока есть таймауты: MemoryStream, например,
+                // на присваивание ReadTimeout бросает InvalidOperationException.
+                // Раньше это ловилось общим catch и выглядело как «соединение
+                // закрыто» — то есть поток с данными отвергался молча.
+                if (_stream.CanTimeout) _stream.ReadTimeout = timeoutMs;
+
                 while (read < count)
                 {
                     int n = _stream.Read(buffer, read, count - read);
@@ -333,7 +358,8 @@ namespace AutoZapret.Proxy
 
             try
             {
-                stream.ReadTimeout = timeoutMs;
+                if (stream.CanTimeout) stream.ReadTimeout = timeoutMs;
+
                 while (true)
                 {
                     int b = stream.ReadByte();

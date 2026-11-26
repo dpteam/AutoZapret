@@ -237,8 +237,25 @@ namespace AutoZapret.Proxy
 
                 if (uri.Scheme.Equals("wss", StringComparison.OrdinalIgnoreCase))
                 {
-                    SslStream outer = new SslStream(client.GetStream(), false, delegate { return true; });
-                    outer.AuthenticateAsClient(uri.Host);
+                    // Цепочку проверяем, но имя — нет: релей это Cloudflare
+                    // Worker или свой сервер, а не Telegram (см. ValidateRelay).
+                    SslStream outer = new SslStream(client.GetStream(), false, GatewayCheck.ValidateRelay);
+
+                    try
+                    {
+                        outer.AuthenticateAsClient(uri.Host);
+                    }
+                    catch (Exception ex)
+                    {
+                        try { outer.Dispose(); } catch { }
+                        client.Close();
+
+                        error = "TLS до релея " + uri.Host + ": " + ex.Message +
+                                ". Если у релея самоподписанный сертификат — нужен " +
+                                "действительный (Cloudflare выдаёт его сам)";
+                        return null;
+                    }
+
                     outerStream = outer;
                 }
 
@@ -256,11 +273,43 @@ namespace AutoZapret.Proxy
                 Stream tunnel = new WsStream(ws);
                 tunnelStream = (WsStream)tunnel;
 
-                // Поверх туннеля — настоящий TLS к Telegram, с проверкой имени.
-                // Если релей подменяет соединение, сертификат не сойдётся и мы
-                // получим внятную ошибку, а не «неизвестный proto tag».
-                SslStream telegram = new SslStream(tunnel, false, delegate { return true; });
-                telegram.AuthenticateAsClient(targetHost);
+                // Поверх туннеля — настоящий TLS к Telegram.
+                //
+                // Здесь проверка СТРОГАЯ: сертификат обязан быть от Telegram.
+                // Раньше стояло `delegate { return true; }`, то есть принимался
+                // любой — и комментарий рядом обещал проверку, которой не было.
+                // Результат: релей, открывший TCP не туда, или локальный
+                // перехватчик давали «успешный» TLS и потом непонятную ошибку.
+                SslStream telegram = new SslStream(tunnel, false, GatewayCheck.ValidateTelegram);
+
+                try
+                {
+                    telegram.AuthenticateAsClient(targetHost);
+                }
+                catch (Exception ex)
+                {
+                    // Достаём сертификат, чтобы назвать, к кому мы попали.
+                    string seen = "";
+
+                    try
+                    {
+                        if (telegram.RemoteCertificate != null)
+                            seen = GatewayCheck.Describe(telegram.RemoteCertificate);
+                    }
+                    catch { }
+
+                    try { telegram.Dispose(); } catch { }
+                    try { tunnel.Dispose(); } catch { }
+                    try { client.Close(); } catch { }
+
+                    error = "TLS до " + targetHost + " не подтверждён: " +
+                            (seen.Length > 0
+                                ? "сертификат не от Telegram (есть: " + seen + ")"
+                                : ex.Message) +
+                            ". Соединение ведёт не в Telegram — проверьте релей";
+
+                    return null;
+                }
 
                 tcp = client;
                 return telegram;
