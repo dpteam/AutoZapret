@@ -117,7 +117,17 @@ try {
     CloneRepo 'https://github.com/Flowseal/zapret-discord-youtube.git' $flowDir $FlowsealRef
 
     $flowBin = Join-Path $flowDir 'bin'
-    $must = @('winws.exe', 'cygwin1.dll', 'WinDivert.dll', 'WinDivert64.sys')
+
+    # ВАЖНО (изменение 26.11.2026): Flowseal УБРАЛ winws.exe из своего
+    # репозитория — он перешёл на zapret2 и оставил только winws2.exe.
+    # Проверено клоном: bin\winws.exe отсутствует, есть только winws2.exe.
+    #
+    # Поэтому обязательных файлов у Flowseal осталось три, а winws.exe (движок
+    # v1, на котором работает весь каталог из 141 стратегии) берём из
+    # официального бандла bol-van. Он же автор zapret, и его winws.exe —
+    # исходный, а не пересобранный: опции те же (проверено по литералам —
+    # все 35 имён опций наших стратегий присутствуют).
+    $must = @('cygwin1.dll', 'WinDivert.dll', 'WinDivert64.sys')
     foreach ($f in $must) {
         $p = Join-Path $flowBin $f
         if (-not (Test-Path $p)) { throw "у Flowseal нет обязательного файла bin\$f" }
@@ -214,6 +224,18 @@ try {
 
     if ($bundleOk) {
         $winwsSrc = Join-Path $bundleDir 'zapret-winws'
+
+        # winws.exe — движок v1. Единственный источник: Flowseal его больше
+        # не поставляет (перешёл на zapret2). Без него 141 стратегия каталога
+        # не запустится, а приложение покажет «движок не установлен».
+        $winwsExe = Join-Path $winwsSrc 'winws.exe'
+        if (Test-Path $winwsExe) {
+            Copy-Item $winwsExe (Join-Path $binDir 'winws.exe') -Force
+            Write-Host "      bin\winws.exe (движок v1 из бандла bol-van)"
+        } else {
+            Write-Host "      [ERROR] в бандле нет zapret-winws\winws.exe" -ForegroundColor Red
+            throw "нет winws.exe ни у Flowseal, ни в бандле — движок v1 собрать не из чего"
+        }
 
         foreach ($f in @('elevator.exe', 'killall.exe', 'windivert_delete.cmd', 'enable_timestamps.cmd', '_CMD_ADMIN.cmd')) {
             $p = Join-Path $winwsSrc $f
