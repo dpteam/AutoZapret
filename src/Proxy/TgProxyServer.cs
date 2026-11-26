@@ -95,6 +95,7 @@ namespace AutoZapret.Proxy
         private string _host;
         private int _port;
         private volatile string _relay = "";
+        private volatile bool _cfProxy = true;
         private ProxyState _state = ProxyState.Stopped;
         private string _lastError;
 
@@ -110,13 +111,15 @@ namespace AutoZapret.Proxy
         // ------------------------------------------------------------------ start
 
         /// <summary>Запустить. Возвращает null при успехе, иначе текст ошибки.</summary>
-        public string Start(string host, int port, string secretHex, string relay = null)
+        public string Start(string host, int port, string secretHex, string relay = null, bool cfProxy = true)
         {
             lock (_gate)
             {
                 if (_state == ProxyState.Running || _state == ProxyState.Starting)
                     return "Прокси уже запущен";
             }
+
+            _cfProxy = cfProxy;
 
             byte[] secret = ParseSecret(secretHex);
             if (secret == null) return "Секрет должен быть 32 hex-символа (16 байт)";
@@ -506,6 +509,18 @@ namespace AutoZapret.Proxy
             bool allConnectFailed = true;
             List<string> tried = new List<string>();
 
+            // Адреса, до которых в ЭТОМ проходе не достучались.
+            //
+            // Зачем: `kws2.web.telegram.org` и `kws2-1.web.telegram.org` —
+            // разные ИМЕНА, но один и тот же IP (проверено через DoH:
+            // оба 149.154.167.99). Если адрес заблокирован, второй вариант
+            // гарантированно упрётся в тот же таймаут, то есть мы платим
+            // 8 секунд за заведомо бесполезную попытку на КАЖДОЕ соединение.
+            //
+            // Идея из refs/telegram_core.py (`dead_ips`): «если шлюз не
+            // принимает даже TCP-соединение, другие имена на нём не пробуем».
+            HashSet<string> deadIps = new HashSet<string>(StringComparer.Ordinal);
+
             foreach (string domain in domains)
             {
                 // Общий бюджет на перебор: без него «соединение…» в Telegram
@@ -523,15 +538,62 @@ namespace AutoZapret.Proxy
 
                 tried.Add(domain);
 
+                // Разрешаем имя САМИ, чтобы знать адрес.
+                //
+                // Раньше соединение шло по имени (`BeginConnect(domain, 443)`),
+                // и система разрешала его внутри — мы не видели, к какому
+                // адресу идём, и не могли отличить «второй домен» от «тот же
+                // адрес ещё раз». Отсюда и двойной таймаут.
+                IPAddress address = null;
+
+                try
+                {
+                    foreach (IPAddress ip in System.Net.Dns.GetHostAddresses(domain))
+                    {
+                        if (ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) continue;
+                        address = ip;
+                        break;
+                    }
+                }
+                catch (Exception dnsEx)
+                {
+                    error = domain + ": DNS не ответил (" + dnsEx.Message + ")";
+                    UpstreamRoutes.Fail(domain, true);
+                    continue;
+                }
+
+                if (address == null)
+                {
+                    error = domain + ": нет IPv4-адреса";
+                    UpstreamRoutes.Fail(domain, true);
+                    continue;
+                }
+
+                string addressKey = address.ToString();
+
+                // Этот адрес уже отказал в этом проходе — не тратим ещё один
+                // таймаут. Говорим честно, что пропустили и почему.
+                if (deadIps.Contains(addressKey))
+                {
+                    Log.Debug("PROXY", domain + " (" + addressKey + ") пропущен: адрес уже отказал");
+
+                    // Пометку на домене НЕ ставим: домен сам по себе рабочий,
+                    // просто его адрес недоступен. Иначе после снятия
+                    // блокировки он остался бы в карантине.
+                    error = domain + ": тот же адрес " + addressKey + ", что уже не ответил";
+                    continue;
+                }
+
                 try
                 {
                     candidate = new TcpClient();
                     candidate.NoDelay = true;
 
-                    IAsyncResult ar = candidate.BeginConnect(domain, 443, null, null);
+                    IAsyncResult ar = candidate.BeginConnect(address, 443, null, null);
                     if (!ar.AsyncWaitHandle.WaitOne(ConnectTimeoutMs))
                     {
-                        error = domain + ": таймаут TCP";
+                        error = domain + ": таймаут TCP до " + addressKey;
+                        deadIps.Add(addressKey);
                         UpstreamRoutes.Fail(domain, true);
                         candidate.Close();
                         continue;
@@ -541,8 +603,39 @@ namespace AutoZapret.Proxy
                     connectStage = false;
                     allConnectFailed = false;      // до TLS дошли: адрес доступен
 
-                    ssl = new SslStream(candidate.GetStream(), false, delegate { return true; });
-                    ssl.AuthenticateAsClient(domain);
+                    // Строгая проверка сертификата, как и в WsTunnel.
+                    // Раньше здесь стояло `delegate { return true; }`: любой
+                    // сертификат принимался, и подмена DNS или локальный
+                    // перехватчик давали «успешный» TLS, а потом
+                    // «неизвестный proto tag». Человек искал причину в
+                    // стратегии, хотя соединение ушло не в Telegram.
+                    ssl = new SslStream(candidate.GetStream(), false, GatewayCheck.ValidateTelegram);
+
+                    try
+                    {
+                        ssl.AuthenticateAsClient(domain);
+                    }
+                    catch (Exception tlsEx)
+                    {
+                        string seen = "";
+
+                        try
+                        {
+                            if (ssl.RemoteCertificate != null)
+                                seen = GatewayCheck.Describe(ssl.RemoteCertificate);
+                        }
+                        catch { }
+
+                        error = domain + ": " + (seen.Length > 0
+                            ? "сертификат не от Telegram (есть: " + seen + ")"
+                            : tlsEx.Message);
+
+                        UpstreamRoutes.Fail(domain, false);
+
+                        try { ssl.Dispose(); } catch { }
+                        candidate.Close();
+                        continue;
+                    }
 
                     string wsError;
                     WsClient ws = WsClient.Connect(ssl, domain, path, ConnectTimeoutMs, out wsError);
@@ -574,6 +667,29 @@ namespace AutoZapret.Proxy
                 }
             }
 
+            // ---- публичный пул CfProxy, если прямой путь не выжил
+            //
+            // Порядок именно такой: свой релей → прямой → пул. Пул последний,
+            // потому что трафик идёт через ЧУЖОЙ воркер: содержимое остаётся
+            // зашифрованным, но владелец видит DC, объём и время.
+            //
+            // Пробуем только когда прямого пути нет вовсе. Если хоть один
+            // шлюз Telegram ответил, а сломался TLS — это не наша блокировка,
+            // и уводить трафик к чужим воркерам незачем.
+            if (_cfProxy && allConnectFailed)
+            {
+                WsClient pooled = TryCfProxy(dc, isMedia, path, out string poolError);
+
+                if (pooled != null)
+                {
+                    tcp = null;
+                    tls = null;
+                    return pooled;
+                }
+
+                if (poolError.Length > 0) error = poolError;
+            }
+
             // Ни один адрес не пустил даже TCP.
             //
             // Это принципиально другой отказ, чем «сертификат не тот» или
@@ -595,6 +711,103 @@ namespace AutoZapret.Proxy
 
             error = (error ?? "нет доступных маршрутов") +
                     " · следующая попытка через " + pause + " с";
+
+            return null;
+        }
+
+        /// <summary>
+        /// Попробовать публичный пул CfProxy: TLS + WS-апгрейд к
+        /// `kws{dc}.<домен-прослойки>`.
+        ///
+        /// Отличия от своего релея, и оба важны:
+        ///   * НЕТ query-параметров `?host=&port=` — воркер понимает адрес
+        ///     назначения по имени хоста (`kws2.` = DC 2);
+        ///   * сертификат принадлежит домену прослойки, а не Telegram,
+        ///     поэтому проверяется цепочка, а не имя. Требовать здесь
+        ///     `telegram.org` — значит отвергнуть рабочий путь.
+        /// </summary>
+        private WsClient TryCfProxy(int dc, bool isMedia, string path, out string error)
+        {
+            error = "";
+
+            // Мгновенно, без сети: этот метод в пути подключения, и
+            // блокирующая загрузка означала бы «соединение…» из-за нас же.
+            CfProxyPool.EnsureLoaded();
+            CfProxyPool.RefreshInBackground(false);
+
+            List<string> hosts = CfProxyPool.Routes(dc, CfProxyPool.MaxPerPass);
+
+            if (hosts.Count == 0)
+            {
+                error = "публичный пул CfProxy: нет доступных доменов";
+                return null;
+            }
+
+            DateTime started = DateTime.UtcNow;
+            string last = "";
+
+            foreach (string host in hosts)
+            {
+                if ((DateTime.UtcNow - started).TotalSeconds > RoutesBudgetSec) break;
+
+                TcpClient client = null;
+                System.Net.Security.SslStream ssl = null;
+
+                // Домен прослойки — часть хоста после первой точки.
+                int dot = host.IndexOf('.');
+                string baseDomain = dot > 0 ? host.Substring(dot + 1) : host;
+
+                try
+                {
+                    client = new TcpClient();
+                    client.NoDelay = true;
+
+                    IAsyncResult ar = client.BeginConnect(host, 443, null, null);
+
+                    if (!ar.AsyncWaitHandle.WaitOne(CfProxyPool.ProbeTimeoutMs))
+                    {
+                        last = host + ": таймаут TCP";
+                        CfProxyPool.MarkBad(baseDomain);
+                        client.Close();
+                        continue;
+                    }
+
+                    client.EndConnect(ar);
+
+                    ssl = new System.Net.Security.SslStream(
+                        client.GetStream(), false, GatewayCheck.ValidateRelay);
+
+                    ssl.AuthenticateAsClient(host);
+
+                    string wsError;
+                    WsClient ws = WsClient.Connect(ssl, host, path, ConnectTimeoutMs, out wsError);
+
+                    if (ws == null)
+                    {
+                        last = host + ": " + wsError;
+                        CfProxyPool.MarkBad(baseDomain);
+                        try { ssl.Dispose(); } catch { }
+                        client.Close();
+                        continue;
+                    }
+
+                    CfProxyPool.MarkGood(baseDomain);
+
+                    Log.Info("PROXY", "через публичный пул CfProxy: " + host + path);
+                    return ws;
+                }
+                catch (Exception ex)
+                {
+                    last = host + ": " + ex.GetType().Name;
+                    CfProxyPool.MarkBad(baseDomain);
+
+                    if (ssl != null) { try { ssl.Dispose(); } catch { } }
+                    if (client != null) { try { client.Close(); } catch { } }
+                }
+            }
+
+            error = "публичный пул CfProxy не сработал (" +
+                    (last.Length > 0 ? last : "все домены в карантине") + ")";
 
             return null;
         }

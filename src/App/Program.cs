@@ -84,6 +84,7 @@ namespace AutoZapret.App
             if (HasFlag(args, "--update-lists")) return Diag.DiagCommand.RunUpdateLists(args);
             if (HasFlag(args, "--fakes")) return Diag.DiagCommand.RunFakes(args);
             if (HasFlag(args, "--test-proxy")) return Diag.DiagCommand.RunTestProxy(args);
+            if (HasFlag(args, "--cfproxy")) return Diag.DiagCommand.RunCfProxy(args);
             if (HasFlag(args, "--check-updates")) return Diag.DiagCommand.RunCheckUpdates(args);
             if (HasFlag(args, "--hosts")) return Diag.DiagCommand.RunHosts(args);
             if (HasFlag(args, "--scores")) return Diag.DiagCommand.RunScores(args);

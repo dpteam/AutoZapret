@@ -1817,6 +1817,21 @@
             queueSave({ proxyRelay: relay.value.trim() });
         });
 
+        var cfCheck = document.getElementById("btn-cfproxy-test");
+        if (cfCheck) cfCheck.addEventListener("click", function () {
+            var hint = document.getElementById("cfproxy-state");
+
+            cfCheck.disabled = true;
+            cfCheck.textContent = "Проверяю…";
+
+            if (hint) {
+                hint.textContent = "проверяю домены пула…";
+                hint.className = "row-hint";
+            }
+
+            send("cfproxy.check");
+        });
+
         var relayTest = document.getElementById("btn-relay-test");
         if (relayTest) relayTest.addEventListener("click", function () {
             var field = document.getElementById("set-proxy-relay");
@@ -1864,6 +1879,7 @@
         bindSwitch("set-update-engine", "updateEngine");
         bindSwitch("set-update-app", "updateApp");
         bindSwitch("set-update-lists", "updateLists");
+        bindSwitch("set-cf-proxy", "cfProxy");
 
         var regen = document.getElementById("btn-secret-regen");
         if (regen) regen.addEventListener("click", function () {
@@ -4499,6 +4515,21 @@
             case "strategy.tunePicked":
                 renderTunePicked(msg);
                 break;
+
+            case "cfproxy.state":
+            {
+                var btn = document.getElementById("btn-cfproxy-test");
+                if (btn) { btn.disabled = false; btn.textContent = "Проверить пул"; }
+
+                var hint = document.getElementById("cfproxy-state");
+
+                if (hint) {
+                    hint.textContent = msg.summary || "";
+                    hint.className = "row-hint " + (msg.ok ? "diag-ok" : "diag-bad");
+                }
+
+                break;
+            }
 
             case "strategy.shared":
                 renderShared(msg);

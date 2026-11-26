@@ -400,5 +400,9 @@
   "«Движок» — каким исполнителем подбирать: у zapret 1 и 2 разные exe и разные наборы стратегий, и рабочая на одном может не работать на другом. «Объяснить» запускает одну стратегию с отладочным выводом winws и показывает, что он сделал с соединениями. Полезно, когда все стратегии дают нули": "\"Engine\" picks the executor: zapret 1 and 2 use different executables and different strategy sets, and one that works on one may not work on the other. \"Explain\" runs a single strategy with winws debug output and shows what it did to the connections. Useful when every strategy scores zero",
   "Проверенные варианты — нажмите «Оставить», чтобы сохранить любой": "Tested variants — press \"Keep\" to save any of them",
   "Результаты подбора: все проверенные варианты, а не только лучший.": "Sweep results: every tested variant, not just the best one.",
-  "показывать стратегии zapret 1": "show zapret 1 strategies"
+  "показывать стратегии zapret 1": "show zapret 1 strategies",
+  "Публичный пул Cloudflare": "Public Cloudflare pool",
+  "Чужие Cloudflare Worker'ы как последний резерв. Содержимое зашифровано, но владелец воркера видит, к какому DC вы идёте и сколько передаёте": "Third-party Cloudflare Workers as a last resort. Content is encrypted, but the worker owner sees which DC you use and how much you transfer",
+  "Проверить пул": "Check pool",
+  "проверяю домены пула…": "checking pool domains…"
 }

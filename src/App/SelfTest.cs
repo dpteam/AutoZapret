@@ -192,6 +192,9 @@ namespace AutoZapret.App
                 Section("шлюз Telegram и WS-кадры");
                 TestGatewayCheck();
 
+                Section("публичный пул CfProxy");
+                TestCfProxyPool();
+
                 Section("служба");
                 TestServiceManager();
 
@@ -7764,6 +7767,69 @@ namespace AutoZapret.App
             request.CertificateExtensions.Add(san.Build());
 
             return request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
+        }
+
+        /// <summary>
+        /// Публичный пул CfProxy: декодирование списка и сборка имени хоста.
+        ///
+        /// Проверяем чистую логику на заранее известных парах из настоящего
+        /// списка. Это важно: ошибка в декодировании даёт домены, которых не
+        /// существует, и пул выглядит мёртвым — ровно то, что я и получил
+        /// в первом заходе, только по другой причине (проверял базовый домен
+        /// вместо поддомена).
+        /// </summary>
+        private static void TestCfProxyPool()
+        {
+            // Пары взяты из настоящего списка: маскированное → настоящее.
+            Check("CfProxy: virkgj.com -> pclead.co.uk",
+                AutoZapret.Proxy.CfProxyPool.Decode("virkgj.com") == "pclead.co.uk",
+                AutoZapret.Proxy.CfProxyPool.Decode("virkgj.com"));
+
+            Check("CfProxy: vmmzovy.com -> offshor.co.uk",
+                AutoZapret.Proxy.CfProxyPool.Decode("vmmzovy.com") == "offshor.co.uk",
+                AutoZapret.Proxy.CfProxyPool.Decode("vmmzovy.com"));
+
+            Check("CfProxy: mkuosckvso.com -> cakeisalie.co.uk",
+                AutoZapret.Proxy.CfProxyPool.Decode("mkuosckvso.com") == "cakeisalie.co.uk",
+                AutoZapret.Proxy.CfProxyPool.Decode("mkuosckvso.com"));
+
+            Check("CfProxy: tmhqsdqmfpmk.com -> havegreatday.co.uk",
+                AutoZapret.Proxy.CfProxyPool.Decode("tmhqsdqmfpmk.com") == "havegreatday.co.uk",
+                AutoZapret.Proxy.CfProxyPool.Decode("tmhqsdqmfpmk.com"));
+
+            // Строка без .com не маскирована — отдаётся как есть.
+            Check("CfProxy: незамаскированная строка не меняется",
+                AutoZapret.Proxy.CfProxyPool.Decode("example.org") == "example.org",
+                AutoZapret.Proxy.CfProxyPool.Decode("example.org"));
+
+            // Комментарии и пустые строки — не домены.
+            Check("CfProxy: комментарий отброшен",
+                AutoZapret.Proxy.CfProxyPool.Decode("# comment").Length == 0, "пусто");
+
+            Check("CfProxy: пустая строка отброшена",
+                AutoZapret.Proxy.CfProxyPool.Decode("   ").Length == 0, "пусто");
+
+            // ---- имя хоста для подключения
+            //
+            // Именно ПОДДОМЕН с номером DC: базовый домен A-записи не имеет,
+            // и проверка по нему даёт ложное «пул мёртв».
+            Check("CfProxy: kws2.<домен> собирается верно",
+                AutoZapret.Proxy.CfProxyPool.HostFor(2, "pclead.co.uk") == "kws2.pclead.co.uk",
+                AutoZapret.Proxy.CfProxyPool.HostFor(2, "pclead.co.uk"));
+
+            Check("CfProxy: DC 203 идёт через kws2",
+                AutoZapret.Proxy.CfProxyPool.HostFor(203, "pclead.co.uk") == "kws2.pclead.co.uk",
+                AutoZapret.Proxy.CfProxyPool.HostFor(203, "pclead.co.uk"));
+
+            Check("CfProxy: DC 4 собирается верно",
+                AutoZapret.Proxy.CfProxyPool.HostFor(4, "notelega.co.uk") == "kws4.notelega.co.uk",
+                AutoZapret.Proxy.CfProxyPool.HostFor(4, "notelega.co.uk"));
+
+            // ---- разбор списка целиком
+            List<string> parsed = AutoZapret.Proxy.CfProxyPool.Parse(
+                "# комментарий\nvirkgj.com\n\nvirkgj.com\nvmmzovy.com\n");
+
+            Check("CfProxy: разбор списка без дублей", parsed.Count == 2, parsed.Count + " шт.");
         }
 
         private static void TestDnsSafety()

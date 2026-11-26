@@ -1248,6 +1248,25 @@
             <button class="btn" id="btn-relay-help" title="Пошаговая инструкция: свой Cloudflare Worker">Как сделать свой?</button>
           </div>
         </div>
+
+        <!-- Публичный пул: резерв, когда ни прямой путь, ни свой релей не
+             работают. Включается осознанно: трафик идёт через чужой воркер,
+             и его владелец видит DC, объём и время (содержимое зашифровано). -->
+        <div class="row">
+          <div>
+            <div class="row-label">Публичный пул Cloudflare</div>
+            <div class="row-hint">
+              Чужие Cloudflare Worker'ы как последний резерв. Содержимое
+              зашифровано, но владелец воркера видит, к какому DC вы идёте
+              и сколько передаёте
+            </div>
+            <div class="row-hint" id="cfproxy-state"></div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <div class="switch" id="set-cf-proxy"></div>
+            <button class="btn" id="btn-cfproxy-test">Проверить пул</button>
+          </div>
+        </div>
       </div>
 
       <div class="card">

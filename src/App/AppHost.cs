@@ -2038,6 +2038,32 @@ namespace AutoZapret.App
                     "detail", code.Length > 0 ? "" : "код воркера не вшит в сборку"));
             });
 
+            // Проверка публичного пула CfProxy: живой ли он и сколько доменов
+            // отвечает. Человек должен видеть это по кнопке, а не по
+            // «соединение…» в Telegram.
+            bridge.Register("cfproxy.check", msg =>
+            {
+                RunInBackground("cfproxy-check", () =>
+                {
+                    string summary;
+
+                    try
+                    {
+                        summary = Proxy.CfProxyPool.VerifyAll(2, 6000);
+                    }
+                    catch (Exception ex)
+                    {
+                        summary = "проверка не удалась: " + ex.Message;
+                    }
+
+                    _form.Bridge.Send(WebBridge.Msg("cfproxy.state",
+                        "ok", Proxy.CfProxyPool.WorkingCount > 0,
+                        "summary", summary,
+                        "total", (long)Proxy.CfProxyPool.Count,
+                        "working", (long)Proxy.CfProxyPool.WorkingCount));
+                });
+            });
+
             // Копирование в буфер обмена делает хост: в WebView2 страница
             // живёт на data-URL, и navigator.clipboard там может быть запрещён.
             bridge.Register("clipboard.set", msg =>
@@ -2291,7 +2317,7 @@ namespace AutoZapret.App
         private void StartProxy()
         {
             string error = _proxy.Start(_settings.ProxyHost, _settings.ProxyPort,
-                _settings.ProxySecret, _settings.ProxyRelay);
+                _settings.ProxySecret, _settings.ProxyRelay, _settings.ProxyCfProxy);
             if (error != null)
             {
                 Log.Error("PROXY", "не удалось запустить: " + error);
@@ -5740,6 +5766,7 @@ namespace AutoZapret.App
                 "proxyPort", (long)_settings.ProxyPort,
                 "proxySecret", _settings.ProxySecret,
                 "proxyRelay", _settings.ProxyRelay,
+                "cfProxy", _settings.ProxyCfProxy,
                 "proxyLink", _settings.BuildProxyLink(),
                 "theme", _settings.Theme,
                 "simpleMode", _settings.SimpleMode,
@@ -5872,6 +5899,7 @@ namespace AutoZapret.App
             _settings.ProxyPort = Json.GetInt(msg, "proxyPort", _settings.ProxyPort);
             _settings.Theme = Json.GetString(msg, "theme", _settings.Theme);
             _settings.ProxyRelay = (Json.GetString(msg, "proxyRelay", _settings.ProxyRelay) ?? "").Trim();
+            _settings.ProxyCfProxy = Json.GetBool(msg, "cfProxy", _settings.ProxyCfProxy);
             _settings.SimpleMode = Json.GetBool(msg, "simpleMode", _settings.SimpleMode);
             _settings.MinimizeToTray = Json.GetBool(msg, "minimizeToTray", _settings.MinimizeToTray);
             _settings.StartMinimized = Json.GetBool(msg, "startMinimized", _settings.StartMinimized);

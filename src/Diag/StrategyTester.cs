@@ -1863,6 +1863,60 @@ namespace AutoZapret.Diag
         }
 
         /// <summary>--test-proxy [dc]: проверить путь до Telegram и работу прокси.</summary>
+        /// <summary>
+        /// --cfproxy [dc]: проверить публичный пул CfProxy.
+        ///
+        /// Что проверяем и почему именно так:
+        ///   * список скачивается и декодируется — иначе непонятно, живой
+        ///     ли он вообще;
+        ///   * резолвится ПОДДОМЕН `kws{dc}.<домен>`, а не базовый домен.
+        ///     Базовый A-записи не имеет, и проверка по нему даёт ложный
+        ///     вывод «пул мёртв» (ровно на этом я и ошибся в первый раз);
+        ///   * делается настоящий WS-апгрейд на /apiws: домен может
+        ///     принимать TCP и не быть прослойкой.
+        /// </summary>
+        public static int RunCfProxy(string[] args)
+        {
+            int dc = 2;
+
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], "--cfproxy", StringComparison.OrdinalIgnoreCase) &&
+                    i + 1 < args.Length)
+                {
+                    int.TryParse(args[i + 1], out dc);
+                }
+            }
+
+            Console.WriteLine("== публичный пул CfProxy (DC " + dc + ") ==");
+            Console.WriteLine();
+
+            Console.WriteLine("загружаю список…");
+            Proxy.CfProxyPool.RefreshNow();
+
+            int total = Proxy.CfProxyPool.Count;
+            Console.WriteLine("доменов в списке: " + total);
+            Console.WriteLine();
+
+            if (total == 0)
+            {
+                Console.WriteLine("список пуст — проверить нечего");
+                return 1;
+            }
+
+            Console.WriteLine("проверяю kws" + dc + ".<домен>: TLS + WS-апгрейд /apiws");
+            Console.WriteLine();
+
+            string summary = Proxy.CfProxyPool.VerifyAll(dc, 6000);
+
+            Console.WriteLine(summary);
+            Console.WriteLine();
+
+            int working = Proxy.CfProxyPool.WorkingCount;
+
+            return working > 0 ? 0 : 1;
+        }
+
         public static int RunTestProxy(string[] args)
         {
             int dc = 2;
