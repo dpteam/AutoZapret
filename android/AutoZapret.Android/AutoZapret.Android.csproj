@@ -61,6 +61,25 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!--
+      Переносимый код десктопа: ядро и Telegram-прокси.
+
+      Берём те же файлы, что у Linux-сборки, а не копии: правило проекта —
+      «что сделали для десктопа, то и на Android, по возможности». Правка в
+      src/Proxy сразу действует на всех трёх платформах, и расхождение
+      «на десктопе починили, на телефоне нет» невозможно по построению.
+
+      Исключения те же, что у Linux, и по той же причине: AppInfo.cs и
+      BrowserDoh.cs тянут WinForms/реестр, SystemDns.cs — управление
+      системным DNS через netsh. На Android их заменяют свои реализации.
+    -->
+    <Compile Include="..\..\src\Core\*.cs"
+             Exclude="..\..\src\Core\AppInfo.cs;..\..\src\Core\SystemDns.cs;..\..\src\Core\BrowserDoh.cs;..\..\src\Core\SingleInstance.cs;..\..\src\Core\NetStats.cs" />
+
+    <Compile Include="..\..\src\Proxy\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Экран приложения: одна страница, без внешних зависимостей -->
     <AndroidAsset Include="Assets\mobile.html">
       <Link>Assets/mobile.html</Link>

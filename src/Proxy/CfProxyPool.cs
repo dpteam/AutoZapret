@@ -25,7 +25,7 @@ namespace AutoZapret.Proxy
     ///                            → HTTP/1.1 101 Switching Protocols (152 мс)
     ///
     ///   Воркер понимает, куда пересылать, по имени хоста (`kws2.` = DC 2),
-    ///   поэтому query-параметры вида `?host=&port=` НЕ нужны — это другой
+    ///   поэтому query-параметры вида `?host=…&amp;port=…` НЕ нужны — это другой
     ///   протокол, чем у нашего собственного релея.
     ///
     ///   Сам базовый домен A-записи не имеет (проверено: NOERROR без A,
@@ -373,38 +373,35 @@ namespace AutoZapret.Proxy
         {
             try
             {
-                // HttpWebRequest, а не WebClient: у WebClient нет таймаута,
-                // и при заблокированном GitHub вызов висел бы минутами.
-                // Именно в такой сети пул и нужен, поэтому зависание здесь
-                // недопустимо.
-                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(
-                    ListUrl + "?" + Guid.NewGuid().ToString("N").Substring(0, 8));
-
-                request.UserAgent = "AutoZapret/" + AppInfo.Version;
-                request.Timeout = 10000;
-                request.ReadWriteTimeout = 10000;
-                request.KeepAlive = false;
-
-                string text;
-
-                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-                using (Stream stream = response.GetResponseStream())
-                using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+                // HttpClient, а не WebRequest: на .NET 9/10 WebRequest
+                // помечен устаревшим (SYSLIB0014), а WebClient не умеет
+                // таймаут вовсе. Зависание здесь недопустимо: список
+                // качается в сети, где GitHub может быть недоступен.
+                using (System.Net.Http.HttpClient http = new System.Net.Http.HttpClient())
                 {
-                    text = reader.ReadToEnd();
+                    http.Timeout = TimeSpan.FromSeconds(10);
+
+                    http.DefaultRequestHeaders.TryAddWithoutValidation(
+                        "User-Agent", "AutoZapret/" + AppInfo.Version);
+
+                    // Nonce: Cloudflare кэширует по URL, и без него можно
+                    // получить старый список из кэша CDN.
+                    string url = ListUrl + "?" + Guid.NewGuid().ToString("N").Substring(0, 8);
+
+                    string text = http.GetStringAsync(url).GetAwaiter().GetResult();
+
+                    List<string> domains = Parse(text);
+
+                    if (domains.Count < MinValidDomains)
+                    {
+                        Log.Warn("PROXY", "CfProxy: в списке всего " + domains.Count +
+                                          " доменов — не доверяю");
+                        return new List<string>();
+                    }
+
+                    SaveCache(text);
+                    return domains;
                 }
-
-                List<string> domains = Parse(text);
-
-                if (domains.Count < MinValidDomains)
-                {
-                    Log.Warn("PROXY", "CfProxy: в списке всего " + domains.Count +
-                                      " доменов — не доверяю");
-                    return new List<string>();
-                }
-
-                SaveCache(text);
-                return domains;
             }
             catch (Exception ex)
             {

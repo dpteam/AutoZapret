@@ -33,6 +33,15 @@ namespace AutoZapret.Proxy
 
         /// <summary>Исходные 64 байта от клиента — нужны для вычисления обратного направления.</summary>
         public byte[] ClientInit;
+
+        /// <summary>
+        /// Секрет, которым реально расшифровался init.
+        ///
+        /// Обычно это 16 байт из ссылки. Но Telegram в режиме `dd` (random
+        /// padding) выводит ключ из **17** байт — с префиксом `0xdd`, — и тогда
+        /// обратное направление надо считать этим же расширенным секретом.
+        /// </summary>
+        public byte[] EffectiveSecret;
     }
 
     /// <summary>
@@ -119,14 +128,44 @@ namespace AutoZapret.Proxy
                 ctr.Transform(plain, 0, HandshakeLen);
 
             // тег протокола
-            if (Match(plain, TagPos, TagAbridged)) result.Tag = MtProtoTag.Abridged;
-            else if (Match(plain, TagPos, TagIntermediate)) result.Tag = MtProtoTag.Intermediate;
-            else if (Match(plain, TagPos, TagPadded)) result.Tag = MtProtoTag.Padded;
-            else
+            if (!TryTag(plain, result))
             {
-                result.Reject = Classify(init);
-                result.Error = Explain(result.Reject) + " (proto tag " + Hex(plain, TagPos, 4) + ")";
-                return result;
+                // ---- вторая попытка: секрет вместе с префиксом `dd`
+                //
+                // Ссылка `tg://proxy?...&secret=dd<32 hex>` — это режим random
+                // padding. Telegram (и mtg) в этом режиме считают ключ от
+                // 17 байт: `0xdd` + 16 байт секрета. Мы пробуем 16 байт
+                // первыми, потому что так работает часть клиентов и все наши
+                // собственные проверки, а этот вариант — вторым.
+                //
+                // Проверено на телефоне: с dd-ссылкой живой Telegram
+                // подключался, и в журнале было «секрет не совпал (proto tag
+                // 17e5bf3f)» — то есть ключ действительно считался иначе, а
+                // не «ссылка устарела».
+                byte[] extended = new byte[secret.Length + 1];
+                extended[0] = 0xDD;
+                Buffer.BlockCopy(secret, 0, extended, 1, secret.Length);
+
+                byte[] key2 = DeriveKey(prekey, extended);
+
+                byte[] plain2 = new byte[HandshakeLen];
+                Buffer.BlockCopy(init, 0, plain2, 0, HandshakeLen);
+
+                using (AesCtr ctr = new AesCtr(key2, iv))
+                    ctr.Transform(plain2, 0, HandshakeLen);
+
+                if (TryTag(plain2, result))
+                {
+                    key = key2;
+                    plain = plain2;
+                    secret = extended;
+                }
+                else
+                {
+                    result.Reject = Classify(init);
+                    result.Error = Explain(result.Reject) + " (proto tag " + Hex(plain, TagPos, 4) + ")";
+                    return result;
+                }
             }
 
             // dc_idx: int16 LE, знак означает media
@@ -152,8 +191,19 @@ namespace AutoZapret.Proxy
             result.ClientKey = key;
             result.ClientIv = iv;
             result.ClientInit = init;
+            result.EffectiveSecret = secret;
             result.Ok = true;
             return result;
+        }
+
+        /// <summary>Определить тег протокола. false — тег не наш.</summary>
+        private static bool TryTag(byte[] plain, HandshakeResult result)
+        {
+            if (Match(plain, TagPos, TagAbridged)) { result.Tag = MtProtoTag.Abridged; return true; }
+            if (Match(plain, TagPos, TagIntermediate)) { result.Tag = MtProtoTag.Intermediate; return true; }
+            if (Match(plain, TagPos, TagPadded)) { result.Tag = MtProtoTag.Padded; return true; }
+
+            return false;
         }
 
         /// <summary>
@@ -246,6 +296,29 @@ namespace AutoZapret.Proxy
             Buffer.BlockCopy(relayInit, SkipLen + PrekeyLen, iv, 0, IvLen);
         }
 
+        /// <summary>
+        /// Ключ направления «Telegram -> прокси»: перевёрнутый prekey||iv
+        /// нашего же init, БЕЗ хэша с секретом.
+        ///
+        /// Это не симметрия ради красоты: Telegram шифрует ответ именно так
+        /// (refs/tg-ws-proxy, tg_ws_proxy.py:239-242 — `relay_dec_*`), и если
+        /// взять здесь обычный ключ, ответ не расшифруется: клиент увидит
+        /// поток мусора и останется на «Соединение…».
+        /// </summary>
+        public static void DeriveRelayReverse(byte[] relayInit, out byte[] key, out byte[] iv)
+        {
+            byte[] rev = new byte[PrekeyLen + IvLen];
+
+            for (int i = 0; i < rev.Length; i++)
+                rev[i] = relayInit[SkipLen + rev.Length - 1 - i];
+
+            key = new byte[KeyLen];
+            Buffer.BlockCopy(rev, 0, key, 0, KeyLen);
+
+            iv = new byte[IvLen];
+            Buffer.BlockCopy(rev, KeyLen, iv, 0, IvLen);
+        }
+
         public static byte[] DeriveKey(byte[] prekey, byte[] secret)
         {
             byte[] input = new byte[prekey.Length + secret.Length];
@@ -261,8 +334,14 @@ namespace AutoZapret.Proxy
         ///
         /// Первые байты не должны выглядеть как HTTP-запрос или TLS-запись:
         /// это проверяет DPI. Запрещённые начала — из refs/tg-ws-proxy.
+        ///
+        /// ТЕГ ОБЯЗАН БЫТЬ КЛИЕНТСКИМ (refs/tg-ws-proxy, tg_ws_proxy.py:312 —
+        /// `_generate_relay_init(proto_tag, dc_idx)`). Раньше здесь всегда
+        /// стоял `intermediate`, и если клиент приходил с `abridged`, Telegram
+        /// разбирал наш поток другим форматом длины: handshake проходил,
+        /// соединение открывалось, и на этом всё заканчивалось.
         /// </summary>
-        public static byte[] GenerateRelayInit(int dc, bool isMedia)
+        public static byte[] GenerateRelayInit(int dc, bool isMedia, MtProtoTag tag)
         {
             byte[] init = new byte[HandshakeLen];
             RandomNumberGenerator rng = RandomNumberGenerator.Create();
@@ -282,8 +361,17 @@ namespace AutoZapret.Proxy
                 byte[] iv = new byte[IvLen];
                 Buffer.BlockCopy(init, SkipLen + PrekeyLen, iv, 0, IvLen);
 
+                byte[] tagBytes;
+
+                switch (tag)
+                {
+                    case MtProtoTag.Abridged: tagBytes = TagAbridged; break;
+                    case MtProtoTag.Padded: tagBytes = TagPadded; break;
+                    default: tagBytes = TagIntermediate; break;
+                }
+
                 byte[] tail = new byte[8];
-                Buffer.BlockCopy(TagIntermediate, 0, tail, 0, 4);
+                Buffer.BlockCopy(tagBytes, 0, tail, 0, 4);
 
                 int dcValue = isMedia ? -dc : dc;
                 tail[4] = (byte)(dcValue & 0xFF);
@@ -304,6 +392,12 @@ namespace AutoZapret.Proxy
             {
                 rng.Dispose();
             }
+        }
+
+        /// <summary>Старый вариант: intermediate. Оставлен для тестов и совместимости.</summary>
+        public static byte[] GenerateRelayInit(int dc, bool isMedia)
+        {
+            return GenerateRelayInit(dc, isMedia, MtProtoTag.Intermediate);
         }
 
         private static bool LooksReserved(byte[] init)

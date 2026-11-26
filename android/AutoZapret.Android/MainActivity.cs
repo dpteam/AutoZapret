@@ -78,6 +78,21 @@ namespace AutoZapret.Android
             // иначе «VPN включён» есть только в logcat, а человек видит пусто.
             ZapretVpnService.LogSink = PushLog;
 
+            // Сервис сам говорит, когда состояние изменилось. Без этого экран
+            // показывал состояние ДО остановки: человек жмёт «выключить», а
+            // кнопка остаётся включённой, потому что активность прочитала
+            // состояние раньше, чем сервис успел погасить движок.
+            ZapretVpnService.StateChanged = delegate
+            {
+                RunOnUiThread(delegate
+                {
+                    _busy = false;
+
+                    PushState();
+                    PushTgProxy();
+                });
+            };
+
             DescribeEnvironment();
 
             RequestNotificationPermission();
@@ -249,13 +264,26 @@ namespace AutoZapret.Android
                     " · доступно: " + string.Join(", ", NetworkBinding.Describe(this).ToArray()));
 
             // Порядок важности:
-            //   1. профиль, подобранный под ЭТУ сеть — только если техника
-            //      явно «auto». Раньше подобранный профиль перекрывал ручной
-            //      выбор ВСЕГДА, и это был молчаливый баг: человек выбирал
-            //      «Фейк + TTL 8», а работал старый «разрез 1» из прошлого
-            //      автоподбора — снаружи выглядело как «выбор не действует»;
-            //   2. профиль zapret, если выбран;
+            //   1. профиль zapret, если выбран — это ЯВНЫЙ выбор человека;
+            //   2. профиль, подобранный под ЭТУ сеть — только если техника
+            //      явно «auto»;
             //   3. ручная техника.
+            //
+            // Раньше автошный профиль стоял первым и молча перекрывал выбор:
+            // человек выбирал `general (EXP)`, а работал старый автоподбор —
+            // снаружи «выбор не действует».
+            if (!string.IsNullOrEmpty(_zapretPreset))
+            {
+                ZapretPreset preset = ZapretPresets.ById(this, _zapretPreset);
+
+                if (preset != null && preset.Works)
+                {
+                    preset.ApplyTo(proxy.Config);
+                    PushLog("техника: профиль zapret «" + preset.Describe() + "»");
+                    return;
+                }
+            }
+
             if (_technique == "auto")
             {
                 TuneProfile tuned = NetworkTuner.ForCurrent(this);
@@ -268,19 +296,6 @@ namespace AutoZapret.Android
                     return;
                 }
             }
-
-            if (!string.IsNullOrEmpty(_zapretPreset))
-            {
-                ZapretPreset preset = ZapretPresets.ById(this, _zapretPreset);
-
-                if (preset != null && preset.Works)
-                {
-                    preset.ApplyTo(proxy.Config);
-                    PushLog("техника: профиль zapret «" + preset.Name + "»");
-                    return;
-                }
-            }
-
             DesyncPreset chosen = DesyncPreset.ById(_technique);
 
             chosen.ApplyTo(proxy.Config);
@@ -302,7 +317,10 @@ namespace AutoZapret.Android
 
                 int enginePort = _port == 1081 ? 1082 : 1081;
 
-                string args = EngineArgsFor(_technique);
+                // Флаги строим из РАЗОБРАННОЙ конфигурации: профиль zapret
+                // задаёт fake/позиции напрямую, а имя техники может при этом
+                // остаться «Без обхода» — и движок получал пустой набор флагов.
+                string args = ZapretVpnService.EngineArgsFor(proxy.Config);
 
                 // Всегда 0.0.0.0: привязка к адресу конкретной сети ломает
                 // byedpi — движок стартует и не соединяется вообще. Подробности
@@ -448,26 +466,12 @@ namespace AutoZapret.Android
             }
         }
 
-        /// <summary>Перевод нашей техники в флаги byedpi.</summary>
-        private static string EngineArgsFor(string technique)
-        {
-            if (technique == "off") return "";
-
-            if (technique == "split1") return "--split 1";
-            if (technique == "split2") return "--split 1+s";
-            if (technique == "multisplit") return "--split 1+s --split 5+s";
-            if (technique == "disorder") return "--disorder 1";
-            if (technique == "oob") return "--oob 1";
-            if (technique == "disorder-oob") return "--disoob 1";
-            if (technique == "fake-split") return "--fake -1 --ttl 8 --split 1+s";
-            if (technique == "fake-disorder") return "--fake -1 --ttl 8 --disorder 1";
-
-            // fake8 и всё остальное: проверенная на живой сети комбинация
-            return "--fake -1 --ttl 8";
-        }
-
         private void StopProxy()
         {
+            // Кнопка должна остаться в «Останавливаю…», пока сервис реально не
+            // погасит прокси. Раньше здесь сразу снимался _busy и отправлялось
+            // состояние ДО остановки: экран показывал «включено», а через
+            // мгновение уже ничего не приходило. Снаружи — «не выключается».
             _busy = true;
             PushState();
 
@@ -479,8 +483,16 @@ namespace AutoZapret.Android
             try { if (_proxy != null) _proxy.Stop(); } catch { }
             _proxy = null;
 
-            _busy = false;
-            PushState();
+            // Страховка: если сервис почему-то не ответил (убит системой,
+            // исключение при остановке), экран не должен остаться в вечном
+            // «Останавливаю…».
+            new Handler(Looper.MainLooper).PostDelayed(delegate
+            {
+                if (!_busy) return;
+
+                _busy = false;
+                PushState();
+            }, 5000);
         }
 
         /// <summary>
@@ -542,6 +554,26 @@ namespace AutoZapret.Android
 
         private void StopVpn()
         {
+            // Сначала напрямую через живой экземпляр: `StartService` для уже
+            // запущенного foreground-сервиса доставляется не всегда, и тогда
+            // кнопка «выключить» не делает ничего. Приём тот же, что у кнопки
+            // в уведомлении (см. ZapretVpnService.RequestStop).
+            ZapretVpnService live = ZapretVpnService.Current;
+
+            if (live != null)
+            {
+                try
+                {
+                    live.RequestStop();
+                    PushState();
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    PushLog("остановка VPN: " + ex.GetType().Name + ": " + ex.Message);
+                }
+            }
+
             Intent intent = new Intent(this, typeof(ZapretVpnService));
             intent.SetAction(ZapretVpnService.ActionStop);
 
@@ -589,12 +621,24 @@ namespace AutoZapret.Android
                         SendTechniques();
                         PushState();
                         SendTuneState();
+                        PushTgProxy();
                         PushLog("Android-версия " + PackageManager.GetPackageInfo(PackageName, 0).VersionName);
                         break;
 
                     case "proxy.toggle":
-                        if (msg.OptBoolean("enabled", false)) StartProxy();
-                        else StopProxy();
+                        if (msg.OptBoolean("enabled", false))
+                        {
+                            StartProxy();
+                        }
+                        else
+                        {
+                            // «Выключить обход» обязано гасить то, что реально
+                            // работает. В VPN-режиме это туннель, а не SOCKS5:
+                            // остановка одного прокси оставила бы туннель без
+                            // выхода, и снаружи это «выключил, а не выключилось».
+                            if (ZapretVpnService.IsRunning) StopVpn();
+                            else StopProxy();
+                        }
                         break;
 
                     case "vpn.toggle":
@@ -605,6 +649,90 @@ namespace AutoZapret.Android
                     case "proxy.state":
                         PushState();
                         break;
+
+                    // ---- Telegram-прокси
+                    //
+                    // Управляется через тот же сервис, что и обход: прокси
+                    // живёт там, иначе система прибьёт его как фоновый.
+                    case "tgproxy.toggle":
+                        {
+                            bool enable = msg.OptBoolean("enabled", false);
+
+                            ISharedPreferences prefs = GetSharedPreferences("autozapret", FileCreationMode.Private);
+                            ISharedPreferencesEditor editor = prefs.Edit();
+                            editor.PutBoolean("tg_proxy_enabled", enable);
+                            editor.Apply();
+
+                            Intent service = new Intent(this, typeof(ZapretVpnService));
+                            service.SetAction(enable ? ZapretVpnService.ActionTgProxyStart
+                                                     : ZapretVpnService.ActionTgProxyStop);
+
+                            try
+                            {
+                                if (enable && Build.VERSION.SdkInt >= BuildVersionCodes.O)
+                                    StartForegroundService(service);
+                                else
+                                    StartService(service);
+                            }
+                            catch (Exception ex)
+                            {
+                                PushLog("Telegram-прокси: " + ex.GetType().Name + ": " + ex.Message);
+                            }
+
+                            // Состояние придёт от сервиса; но если сервис не
+                            // поднялся, экран должен выйти из «Включаю…» —
+                            // поэтому отдаём сразу и ещё раз через паузу.
+                            PushTgProxy();
+
+                            new Handler(Looper.MainLooper).PostDelayed(
+                                delegate { PushTgProxy(); }, 2500);
+
+                            break;
+                        }
+
+                    case "tgproxy.state":
+                        PushTgProxy();
+                        break;
+
+                    case "tgproxy.open":
+                        {
+                            string link = TgProxyHost.BuildLink(this);
+
+                            try
+                            {
+                                // global:: — потому что `Android` в этом файле
+                                // может означать и пространство имён проекта
+                                // (`AutoZapret.Android`), и платформу. Без
+                                // префикса компилятор ищет `AutoZapret.Android.Net`.
+                                StartActivity(new Intent(Intent.ActionView,
+                                    global::Android.Net.Uri.Parse(link)));
+                            }
+                            catch (Exception ex)
+                            {
+                                PushLog("не удалось открыть Telegram: " + ex.Message);
+                            }
+
+                            break;
+                        }
+
+                    case "tgproxy.copy":
+                        {
+                            string link = TgProxyHost.BuildLink(this);
+
+                            try
+                            {
+                                ClipboardManager clipboard =
+                                    (ClipboardManager)GetSystemService(ClipboardService);
+                                clipboard.PrimaryClip = ClipData.NewPlainText("Telegram-прокси", link);
+                                PushLog("ссылка скопирована");
+                            }
+                            catch (Exception ex)
+                            {
+                                PushLog("не удалось скопировать: " + ex.Message);
+                            }
+
+                            break;
+                        }
 
                     case "settings.set":
                         {
@@ -1281,6 +1409,34 @@ namespace AutoZapret.Android
             Deliver(msg.ToString());
         }
 
+        /// <summary>
+        /// Состояние Telegram-прокси для экрана: работает ли, порт и ссылка.
+        ///
+        /// Ссылку отдаём только когда прокси запущен: мёртвая ссылка в
+        /// Telegram даёт «соединение…» до таймаута, и человек решает, что
+        /// сломан Telegram, а не прокси.
+        /// </summary>
+        private void PushTgProxy()
+        {
+            Org.Json.JSONObject state = new Org.Json.JSONObject();
+
+            bool running = TgProxyHost.IsRunning;
+
+            state.Put("type", "tgproxy");
+            state.Put("running", running);
+            state.Put("port", running ? TgProxyHost.Port : 0);
+            state.Put("link", running ? TgProxyHost.BuildLink(this) : "");
+
+            // Через обход или напрямую — видно в состоянии, потому что это
+            // ровно та разница, из-за которой на телефоне не работало.
+            state.Put("viaSocks", ZapretVpnService.IsRunning);
+
+            string error = TgProxyHost.LastError;
+            state.Put("error", error ?? "");
+
+            Deliver(state.ToString());
+        }
+
         private void PushState()
         {
             Socks5Proxy active = _proxy != null && _proxy.IsRunning ? _proxy : ZapretVpnService.Running;
@@ -1351,6 +1507,7 @@ namespace AutoZapret.Android
         protected override void OnDestroy()
         {
             ZapretVpnService.LogSink = null;
+            ZapretVpnService.StateChanged = null;
 
             try { if (_timer != null) _timer.Dispose(); } catch { }
             try { if (_proxy != null) _proxy.Dispose(); } catch { }

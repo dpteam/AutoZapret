@@ -202,7 +202,8 @@ namespace AutoZapret.Proxy
         /// Возвращает null (и текст ошибки), если релей не ответил.
         /// </summary>
         public static SslStream Connect(string relay, string targetHost, int targetPort,
-                                        int timeoutMs, out TcpClient tcp, out string error)
+                                        int timeoutMs, out TcpClient tcp, out string error,
+                                        string upstreamSocks = null)
         {
             tcp = null;
             error = null;
@@ -217,19 +218,49 @@ namespace AutoZapret.Proxy
 
             try
             {
-                client = new TcpClient();
-                client.NoDelay = true;
+                // Релей может быть недоступен напрямую (на Android обход — это
+                // локальный SOCKS5, а не системный перехват). Проводим его
+                // через тот же обход, что и остальное.
+                string socksError = null;
 
-                IAsyncResult ar = client.BeginConnect(uri.Host, uri.Port <= 0 ? 443 : uri.Port, null, null);
-
-                if (!ar.AsyncWaitHandle.WaitOne(timeoutMs))
+                if (!string.IsNullOrEmpty(upstreamSocks))
                 {
-                    client.Close();
-                    error = uri.Host + ": таймаут TCP до релея";
-                    return null;
+                    string proxyHost;
+                    int proxyPort;
+
+                    if (Socks5Client.TryParse(upstreamSocks, out proxyHost, out proxyPort))
+                    {
+                        client = Socks5Client.Connect(proxyHost, proxyPort, uri.Host,
+                                                      uri.Port <= 0 ? 443 : uri.Port,
+                                                      timeoutMs, out socksError);
+                    }
+                    else
+                    {
+                        socksError = "адрес обхода не разобран: " + upstreamSocks;
+                    }
+                }
+                else
+                {
+                    client = new TcpClient();
+                    client.NoDelay = true;
+
+                    IAsyncResult ar = client.BeginConnect(uri.Host, uri.Port <= 0 ? 443 : uri.Port, null, null);
+
+                    if (!ar.AsyncWaitHandle.WaitOne(timeoutMs))
+                    {
+                        client.Close();
+                        error = uri.Host + ": таймаут TCP до релея";
+                        return null;
+                    }
+
+                    client.EndConnect(ar);
                 }
 
-                client.EndConnect(ar);
+                if (client == null)
+                {
+                    error = uri.Host + ": " + (socksError ?? "не удалось подключиться");
+                    return null;
+                }
 
                 // Релей может быть и `ws://` (свой сервер в локальной сети,
                 // отладка). Тогда TLS до релея не нужен — только до Telegram.

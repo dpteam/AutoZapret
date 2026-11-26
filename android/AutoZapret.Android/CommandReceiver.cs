@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using Android.App;
 using Android.Content;
+using Android.OS;
 using AutoZapret.Android.Engine;
 
 namespace AutoZapret.Android
@@ -30,7 +31,7 @@ namespace AutoZapret.Android
     /// оттуда результат и забирается.
     /// </summary>
     [BroadcastReceiver(Enabled = true, Exported = true)]
-    [IntentFilter(new[] { ActionSet, ActionState, ActionCheck, ActionApps, ActionVpnOn, ActionVpnOff, ActionStopVpn, ActionDns, ActionTry, ActionProxy })]
+    [IntentFilter(new[] { ActionSet, ActionState, ActionCheck, ActionApps, ActionVpnOn, ActionVpnOff, ActionStopVpn, ActionDns, ActionTry, ActionProxy, ActionTgProxy, ActionTune })]
     public sealed class CommandReceiver : BroadcastReceiver
     {
         public const string ActionSet = "ru.autozapret.android.SET";
@@ -49,6 +50,15 @@ namespace AutoZapret.Android
 
         /// <summary>Включить/выключить локальный SOCKS5 без VPN (для сравнения техник).</summary>
         public const string ActionProxy = "ru.autozapret.android.PROXY";
+
+        /// <summary>
+        /// Включить/выключить Telegram MTProto-прокси.
+        ///
+        /// Идёт напрямую в сервис, без активности: прокси не требует ни VPN,
+        /// ни разрешений диалогом, поэтому команда должна работать из adb на
+        /// заблокированном экране — это и есть способ проверить её на телефоне.
+        /// </summary>
+        public const string ActionTgProxy = "ru.autozapret.android.TGPROXY";
 
         /// <summary>Кнопка «Выключить» в уведомлении VPN-сервиса.</summary>
         public const string ActionStopVpn = ZapretVpnService.ActionStopBroadcast;
@@ -107,6 +117,7 @@ namespace AutoZapret.Android
 
                 if (action == ActionSet) HandleSet(context, intent);
                 else if (action == ActionState) HandleState(context);
+                else if (action == ActionTgProxy) HandleTgProxy(context, intent);
                 else if (action == ActionCheck) HandleCheck(context);
                 else if (action == ActionApps) HandleApps(context, intent);
                 else if (action == ActionDns) HandleDns(context);
@@ -170,6 +181,21 @@ namespace AutoZapret.Android
                 // профиль молча перекрывает выбор, и «выбрал fake8, а работает
                 // ALT12» выглядит как поломка выбора.
                 zapretPreset = "";
+            }
+
+            // Профиль zapret. Отдельный ключ, потому что пустая строка —
+            // это законное «никакого профиля», и отличить её от «не передали»
+            // через GetStringExtra нельзя. Раньше команда SET профиль вообще
+            // не принимала: выбрать его можно было только пальцем в интерфейсе,
+            // и проверка на телефоне шла не тем набором, что задумано.
+            if (intent.HasExtra("zapretPreset"))
+            {
+                zapretPreset = (intent.GetStringExtra("zapretPreset") ?? "").Trim();
+                changed = true;
+
+                // Профиль перекрывает ручную технику: иначе в настройках
+                // остаётся «Без обхода», и отчёт врёт о том, чем идёт обход.
+                if (zapretPreset.Length > 0) technique = "auto";
             }
 
             int newDelay = intent.GetIntExtra("delay", -1);
@@ -250,6 +276,63 @@ namespace AutoZapret.Android
 
         // -------------------------------------------------------------- состояние
 
+        /// <summary>
+        /// Включить/выключить Telegram MTProto-прокси.
+        ///
+        /// Параметры через extras: `enabled` (bool), `port` (int),
+        /// `relay` (string), `cf` (bool). Всё пишется в prefs, чтобы сервис
+        /// увидел настройки при старте — иначе команда меняла бы файл, а
+        /// работающий прокси продолжал со старыми значениями.
+        /// </summary>
+        private static void HandleTgProxy(Context context, Intent intent)
+        {
+            bool enabled = intent != null && intent.GetBooleanExtra("enabled", false);
+
+            ISharedPreferences prefs = context.GetSharedPreferences("autozapret", FileCreationMode.Private);
+            ISharedPreferencesEditor editor = prefs.Edit();
+
+            editor.PutBoolean("tg_proxy_enabled", enabled);
+
+            if (intent != null)
+            {
+                int port = intent.GetIntExtra("port", 0);
+                if (port > 0) editor.PutInt("tg_proxy_port", port);
+
+                string relay = intent.GetStringExtra("relay");
+                if (relay != null) editor.PutString("tg_proxy_relay", relay.Trim());
+
+                if (intent.HasExtra("cf")) editor.PutBoolean("tg_proxy_cf", intent.GetBooleanExtra("cf", true));
+            }
+
+            editor.Apply();
+
+            Intent service = new Intent(context, typeof(ZapretVpnService));
+            service.SetAction(enabled ? ZapretVpnService.ActionTgProxyStart : ZapretVpnService.ActionTgProxyStop);
+
+            try
+            {
+                if (enabled && Build.VERSION.SdkInt >= BuildVersionCodes.O)
+                {
+                    context.StartForegroundService(service);
+                }
+                else
+                {
+                    // Остановка — обычным StartService: StartForegroundService
+                    // требует, чтобы сервис в течение 5 секунд вызвал
+                    // StartForeground, а обработчик остановки этого не делает,
+                    // и система убила бы приложение с ANR.
+                    context.StartService(service);
+                }
+
+                Say("TGPROXY: " + (enabled ? "запускаю" : "останавливаю"));
+            }
+            catch (Exception ex)
+            {
+                Say("TGPROXY: не удалось " + (enabled ? "запустить" : "остановить") +
+                    ": " + ex.GetType().Name + ": " + ex.Message);
+            }
+        }
+
         private static void HandleState(Context context)
         {
             ISharedPreferences prefs = context.GetSharedPreferences("autozapret", FileCreationMode.Private);
@@ -264,8 +347,7 @@ namespace AutoZapret.Android
             // взял fake8, а STATE напечатал «Разрез 1». По такому отчёту нельзя
             // понять, что происходит, — а он для этого и нужен.
             Say("STATE: vpn=" + (ZapretVpnService.IsRunning ? "on" : "off") +
-                ", техника=" + DesyncPreset.ById(
-                    prefs.GetString("technique", ZapretVpnService.DefaultTechnique)).Name +
+                ", техника=" + ZapretVpnService.DescribeTechnique(context, prefs) +
                 ", режим приложений=" + AppSelection.LoadMode(context) +
                 ", выбранных приложений=" + AppSelection.LoadApps(context).Count);
 
@@ -276,6 +358,21 @@ namespace AutoZapret.Android
                     ", вверх=" + active.BytesUp +
                     ", вниз=" + active.BytesDown +
                     ", hello снято=" + HelloCapture.CachedCount);
+            }
+
+            // Telegram-прокси: состояние и готовая ссылка.
+            //
+            // Ссылку печатаем здесь же, потому что её надо откуда-то взять:
+            // на телефоне нет консоли, а открывать её в Telegram нужно один раз.
+            // Секрет при этом попадает в logcat — это осознанно: logcat читает
+            // только владелец телефона через adb, а без ссылки функцию не
+            // проверить. В интерфейсе секрет по-прежнему скрыт.
+            Say("STATE: tgproxy=" + (TgProxyHost.IsRunning ? "on" : "off") +
+                ", порт=" + (TgProxyHost.Port > 0 ? TgProxyHost.Port : 0));
+
+            if (TgProxyHost.IsRunning)
+            {
+                Say("STATE: tgproxy link=" + TgProxyHost.BuildLink(context));
             }
         }
 

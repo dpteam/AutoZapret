@@ -1,4 +1,5 @@
 using System;
+using System.Text;
 using System.Threading;
 using Android.App;
 using Android.Content;
@@ -6,6 +7,7 @@ using Android.Content.PM;
 using Android.Net;
 using Android.OS;
 using AutoZapret.Android.Engine;
+using AutoZapret.Core;
 
 namespace AutoZapret.Android
 {
@@ -42,6 +44,15 @@ namespace AutoZapret.Android
         /// </summary>
         public const string ActionProxyStart = "ru.autozapret.android.PROXY_START";
         public const string ActionProxyStop = "ru.autozapret.android.PROXY_STOP";
+
+        /// <summary>
+        /// Telegram MTProto-прокси: отдельные действия, потому что это
+        /// независимая функция. Включать её через PROXY_START нельзя — там
+        /// SOCKS5-обход, и «выключить обход» не должно гасить Telegram-прокси
+        /// у того, кто им пользуется.
+        /// </summary>
+        public const string ActionTgProxyStart = "ru.autozapret.android.TGPROXY_START";
+        public const string ActionTgProxyStop = "ru.autozapret.android.TGPROXY_STOP";
 
         /// <summary>Broadcast из кнопки в уведомлении: остановить туннель.</summary>
         public const string ActionStopBroadcast = "ru.autozapret.android.STOP_FROM_NOTIFICATION";
@@ -126,6 +137,30 @@ namespace AutoZapret.Android
         /// <summary>Куда писать строки лога для интерфейса (ставит MainActivity).</summary>
         public static Action<string> LogSink;
 
+        /// <summary>
+        /// Сообщить интерфейсу, что состояние изменилось (ставит MainActivity).
+        ///
+        /// Зачем: остановка идёт асинхронно — активность отправляет intent и
+        /// сразу читает состояние, а сервис ещё не успел погасить прокси.
+        /// Получалось «нажал выключить, кнопка осталась включённой»: экран
+        /// показывал состояние ДО остановки, и второго сообщения не приходило.
+        /// Теперь сервис сам говорит, когда действительно остановился.
+        /// </summary>
+        public static Action StateChanged;
+
+        private static void NotifyState()
+        {
+            try
+            {
+                Action handler = StateChanged;
+
+                if (handler != null) handler();
+            }
+            catch
+            {
+            }
+        }
+
         public override void OnCreate()
         {
             base.OnCreate();
@@ -140,6 +175,49 @@ namespace AutoZapret.Android
             if (action == ActionStop)
             {
                 StopTunnel();
+                return StartCommandResult.NotSticky;
+            }
+
+            if (action == ActionTgProxyStop)
+            {
+                StopTgProxy();
+
+                // Если ничего другого не работает, сервис держать незачем:
+                // висящее уведомление «включено» при выключенном прокси —
+                // это ложь в шторке.
+                if (_proxy == null && _tun == null)
+                {
+                    try { StopForeground(StopForegroundFlags.Remove); } catch { }
+                    StopSelf();
+                }
+
+                return StartCommandResult.NotSticky;
+            }
+
+            if (action == ActionTgProxyStart)
+            {
+                // Свой foreground-режим: Telegram-прокси должен жить, даже если
+                // VPN и SOCKS5 не включены. Без этого система прибьёт сервис,
+                // и Telegram будет видеть «соединение…» до таймаута.
+                try
+                {
+                    StartForeground(NotificationId, BuildNotification("Telegram-прокси включён"));
+                }
+                catch (Exception ex)
+                {
+                    LogLine("StartForeground (tg): " + ex.GetType().Name + ": " + ex.Message);
+                }
+
+                try
+                {
+                    ISharedPreferences prefs = GetSharedPreferences("autozapret", FileCreationMode.Private);
+                    StartTgProxy(prefs);
+                }
+                catch (Exception ex)
+                {
+                    LogLine("запуск Telegram-прокси: " + ex.GetType().Name + ": " + ex.Message);
+                }
+
                 return StartCommandResult.NotSticky;
             }
 
@@ -267,20 +345,7 @@ namespace AutoZapret.Android
             // фейка зависит от числа хопов до DPI, и один и тот же на Wi-Fi и
             // в мобильной сети не работает. Если для текущей сети профиль есть
             // — берём его, иначе ручную настройку.
-            TuneProfile tuned = NetworkTuner.ForCurrent(this);
-
-            string technique = prefs.GetString("technique", ZapretVpnService.DefaultTechnique);
-
-            if (technique == "auto" && tuned != null)
-            {
-                tuned.ApplyTo(_proxy.Config);
-                LogLine("техника: авто, профиль сети — " + tuned.Describe());
-            }
-            else
-            {
-                DesyncPreset.ById(technique).ApplyTo(_proxy.Config);
-                LogLine("техника: " + DesyncPreset.ById(technique).Name);
-            }
+            ApplyTechnique(prefs, _proxy.Config);
 
             // Движок byedpi запускается ПОСЛЕ Establish, а не здесь.
             //
@@ -484,6 +549,17 @@ namespace AutoZapret.Android
             LogLine("VPN включён: tun → SOCKS5 127.0.0.1:" + port + ", " + _proxy.Config.Describe() +
                     ", режим приложений: " + mode +
                     (tunnel6 != null ? ", IPv6 внутри туннеля" : ", IPv6 нет в сети — только IPv4"));
+
+            // Telegram-прокси нужен и в режиме VPN: он решает другую задачу
+            // (блокировка по адресу шлюзов Telegram), а не перехват трафика.
+            // Апстрим проводим через тот же обход — иначе он уйдёт мимо обхода.
+            // Порт движка предпочтительнее: он не добавляет второй слой
+            // desync поверх своего (см. StartTgProxy).
+            TgProxyHost.UpdateUpstreamSocks(UpstreamForTg(port));
+
+            StartTgProxy(prefs);
+
+            NotifyState();
         }
 
         private void TunnelLoop(int fd, string config)
@@ -672,14 +748,126 @@ namespace AutoZapret.Android
             IsRunning = true;
 
             LogLine("прокси включён: " + _proxy.Config.Describe() + " на 127.0.0.1:" + _proxy.ActualPort);
+
+            // Telegram-прокси, если уже запущен, должен начать ходить через
+            // этот обход — иначе он останется с «напрямую» и не заработает
+            // там, где Cloudflare блокируется.
+            TgProxyHost.UpdateUpstreamSocks(UpstreamForTg(_proxy.ActualPort));
+
+            // Telegram-прокси — отдельный слушатель, не связанный с SOCKS5:
+            // он нужен, когда Telegram блокируют по адресу, и работает поверх
+            // своего релея или публичного пула CfProxy.
+            StartTgProxy(prefs);
+
+            NotifyState();
+        }
+
+        /// <summary>
+        /// Поднять Telegram MTProto-прокси, если человек его включил.
+        ///
+        /// Ошибку НЕ считаем поводом гасить обход: это независимая функция, и
+        /// «Telegram-прокси не поднялся» не должно выключать SOCKS5/VPN,
+        /// которым человек пользуется прямо сейчас.
+        /// </summary>
+        private void StartTgProxy(ISharedPreferences prefs)
+        {
+            if (!prefs.GetBoolean("tg_proxy_enabled", false)) return;
+
+            if (TgProxyHost.IsRunning)
+            {
+                LogLine("Telegram-прокси уже запущен на 127.0.0.1:" + TgProxyHost.Port);
+                return;
+            }
+
+            int port = prefs.GetInt("tg_proxy_port", TgProxyHost.DefaultPort);
+            string relay = prefs.GetString("tg_proxy_relay", "") ?? "";
+            bool cfProxy = prefs.GetBoolean("tg_proxy_cf", true);
+
+            // Апстрим через локальный SOCKS5 обхода.
+            //
+            // На Android обход — это прокси внутри VPN-сервиса, а не
+            // системный перехват. Без этого наши соединения уходят мимо
+            // обхода: проверено на телефоне — TCP:443 до Cloudflare не
+            // проходит, а на ПК с winws2 проходит. То есть без обхода пул
+            // CfProxy недоступен, и прокси «не работает» именно из-за этого.
+            //
+            // Порт движка (byedpi) предпочтительнее нашего SOCKS5: он делает
+            // ровно то же, но БЕЗ второго слоя desync. Два разреза подряд на
+            // одном соединении дают заметно больше отказов — проверено:
+            // через наш SOCKS5 пул отвечает редко, через движок напрямую —
+            // чаще. Наш SOCKS5 остаётся запасным, когда движка нет.
+            string upstream = "";
+
+            if (_engine != null && _engine.IsRunning && _engine.Port > 0)
+                upstream = "127.0.0.1:" + _engine.Port;
+            else if (_proxy != null && _proxy.IsRunning)
+                upstream = "127.0.0.1:" + _proxy.ActualPort;
+
+            string error = TgProxyHost.Start(this, port, relay.Trim(), cfProxy, upstream);
+
+            if (error != null)
+            {
+                LogLine("Telegram-прокси не запустился: " + error);
+                NotifyState();
+                return;
+            }
+
+            LogLine("Telegram-прокси включён на 127.0.0.1:" + TgProxyHost.Port +
+                    (upstream.Length > 0 ? ", апстрим через обход " + upstream : ", апстрим напрямую"));
+
+            NotifyState();
+        }
+
+        /// <summary>
+        /// Куда Telegram-прокси ходить наружу: движок, если он есть, иначе наш SOCKS5.
+        ///
+        /// Один слой desync вместо двух. Проверено на телефоне: через наш SOCKS5
+        /// (разрез) пул CfProxy отвечает редко, через движок напрямую — заметно
+        /// чаще. Оба варианта рабочие, но лишний слой только портит поток.
+        /// </summary>
+        private string UpstreamForTg(int socksPort)
+        {
+            if (_engine != null && _engine.IsRunning && _engine.Port > 0)
+                return "127.0.0.1:" + _engine.Port;
+
+            return socksPort > 0 ? "127.0.0.1:" + socksPort : "";
+        }
+
+        /// <summary>
+        /// Погасить Telegram-прокси. Безопасно при выключенном.
+        /// </summary>
+        private void StopTgProxy()
+        {
+            if (!TgProxyHost.IsRunning) return;
+
+            try { TgProxyHost.Stop(); } catch { }
+
+            LogLine("Telegram-прокси выключен");
+            NotifyState();
         }
 
         private void StopProxyMode()
         {
+            // Обхода больше нет — Telegram-прокси не должен ходить в мёртвый
+            // SOCKS5, иначе каждое соединение будет ждать таймаут.
+            TgProxyHost.UpdateUpstreamSocks("");
+
             try { if (_proxy != null) _proxy.Stop(); } catch { }
             _proxy = null;
 
+            StopTgProxy();
+
+            // Движок обязан умереть. `Destroy()` — это SIGTERM, и на телефоне
+            // ciadpi его иногда не получает: процесс оставался жив, держал
+            // порт и продолжал перехватывать трафик, а кнопка показывала
+            // «выключено». Теперь Stop() добивает SIGKILL-ом, а KillStale()
+            // подбирает остатки от прошлых запусков, у которых уже нет
+            // дескриптора.
             try { _engine.Stop(); } catch { }
+
+            int stale = CiadpiEngine.KillStale();
+
+            if (stale > 0) LogLine("добито остатков движка: " + stale);
 
             // Если поднят туннель, сервис НЕ останавливаем: он обслуживает
             // VPN, а прокси здесь был лишь предыдущим режимом. Иначе остановка
@@ -687,6 +875,7 @@ namespace AutoZapret.Android
             if (_tun != null)
             {
                 LogLine("прокси выключен (VPN продолжает работать)");
+                NotifyState();
                 return;
             }
 
@@ -696,7 +885,129 @@ namespace AutoZapret.Android
             try { StopForeground(StopForegroundFlags.Remove); } catch { }
 
             LogLine("прокси выключен");
+            NotifyState();
             StopSelf();
+        }
+
+        /// <summary>
+        /// Выбрать технику и перенести её в конфигурацию прокси.
+        ///
+        /// ПОРЯДОК ВАЖЕН И ОДИН НА ВСЁ ПРИЛОЖЕНИЕ:
+        ///   1. автоподбор под текущую сеть (если включён режим «авто»);
+        ///   2. профиль zapret, если человек его выбрал;
+        ///   3. ручная техника.
+        ///
+        /// Почему это отдельный метод. Раньше порядок был скопирован в двух
+        /// местах (VPN и «только прокси»), и в обоих профиль zapret вообще не
+        /// учитывался: человек выбирал `general (EXP)`, а сервис брал
+        /// `technique` из настроек, где стояло «Без обхода» — и обход не
+        /// включался вовсе. Снаружи это «выбрал профиль, ничего не произошло».
+        /// </summary>
+        private void ApplyTechnique(ISharedPreferences prefs, DesyncConfig config)
+        {
+            string technique = prefs.GetString("technique", DefaultTechnique);
+
+            // Явный выбор профиля ВАЖНЕЕ автоподбора.
+            //
+            // Раньше порядок был «авто → профиль → техника», и при наличии
+            // подобранного профиля сети выбор `general (EXP)` молча
+            // игнорировался: человек выбирал набор, а работал старый
+            // автоподбор. Снаружи — «выбор не действует».
+            string presetId = prefs.GetString("zapret_preset", "");
+
+            if (!string.IsNullOrEmpty(presetId))
+            {
+                ZapretPreset preset = ZapretPresets.ById(this, presetId);
+
+                if (preset != null && preset.Works)
+                {
+                    preset.ApplyTo(config);
+                    LogLine("техника: профиль zapret «" + preset.Describe() + "»");
+                    return;
+                }
+
+                if (preset != null)
+                    LogLine("профиль «" + preset.Name + "» не переносится: " + preset.Unsupported);
+            }
+
+            if (technique == "auto")
+            {
+                TuneProfile tuned = NetworkTuner.ForCurrent(this);
+
+                if (tuned != null)
+                {
+                    tuned.ApplyTo(config);
+                    LogLine("техника: авто, профиль сети — " + tuned.Describe());
+                    return;
+                }
+            }
+
+            DesyncPreset chosen = DesyncPreset.ById(technique);
+
+            chosen.ApplyTo(config);
+            LogLine("техника: " + chosen.Name);
+        }
+
+        /// <summary>
+        /// Флаги byedpi из РАЗОБРАННОЙ конфигурации, а не из имени техники.
+        ///
+        /// Зачем: профиль zapret задаёт `Fake`/`Positions` напрямую, и если
+        /// строить флаги по имени техники (`off` → пусто), движок получит
+        /// «без обхода», хотя в настройках выбран рабочий профиль. Ровно это и
+        /// было: `general (EXP)` + «Без обхода» → byedpi запускался без единого
+        /// флага и просто пересылал трафик.
+        /// </summary>
+        internal static string EngineArgsFor(DesyncConfig config)
+        {
+            if (config == null || !config.Enabled) return "";
+
+            StringBuilder args = new StringBuilder();
+
+            if (config.Fake)
+            {
+                args.Append("--fake -1 --ttl ");
+                args.Append(config.FakeTtl > 0 ? config.FakeTtl : 8);
+            }
+
+            if (config.Disorder) args.Append(" --disorder 1");
+            if (config.Oob) args.Append(" --oob 1");
+
+            // Разрез. byedpi принимает несколько `--split`, поэтому позиции
+            // передаём по одной: `--split 1 --split 5+s`.
+            string hint = config.PositionHint ?? "";
+
+            if (hint.Length > 0)
+            {
+                string mapped = ByedpiPosition(hint);
+
+                if (mapped.Length > 0) args.Append(" --split ").Append(mapped);
+                else if (config.Positions != null && config.Positions.Length > 0)
+                    foreach (int p in config.Positions) args.Append(" --split ").Append(p);
+                else args.Append(" --split 1");
+            }
+            else if (config.Positions != null)
+            {
+                foreach (int p in config.Positions) args.Append(" --split ").Append(p);
+            }
+
+            return args.ToString().Trim();
+        }
+
+        /// <summary>
+        /// Динамическая позиция winws в терминах byedpi.
+        ///
+        /// `+s` у byedpi — позиция относительно SNI, `+m` — середина имени.
+        /// Точного соответствия `midsld` у него нет, поэтому это ближайшее:
+        /// лучше резать по середине домена, чем не резать вовсе.
+        /// </summary>
+        private static string ByedpiPosition(string hint)
+        {
+            string h = hint.ToLowerInvariant();
+
+            if (h.StartsWith("sniext")) return "1+s";
+            if (h.StartsWith("midsld")) return "1+m";
+
+            return "";
         }
 
         private void StartEngineIfAvailable(ISharedPreferences prefs, int userPort)
@@ -706,9 +1017,7 @@ namespace AutoZapret.Android
                 // Движок не должен занять пользовательский порт.
                 int enginePort = userPort == 1081 ? 1082 : 1081;
 
-                string technique = prefs.GetString("technique", DefaultTechnique);
-
-                string args = EngineArgsFor(technique);
+                string args = EngineArgsFor(_proxy.Config);
 
                 // byedpi ВСЕГДА запускается с 0.0.0.0, без привязки к адресу
                 // конкретной сети.
@@ -782,28 +1091,61 @@ namespace AutoZapret.Android
             return config != null && config.Fake;
         }
 
-        /// <summary>Перевод нашей техники в флаги byedpi.</summary>
-        private static string EngineArgsFor(string technique)
+
+        /// <summary>
+        /// Чем на самом деле идёт обход — для отчёта.
+        ///
+        /// Порядок тот же, что в `ApplyTechnique`: автоподбор под сеть, затем
+        /// профиль zapret, затем ручная техника. Раньше отчёт смотрел ТОЛЬКО
+        /// `technique` из настроек, и при выбранном профиле `general (EXP)`
+        /// печатал «Без обхода» — то есть отчёт врал о том, чем идёт обход.
+        /// Это тот же класс ошибки, что три разных дефолта техники: человек
+        /// читает «Без обхода» и ищет поломку там, где всё работает.
+        /// </summary>
+        public static string DescribeTechnique(Context context, ISharedPreferences prefs)
         {
-            if (technique == "off") return "";
+            string technique = prefs.GetString("technique", DefaultTechnique);
 
-            if (technique == "split1") return "--split 1";
-            if (technique == "split2") return "--split 1+s";
-            if (technique == "multisplit") return "--split 1+s --split 5+s";
-            if (technique == "disorder") return "--disorder 1";
-            if (technique == "oob") return "--oob 1";
-            if (technique == "disorder-oob") return "--disoob 1";
-            if (technique == "fake-split") return "--fake -1 --ttl 8 --split 1+s";
-            if (technique == "fake-disorder") return "--fake -1 --ttl 8 --disorder 1";
+            // Порядок тот же, что в ApplyTechnique: явный профиль важнее
+            // автоподбора. Иначе отчёт называет не то, чем идёт обход.
+            string presetId = prefs.GetString("zapret_preset", "");
 
-            // fake8 и всё остальное: проверенная комбинация
-            return "--fake -1 --ttl 8";
+            if (!string.IsNullOrEmpty(presetId))
+            {
+                ZapretPreset preset = ZapretPresets.ById(context ?? Current, presetId);
+
+                if (preset != null)
+                {
+                    return preset.Works
+                        ? "профиль " + preset.Describe()
+                        : "профиль " + preset.Name + " (не переносится: " + preset.Unsupported + ")";
+                }
+            }
+
+            if (technique == "auto")
+                return "авто (профиль сети)";
+
+            return DesyncPreset.ById(technique).Name;
         }
 
+        /// <summary>
+        /// Остановить ВСЁ, что держит сервис: туннель, SOCKS5, движок,
+        /// Telegram-прокси. Идемпотентно, безопасно при частично поднятом.
+        ///
+        /// ПОЧЕМУ БЕЗ РАННЕГО ВЫХОДА.
+        ///   Здесь стояло `if (!_running && _tun == null) return;`, а `_running`
+        ///   поднимается ТОЛЬКО в `StartTunnel`. В режиме «только прокси»
+        ///   (`StartProxyOnly`) он остаётся false, туннеля нет — и `StopTunnel`
+        ///   возвращался на первой строке, не погасив ни SOCKS5, ни движок, ни
+        ///   сервис. Снаружи это ровно то, на что жалуются: «кнопка выключить
+        ///   не выключает обход», трафик продолжает идти, а в шторке висит
+        ///   «включено».
+        ///
+        ///   Ранний выход защищал от повторной остановки, но повторная остановка
+        ///   и так безопасна: каждое действие проверяет своё состояние.
+        /// </summary>
         private void StopTunnel()
         {
-            if (!_running && _tun == null) return;
-
             _running = false;
             IsRunning = false;
             Running = null;
@@ -822,11 +1164,20 @@ namespace AutoZapret.Android
             try { if (_proxy != null) _proxy.Stop(); } catch { }
             _proxy = null;
 
+            TgProxyHost.UpdateUpstreamSocks("");
+
+            StopTgProxy();
+
             try { _engine.Stop(); } catch { }
+
+            int stale = CiadpiEngine.KillStale();
+
+            if (stale > 0) LogLine("добито остатков движка: " + stale);
 
             try { StopForeground(StopForegroundFlags.Remove); } catch { }
 
             LogLine("VPN выключен");
+            NotifyState();
             StopSelf();
         }
 
@@ -976,9 +1327,20 @@ namespace AutoZapret.Android
             return builder.Build();
         }
 
+        /// <summary>
+        /// Строка журнала сервиса: в logcat, в файл и в окно.
+        ///
+        /// ПОЧЕМУ В ФАЙЛ ОБЯЗАТЕЛЬНО. Раньше здесь были только logcat и UI,
+        /// и в файл попадали лишь сообщения из переносимого кода (`Log.Info`).
+        /// Собственный ZIP для поддержки собирает именно файлы — то есть в нём
+        /// не было ни выбранной техники, ни запуска движка, ни причины отказа.
+        /// Человек отправлял архив, а в нём только строки прокси.
+        /// </summary>
         private static void LogLine(string line)
         {
             global::Android.Util.Log.Info("AutoZapret", line);
+
+            try { Log.Info("APP", line); } catch { }
 
             Action<string> sink = LogSink;
 

@@ -96,6 +96,20 @@ namespace AutoZapret.Proxy
         private int _port;
         private volatile string _relay = "";
         private volatile bool _cfProxy = true;
+
+        /// <summary>Один раз сообщили, что ключ выведен из 17-байтного секрета.</summary>
+        private static bool _loggedExtendedSecret;
+
+        /// <summary>
+        /// Локальный SOCKS5 обхода («127.0.0.1:1080»). Пусто — ходим напрямую.
+        ///
+        /// Нужно на Android: там обход это локальный SOCKS5, а не перехват
+        /// всей системы. Без этого наши соединения к Telegram и к CfProxy
+        /// уходят МИМО обхода — и на телефоне не работают, хотя на ПК с
+        /// winws работают. Проверено: с телефона TCP:443 до Cloudflare не
+        /// проходит вообще, с ПК (где запущен winws2) — проходит.
+        /// </summary>
+        private volatile string _upstreamSocks = "";
         private ProxyState _state = ProxyState.Stopped;
         private string _lastError;
 
@@ -111,7 +125,8 @@ namespace AutoZapret.Proxy
         // ------------------------------------------------------------------ start
 
         /// <summary>Запустить. Возвращает null при успехе, иначе текст ошибки.</summary>
-        public string Start(string host, int port, string secretHex, string relay = null, bool cfProxy = true)
+        public string Start(string host, int port, string secretHex, string relay = null, bool cfProxy = true,
+                            string upstreamSocks = null)
         {
             lock (_gate)
             {
@@ -120,6 +135,7 @@ namespace AutoZapret.Proxy
             }
 
             _cfProxy = cfProxy;
+            _upstreamSocks = (upstreamSocks ?? "").Trim();
 
             byte[] secret = ParseSecret(secretHex);
             if (secret == null) return "Секрет должен быть 32 hex-символа (16 байт)";
@@ -352,6 +368,20 @@ namespace AutoZapret.Proxy
                                    ", " + MtProtoHandshake.TagName(hs.Tag) +
                                    (hs.IsTestDc ? ", test" : ""));
 
+                // Один раз сообщаем, каким секретом расшифровался init: 16 байт
+                // (обычная схема) или 17 (dd-префикс вместе с ключом). Это
+                // объясняет, почему ссылка «работает у одного клиента и не
+                // работает у другого», и без такой строки такое поведение
+                // выглядит как случайное.
+                if (hs.EffectiveSecret != null && hs.EffectiveSecret.Length != secret.Length &&
+                    !_loggedExtendedSecret)
+                {
+                    _loggedExtendedSecret = true;
+
+                    Log.Info("PROXY", "ключ выведен из секрета с префиксом dd (17 байт) — " +
+                                      "так делает Telegram в режиме random padding");
+                }
+
                 // 3) подключаемся к Telegram по WS
                 string error;
                 ws = OpenUpstream(hs.Dc, hs.IsMedia, hs.IsTestDc, out upstreamTcp, out upstreamTls, out error);
@@ -363,27 +393,75 @@ namespace AutoZapret.Proxy
                 }
 
                 // 4) отвечаем клиенту своим init (тот же 64-байтовый формат, но с нашим ключом)
-                byte[] serverInit = MtProtoHandshake.GenerateRelayInit(hs.Dc, hs.IsMedia);
+                //
+                // Тег берём КЛИЕНТСКИЙ: Telegram будет разбирать наш поток тем
+                // же форматом длины, каким клиент размечен. Если объявить здесь
+                // intermediate, а клиент пришёл с abridged, дальше handshake
+                // ничего не работает.
+                byte[] serverInit = MtProtoHandshake.GenerateRelayInit(hs.Dc, hs.IsMedia, hs.Tag);
 
                 // Ключи направлений
                 byte[] clientToProxyKey = hs.ClientKey;
                 byte[] clientToProxyIv = hs.ClientIv;
 
                 byte[] proxyToClientKey, proxyToClientIv;
-                MtProtoHandshake.DeriveReverse(init, secret, out proxyToClientKey, out proxyToClientIv);
+                MtProtoHandshake.DeriveReverse(init, hs.EffectiveSecret ?? secret,
+                                               out proxyToClientKey, out proxyToClientIv);
 
                 // ВАЖНО: ключ к Telegram выводится из НАШЕГО init без secret,
                 // и первые 64 байта keystream уже «съедены» самим init.
                 byte[] relayKey, relayIv;
                 MtProtoHandshake.DeriveRelay(serverInit, out relayKey, out relayIv);
 
+                byte[] relayDownKey, relayDownIv;
+                MtProtoHandshake.DeriveRelayReverse(serverInit, out relayDownKey, out relayDownIv);
+
                 stream.Write(serverInit, 0, serverInit.Length);
                 stream.Flush();
 
+                // Наш init обязан уйти в туннель ПЕРВЫМ кадром.
+                //
+                // Это не протокол клиента, а протокол kws-точки Telegram: она
+                // ждёт obfuscated2-заголовок как начало потока. Эталон делает
+                // ровно это (`bridge.py:229` и `tg_ws_proxy.py:346` —
+                // `await ws.send(relay_init)`).
+                //
+                // Без этого кадра Telegram получает данные без заголовка, не
+                // может их разобрать и закрывает соединение. Снаружи: handshake
+                // прошёл, «через публичный пул CfProxy» в журнале есть, а
+                // клиент навсегда остаётся на «Соединение…».
+                if (!ws.SendBinary(serverInit, ReadTimeoutMs))
+                {
+                    Log.Warn("PROXY", "не удалось отправить init в туннель — соединение закрыто");
+                    return;
+                }
+
                 // 5) мост
-                Bridge(client, stream, ws, hs.Tag,
-                       clientToProxyKey, clientToProxyIv,
-                       proxyToClientKey, proxyToClientIv);
+                //
+                // Здесь и живёт вся криптография MTProxy, и её нельзя пропустить:
+                //   клиент -> прокси : расшифровать, зашифровать к Telegram
+                //   Telegram -> прокси : расшифровать, зашифровать к клиенту
+                //
+                // Раньше мост пересылал байты как есть. Handshake проходил,
+                // «через публичный пул CfProxy» писалось в журнал, а Telegram
+                // навсегда оставался на «Соединение…»: сервер получал шифротекст
+                // от клиента, зашифрованный ДРУГИМ ключом, и молчал.
+                //
+                // Пропуски keystream — не косметика:
+                //   * от клиента: 64 байта (его init уже израсходовал их);
+                //   * к Telegram: 64 байта (наш init тоже израсходовал);
+                //   * к клиенту и от Telegram: НЕ пропускаем — там поток
+                //     начинается с нуля.
+                using (AesCtr cltDec = new AesCtr(clientToProxyKey, clientToProxyIv))
+                using (AesCtr cltEnc = new AesCtr(proxyToClientKey, proxyToClientIv))
+                using (AesCtr tgEnc = new AesCtr(relayKey, relayIv))
+                using (AesCtr tgDec = new AesCtr(relayDownKey, relayDownIv))
+                {
+                    cltDec.Skip(MtProtoHandshake.HandshakeLen);
+                    tgEnc.Skip(MtProtoHandshake.HandshakeLen);
+
+                    Bridge(client, stream, ws, hs.Tag, cltDec, cltEnc, tgEnc, tgDec, hs.Dc);
+                }
             }
             catch (Exception ex)
             {
@@ -462,7 +540,7 @@ namespace AutoZapret.Proxy
                     string relayError;
 
                     SslStream telegram = WsTunnel.Connect(relayItem, relayDomain, 443,
-                        ConnectTimeoutMs * 2, out relayTcp, out relayError);
+                        ConnectTimeoutMs * 2, out relayTcp, out relayError, _upstreamSocks);
 
                     if (telegram != null)
                     {
@@ -586,19 +664,20 @@ namespace AutoZapret.Proxy
 
                 try
                 {
-                    candidate = new TcpClient();
-                    candidate.NoDelay = true;
+                    // Через локальный SOCKS5 обхода, если он задан. На Android
+                    // это единственный способ дойти до Cloudflare: системного
+                    // перехвата там нет.
+                    string connectError;
 
-                    IAsyncResult ar = candidate.BeginConnect(address, 443, null, null);
-                    if (!ar.AsyncWaitHandle.WaitOne(ConnectTimeoutMs))
+                    candidate = OpenTcp(address.ToString(), 443, ConnectTimeoutMs, out connectError);
+
+                    if (candidate == null)
                     {
-                        error = domain + ": таймаут TCP до " + addressKey;
+                        error = domain + ": " + connectError;
                         deadIps.Add(addressKey);
                         UpstreamRoutes.Fail(domain, true);
-                        candidate.Close();
                         continue;
                     }
-                    candidate.EndConnect(ar);
 
                     connectStage = false;
                     allConnectFailed = false;      // до TLS дошли: адрес доступен
@@ -676,9 +755,11 @@ namespace AutoZapret.Proxy
             // Пробуем только когда прямого пути нет вовсе. Если хоть один
             // шлюз Telegram ответил, а сломался TLS — это не наша блокировка,
             // и уводить трафик к чужим воркерам незачем.
+            string poolError = "";
+
             if (_cfProxy && allConnectFailed)
             {
-                WsClient pooled = TryCfProxy(dc, isMedia, path, out string poolError);
+                WsClient pooled = TryCfProxy(dc, isMedia, path, out poolError);
 
                 if (pooled != null)
                 {
@@ -687,7 +768,7 @@ namespace AutoZapret.Proxy
                     return pooled;
                 }
 
-                if (poolError.Length > 0) error = poolError;
+                Log.Warn("PROXY", "публичный пул CfProxy не сработал: " + poolError);
             }
 
             // Ни один адрес не пустил даже TCP.
@@ -696,13 +777,20 @@ namespace AutoZapret.Proxy
             // «WS не поднялся»: тут блокировка на уровне IP, и повторять
             // бессмысленно. Говорим прямо, что нужно, — иначе человек
             // бесконечно жмёт «проверить» и делает вывод «прокси сломан».
+            //
+            // Если пул тоже пробовали и он отказал — называем ОБЕ причины.
+            // Раньше общая строка затирала причину пула, и в журнале было
+            // «нужен внешний релей», хотя релей уже пробовали и он не помог.
             if (allConnectFailed && tried.Count > 0)
             {
                 error = "не отвечает ни один шлюз Telegram (" +
                         string.Join(", ", tried.ToArray()) + "): " +
-                        "kws* блокируется на уровне адреса. " +
-                        "Нужен внешний релей: Cloudflare Worker или свой сервер — " +
-                        "прямое подключение из этой сети не пройдёт";
+                        "kws* блокируется на уровне адреса";
+
+                if (poolError.Length > 0)
+                    error += ". Публичный пул CfProxy тоже не помог: " + poolError;
+                else
+                    error += ". Нужен внешний релей: Cloudflare Worker или свой сервер";
             }
 
             // Не вышло ничего — уходим в паузу, чтобы следующие соединения
@@ -717,10 +805,10 @@ namespace AutoZapret.Proxy
 
         /// <summary>
         /// Попробовать публичный пул CfProxy: TLS + WS-апгрейд к
-        /// `kws{dc}.<домен-прослойки>`.
+        /// `kws{dc}.«домен-прослойки»`.
         ///
         /// Отличия от своего релея, и оба важны:
-        ///   * НЕТ query-параметров `?host=&port=` — воркер понимает адрес
+        ///   * НЕТ query-параметров `?host=…&amp;port=…` — воркер понимает адрес
         ///     назначения по имени хоста (`kws2.` = DC 2);
         ///   * сертификат принадлежит домену прослойки, а не Telegram,
         ///     поэтому проверяется цепочка, а не имя. Требовать здесь
@@ -759,20 +847,16 @@ namespace AutoZapret.Proxy
 
                 try
                 {
-                    client = new TcpClient();
-                    client.NoDelay = true;
+                    string connectError;
 
-                    IAsyncResult ar = client.BeginConnect(host, 443, null, null);
+                    client = OpenTcp(host, 443, CfProxyPool.ProbeTimeoutMs, out connectError);
 
-                    if (!ar.AsyncWaitHandle.WaitOne(CfProxyPool.ProbeTimeoutMs))
+                    if (client == null)
                     {
-                        last = host + ": таймаут TCP";
+                        last = host + ": " + connectError;
                         CfProxyPool.MarkBad(baseDomain);
-                        client.Close();
                         continue;
                     }
-
-                    client.EndConnect(ar);
 
                     ssl = new System.Net.Security.SslStream(
                         client.GetStream(), false, GatewayCheck.ValidateRelay);
@@ -812,25 +896,95 @@ namespace AutoZapret.Proxy
             return null;
         }
 
+        /// <summary>
+        /// Открыть TCP до host:port — напрямую или через локальный SOCKS5.
+        ///
+        /// Одна точка на все соединения: прямой путь, CfProxy и релей. Иначе
+        /// легко забыть провести через обход один из них, и он «не работает»
+        /// только на телефоне — ровно то, что и случилось.
+        /// </summary>
+        private TcpClient OpenTcp(string host, int port, int timeoutMs, out string error)
+        {
+            error = null;
+
+            string socks = _upstreamSocks;
+
+            if (socks.Length > 0)
+            {
+                string proxyHost;
+                int proxyPort;
+
+                if (Socks5Client.TryParse(socks, out proxyHost, out proxyPort))
+                {
+                    TcpClient viaProxy = Socks5Client.Connect(proxyHost, proxyPort, host, port,
+                                                              timeoutMs, out error);
+
+                    if (viaProxy == null)
+                        error = host + " через обход: " + error;
+
+                    return viaProxy;
+                }
+
+                Log.Warn("PROXY", "адрес обхода не разобран: " + socks + " — подключаюсь напрямую");
+            }
+
+            TcpClient client = null;
+
+            try
+            {
+                client = new TcpClient();
+                client.NoDelay = true;
+
+                IAsyncResult ar = client.BeginConnect(host, port, null, null);
+
+                if (!ar.AsyncWaitHandle.WaitOne(timeoutMs))
+                {
+                    client.Close();
+                    error = host + ": таймаут TCP";
+                    return null;
+                }
+
+                client.EndConnect(ar);
+                return client;
+            }
+            catch (Exception ex)
+            {
+                if (client != null) { try { client.Close(); } catch { } }
+
+                error = host + ": " + ex.Message;
+                return null;
+            }
+        }
+
         /// <summary>Сколько секунд тратим на перебор всех шлюзов одного соединения.</summary>
         private const int RoutesBudgetSec = 25;
 
         // ----------------------------------------------------------------- bridge
 
         /// <summary>
-        /// Двунаправленный мост: TCP-клиент <-> WS-апстрим.
+        /// Двунаправленный мост: TCP-клиент ↔ WS-апстрим.
         ///
         /// Шифрование: клиентская сторона уже расшифрована нами (мы знаем секрет),
         /// поэтому в WS уходят «сырые» MTProto-пакеты. Обратно — так же.
         /// </summary>
         private void Bridge(TcpClient client, NetworkStream clientStream, WsClient ws, MtProtoTag tag,
-                            byte[] c2pKey, byte[] c2pIv, byte[] p2cKey, byte[] p2cIv)
+                            AesCtr cltDec, AesCtr cltEnc, AesCtr tgEnc, AesCtr tgDec, int dc)
         {
             MtProtoSplitter up = new MtProtoSplitter(tag);
-            MtProtoSplitter down = new MtProtoSplitter(tag);
 
             bool running = true;
             object gate = new object();
+
+            long startUp, startDown;
+
+            // Один раз сообщаем, что сплиттер встал: иначе журнал забьётся.
+            bool loggedStuck = false;
+
+            lock (gate)
+            {
+                startUp = Stats.BytesUp;
+                startDown = Stats.BytesDown;
+            }
 
             DateTime lastUpstreamData = DateTime.UtcNow;
 
@@ -848,10 +1002,32 @@ namespace AutoZapret.Proxy
 
                         lock (gate) Stats.BytesUp += n;
 
-                        List<byte[]> packets = up.Feed(buffer, 0, n);
+                        // Расшифровка от клиента и шифрование к Telegram — две
+                        // разные дорожки, поэтому копия: одна идёт в сплиттер
+                        // для чтения длин, другая уходит в WS.
+                        byte[] plain = new byte[n];
+                        Buffer.BlockCopy(buffer, 0, plain, 0, n);
+                        cltDec.Transform(plain, 0, n);
+
+                        byte[] cipher = (byte[])plain.Clone();
+                        tgEnc.Transform(cipher, 0, n);
+
+                        List<byte[]> packets = up.Feed(plain, cipher, n);
                         foreach (byte[] packet in packets)
                         {
                             if (!ws.SendBinary(packet, ReadTimeoutMs)) { running = false; break; }
+                        }
+
+                        // Если сплиттер копит и ничего не отдаёт — это видно в
+                        // журнале. Иначе «вверх 43 КБ, вниз 0» не отличить от
+                        // «отправили, но ответа нет»: первое чинится разбором
+                        // длин, второе — маршрутом.
+                        if (packets.Count == 0 && up.Buffered >= 4096 && !loggedStuck)
+                        {
+                            loggedStuck = true;
+
+                            Log.Warn("PROXY", "сплиттер копит без отправки: " + up.Buffered +
+                                              " Б, первые байты " + MtProtoHandshake.Hex(plain, 0, Math.Min(8, n)));
                         }
                     }
                 }
@@ -873,11 +1049,27 @@ namespace AutoZapret.Proxy
                     while (running && _running)
                     {
                         byte[] message = ws.ReceiveMessage(ReadTimeoutMs);
-                        if (message == null) break;
 
+                        if (message == null)
+                        {
+                            // Причина — в журнал. «Получили null» без причины
+                            // уже стоило нескольких часов разбора: таймаут,
+                            // обрыв и битый кадр выглядят одинаково.
+                            Log.Warn("PROXY", "туннель: " +
+                                      (ws.LastError ?? "нет данных") +
+                                      (string.IsNullOrEmpty(ws.CloseReason) ? "" : ", " + ws.CloseReason));
+                            break;
+                        }
                         lastUpstreamData = DateTime.UtcNow;
 
                         lock (gate) Stats.BytesDown += message.Length;
+
+                        // Ответ Telegram приходит зашифрованным ключом, выведенным
+                        // из перевёрнутого init, а клиент ждёт поток со своим
+                        // обратным ключом. Без этой пары преобразований клиент
+                        // видит мусор и висит на «Соединение…».
+                        tgDec.Transform(message, 0, message.Length);
+                        cltEnc.Transform(message, 0, message.Length);
 
                         clientStream.Write(message, 0, message.Length);
                         clientStream.Flush();
@@ -897,6 +1089,21 @@ namespace AutoZapret.Proxy
 
             toUpstream.Join();
             toClient.Join();
+
+            // Итог сессии — всегда. Молчание в журнале («handshake прошёл,
+            // дальше ничего») не даёт понять, где оборвалось: на клиенте, на
+            // туннеле или в крипте. Одна строка с объёмом в обе стороны
+            // отвечает на этот вопрос сразу.
+            long upBytes, downBytes;
+
+            lock (gate)
+            {
+                upBytes = Stats.BytesUp - startUp;
+                downBytes = Stats.BytesDown - startDown;
+            }
+
+            Log.Info("PROXY", "сессия DC" + dc + " закрыта: вверх " + upBytes +
+                              " Б, вниз " + downBytes + " Б");
         }
 
         // ---------------------------------------------------------------- helpers
@@ -987,6 +1194,25 @@ namespace AutoZapret.Proxy
         /// Читается на каждом новом соединении (как и секрет), поэтому уже
         /// открытые сессии не рвутся — они работают через прежний транспорт.
         /// </summary>
+        /// <summary>
+        /// Сменить локальный SOCKS5 обхода на ходу.
+        ///
+        /// Нужно, потому что обход на Android поднимается и опускается
+        /// отдельно от прокси: человек включил прокси, потом обход — и
+        /// прокси должен начать ходить через него без перезапуска.
+        /// </summary>
+        public void UpdateUpstreamSocks(string socks)
+        {
+            string value = (socks ?? "").Trim();
+
+            if (_upstreamSocks == value) return;
+
+            _upstreamSocks = value;
+
+            Log.Info("PROXY", "обход для апстрима: " +
+                              (value.Length > 0 ? value : "напрямую"));
+        }
+
         public void UpdateRelay(string relay)
         {
             string value = (relay ?? "").Trim();

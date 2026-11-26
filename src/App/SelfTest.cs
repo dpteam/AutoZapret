@@ -2787,6 +2787,49 @@ namespace AutoZapret.App
             AutoZapret.Proxy.HandshakeResult hsBad = AutoZapret.Proxy.MtProtoHandshake.Decode(init, wrongSecret);
             Check("неверный секрет отклонён", !hsBad.Ok, hsBad.Error);
 
+            // ---- секрет с префиксом dd (17 байт)
+            //
+            // Проверено на телефоне: живой Telegram с ссылкой `secret=dd<32hex>`
+            // считает ключ от 17 байт (`0xdd` + 16), и наш прокси отвечал
+            // «секрет не совпал: ссылка устарела» при полностью правильной
+            // ссылке. Тест на подготовленных данных: init, собранный ключом от
+            // 17 байт, обязан разобраться обычным 16-байтным секретом, а
+            // EffectiveSecret должен вернуться расширенным — им же считается
+            // обратное направление.
+            byte[] secretDd = new byte[17];
+            secretDd[0] = 0xDD;
+            Buffer.BlockCopy(secret, 0, secretDd, 1, 16);
+
+            byte[] initDd = BuildTestInit(secretDd, dc: 2, media: false,
+                                          tag: AutoZapret.Proxy.MtProtoTag.Padded);
+
+            AutoZapret.Proxy.HandshakeResult hsDd =
+                AutoZapret.Proxy.MtProtoHandshake.Decode(initDd, secret);
+
+            Check("dd-секрет: init от 17 байт разобран", hsDd.Ok, hsDd.Error);
+            Check("dd-секрет: тег padded",
+                hsDd.Ok && hsDd.Tag == AutoZapret.Proxy.MtProtoTag.Padded,
+                hsDd.Ok ? AutoZapret.Proxy.MtProtoHandshake.TagName(hsDd.Tag) : hsDd.Error);
+            Check("dd-секрет: EffectiveSecret расширен до 17 байт",
+                hsDd.Ok && hsDd.EffectiveSecret != null && hsDd.EffectiveSecret.Length == 17,
+                hsDd.Ok ? hsDd.EffectiveSecret.Length.ToString() : hsDd.Error);
+            Check("dd-секрет: обычный init по-прежнему на 16 байтах",
+                hs.EffectiveSecret != null && hs.EffectiveSecret.Length == 16,
+                hs.EffectiveSecret == null ? "null" : hs.EffectiveSecret.Length.ToString());
+
+            // Клиент с dd-ссылкой: тег padded, ключ от 16 байт секрета.
+            // Это ГЛАВНЫЙ случай — так работает настоящий Telegram.
+            byte[] initDd16 = BuildTestInit(secret, dc: 2, media: false,
+                                            tag: AutoZapret.Proxy.MtProtoTag.Padded);
+
+            AutoZapret.Proxy.HandshakeResult hsDd16 =
+                AutoZapret.Proxy.MtProtoHandshake.Decode(initDd16, secret);
+
+            Check("dd-тег с 16-байтным секретом разобран", hsDd16.Ok, hsDd16.Error);
+            Check("dd-тег: секрет остался 16 байт",
+                hsDd16.Ok && hsDd16.EffectiveSecret != null && hsDd16.EffectiveSecret.Length == 16,
+                hsDd16.Ok ? hsDd16.EffectiveSecret.Length.ToString() : hsDd16.Error);
+
             Check("неверный секрет: причина названа",
                 hsBad.Reject == AutoZapret.Proxy.HandshakeReject.Secret,
                 hsBad.Reject.ToString());
@@ -2827,6 +2870,124 @@ namespace AutoZapret.App
             Check("чужой вход: мусор распознан",
                 !hsNoise.Ok && hsNoise.Reject != AutoZapret.Proxy.HandshakeReject.None,
                 hsNoise.Error);
+
+            // ---- криптография моста: два направления и пропуск keystream
+            //
+            // Самая дорогая ошибка в MTProxy: переслать поток, не перешифровав
+            // его. Handshake проходит, клиент навсегда остаётся на
+            // «Соединение…», и ни одна строка в журнале не говорит, что дело
+            // в крипте. Поэтому проверяем круговой путь на подготовленных
+            // данных, а не «на живой сети».
+            byte[] relayInit = AutoZapret.Proxy.MtProtoHandshake.GenerateRelayInit(dc: 2, isMedia: false);
+
+            byte[] upKey, upIv, downKey, downIv;
+            AutoZapret.Proxy.MtProtoHandshake.DeriveRelay(relayInit, out upKey, out upIv);
+            AutoZapret.Proxy.MtProtoHandshake.DeriveRelayReverse(relayInit, out downKey, out downIv);
+
+            Check("ключ к Telegram не совпал с обратным",
+                !ByteEquals(upKey, downKey), "ok");
+
+            byte[] payload = new byte[200];
+            new Random(21).NextBytes(payload);
+
+            byte[] encUp;
+            using (AutoZapret.Proxy.AesCtr toRelay = new AutoZapret.Proxy.AesCtr(upKey, upIv))
+            {
+                toRelay.Skip(64);
+
+                encUp = (byte[])payload.Clone();
+                toRelay.Transform(encUp, 0, encUp.Length);
+            }
+
+            bool relayRoundTrip;
+
+            // Telegram читает так же: ключ и iv из нашего init, первые 64 байта
+            // keystream израсходованы самим init.
+            using (AutoZapret.Proxy.AesCtr telegramSide = new AutoZapret.Proxy.AesCtr(upKey, upIv))
+            {
+                telegramSide.Skip(64);
+                telegramSide.Transform(encUp, 0, encUp.Length);
+
+                relayRoundTrip = ByteEquals(encUp, payload);
+            }
+
+            Check("мост: поток к Telegram расшифровывается его ключом", relayRoundTrip, "ok");
+
+            // Обратное направление: Telegram шифрует перевёрнутым ключом и
+            // БЕЗ пропуска, мы расшифровываем тем же.
+            byte[] reply = new byte[128];
+            new Random(22).NextBytes(reply);
+
+            byte[] fromTelegram = (byte[])reply.Clone();
+
+            using (AutoZapret.Proxy.AesCtr telegramSide = new AutoZapret.Proxy.AesCtr(downKey, downIv))
+            {
+                telegramSide.Transform(fromTelegram, 0, fromTelegram.Length);
+            }
+
+            bool replyRoundTrip;
+
+            using (AutoZapret.Proxy.AesCtr fromRelay = new AutoZapret.Proxy.AesCtr(downKey, downIv))
+            {
+                fromRelay.Transform(fromTelegram, 0, fromTelegram.Length);
+                replyRoundTrip = ByteEquals(fromTelegram, reply);
+            }
+
+            Check("мост: ответ Telegram расшифровывается", replyRoundTrip, "ok");
+
+            // Пропуск обязателен и обязателен ровно в двух направлениях:
+            // без него первый же байт данных «съест» байты init, и поток
+            // развалится на первом пакете.
+            byte[] a1 = new byte[32];
+            byte[] a2 = new byte[32];
+
+            using (AutoZapret.Proxy.AesCtr skip64 = new AutoZapret.Proxy.AesCtr(upKey, upIv))
+            using (AutoZapret.Proxy.AesCtr noSkip = new AutoZapret.Proxy.AesCtr(upKey, upIv))
+            {
+                skip64.Skip(64);
+                skip64.Transform(a1, 0, a1.Length);
+                noSkip.Transform(a2, 0, a2.Length);
+
+                Check("мост: пропуск 64 байт меняет keystream", !ByteEquals(a1, a2), "ok");
+            }
+
+            // ---- тег relay-init обязан повторять клиентский
+            //
+            // Telegram разбирает НАШ поток тем форматом длины, который объявлен
+            // в нашем init. Если клиент пришёл с abridged, а мы объявили
+            // intermediate, сервер прочитает длину не там и промолчит.
+            foreach (AutoZapret.Proxy.MtProtoTag wanted in new[]
+                     {
+                         AutoZapret.Proxy.MtProtoTag.Abridged,
+                         AutoZapret.Proxy.MtProtoTag.Intermediate,
+                         AutoZapret.Proxy.MtProtoTag.Padded
+                     })
+            {
+                byte[] relayTagged = AutoZapret.Proxy.MtProtoHandshake.GenerateRelayInit(2, false, wanted);
+
+                // Расшифровываем хвост тем же ключом, что и Telegram: первые
+                // 56 байт keystream израсходованы, читаем следующие 8.
+                byte[] tk = new byte[32];
+                Buffer.BlockCopy(relayTagged, 8, tk, 0, 32);
+                byte[] tiv = new byte[16];
+                Buffer.BlockCopy(relayTagged, 40, tiv, 0, 16);
+
+                byte[] tail = new byte[8];
+                Buffer.BlockCopy(relayTagged, 56, tail, 0, 8);
+
+                using (AutoZapret.Proxy.AesCtr ctr = new AutoZapret.Proxy.AesCtr(tk, tiv))
+                {
+                    ctr.Skip(56);
+                    ctr.Transform(tail, 0, 8);
+                }
+
+                string gotTag = AutoZapret.Proxy.MtProtoHandshake.Hex(tail, 0, 4);
+                string wantTag = wanted == AutoZapret.Proxy.MtProtoTag.Abridged ? "efefefef"
+                               : wanted == AutoZapret.Proxy.MtProtoTag.Padded ? "dddddddd"
+                               : "eeeeeeee";
+
+                Check("relay-init: тег " + wantTag + " передан", gotTag == wantTag, gotTag);
+            }
 
             // ---- обратный ключ: расшифровка того, что мы зашифровали
             byte[] fwdKey, fwdIv;
@@ -2898,7 +3059,9 @@ namespace AutoZapret.App
             byte[] tail = new byte[8];
             byte[] tagBytes = tag == AutoZapret.Proxy.MtProtoTag.Abridged
                 ? AutoZapret.Proxy.MtProtoHandshake.TagAbridged
-                : AutoZapret.Proxy.MtProtoHandshake.TagIntermediate;
+                : tag == AutoZapret.Proxy.MtProtoTag.Padded
+                    ? AutoZapret.Proxy.MtProtoHandshake.TagPadded
+                    : AutoZapret.Proxy.MtProtoHandshake.TagIntermediate;
             Buffer.BlockCopy(tagBytes, 0, tail, 0, 4);
 
             int dcValue = media ? -dc : dc;

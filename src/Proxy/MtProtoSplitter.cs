@@ -9,17 +9,32 @@ namespace AutoZapret.Proxy
     /// Зачем: Telegram-сервер ожидает один MTProto-пакет на один WS-фрейм.
     /// Если слать поток как есть, часть пакетов склеится и сервер их не разберёт.
     ///
+    /// ПОЧЕМУ ДВА БУФЕРА (и почему это не оптимизация, а условие работы).
+    ///   Длина пакета лежит ВНУТРИ шифрованного потока, то есть в открытом виде
+    ///   её не видно: AES-CTR шифрует и префикс длины тоже. Значит разбирать
+    ///   границы можно только по РАСШИФРОВАННЫМ данным, а отправлять дальше
+    ///   нужно ШИФРОВАННЫЕ. Отсюда две параллельные дорожки одинаковой длины:
+    ///   `plain` — для чтения длин, `cipher` — то, что реально уходит.
+    ///
+    ///   Раньше сплиттер получал только один поток (шифрованный) и «находил»
+    ///   в нём длины — то есть резал случайные байты. Снаружи это выглядело
+    ///   как «Telegram показывает Соединение… и никогда не подключается»,
+    ///   при полностью успешном handshake.
+    ///
     /// Форматы длины (из refs/tg-ws-proxy, bridge.py:98-135):
-    ///   abridged:      первый байт; 0x7F/0xFF => длина в 3 байтах * 4, иначе (b & 0x7F) * 4
-    ///   intermediate:  int32 LE & 0x7FFFFFFF
-    ///   padded:        int32 LE & 0x7FFFFFFF
+    ///   abridged:      первый байт; 0x7F/0xFF => длина в 3 байтах * 4, иначе (b &amp; 0x7F) * 4
+    ///   intermediate:  int32 LE &amp; 0x7FFFFFFF
+    ///   padded:        int32 LE &amp; 0x7FFFFFFF
     ///
     /// Особый случай: quick-ack бит 0x80 в первом байте НЕ должен ломать разбор.
     /// </summary>
     public sealed class MtProtoSplitter
     {
         private readonly MtProtoTag _tag;
-        private readonly List<byte> _buffer = new List<byte>(8192);
+
+        private readonly List<byte> _plain = new List<byte>(8192);
+        private readonly List<byte> _cipher = new List<byte>(8192);
+
         private bool _disabled;
 
         public MtProtoSplitter(MtProtoTag tag)
@@ -28,23 +43,33 @@ namespace AutoZapret.Proxy
         }
 
         /// <summary>
-        /// Добавляет данные и возвращает готовые пакеты (может быть пусто).
+        /// Добавить данные и получить готовые пакеты (может быть пусто).
+        ///
+        /// plain  — расшифрованные данные (по ним читаются длины);
+        /// cipher — те же данные, но зашифрованные (их и отправляем).
+        /// Длины обязаны совпадать: это одна и та же порция потока.
         /// </summary>
-        public List<byte[]> Feed(byte[] data, int offset, int count)
+        public List<byte[]> Feed(byte[] plain, byte[] cipher, int count)
         {
             List<byte[]> packets = new List<byte[]>();
-            if (data == null || count <= 0) return packets;
+
+            if (plain == null || cipher == null || count <= 0) return packets;
 
             for (int i = 0; i < count; i++)
-                _buffer.Add(data[offset + i]);
+            {
+                _plain.Add(plain[i]);
+                _cipher.Add(cipher[i]);
+            }
 
             if (_disabled)
             {
-                if (_buffer.Count > 0)
+                if (_cipher.Count > 0)
                 {
-                    packets.Add(_buffer.ToArray());
-                    _buffer.Clear();
+                    packets.Add(_cipher.ToArray());
+                    _cipher.Clear();
+                    _plain.Clear();
                 }
+
                 return packets;
             }
 
@@ -52,7 +77,7 @@ namespace AutoZapret.Proxy
 
             while (true)
             {
-                int remaining = _buffer.Count - pos;
+                int remaining = _plain.Count - pos;
                 if (remaining <= 0) break;
 
                 int headerLen;
@@ -61,15 +86,10 @@ namespace AutoZapret.Proxy
                 if (!TryReadLength(pos, remaining, out headerLen, out payloadLen))
                     break;   // нужно больше данных
 
-                if (payloadLen < 0)
+                if (payloadLen <= 0)
                 {
-                    // длина 0 или мусор: прекращаем нарезку, дальше пропускаем как есть
-                    _disabled = true;
-                    break;
-                }
-
-                if (payloadLen == 0)
-                {
+                    // длина 0 или мусор: нарезка больше не имеет смысла —
+                    // отдаём остаток как есть, чтобы не потерять данные.
                     _disabled = true;
                     break;
                 }
@@ -77,22 +97,49 @@ namespace AutoZapret.Proxy
                 if (remaining < headerLen + payloadLen) break;   // пакет ещё не целиком
 
                 byte[] packet = new byte[headerLen + payloadLen];
-                _buffer.CopyTo(pos, packet, 0, packet.Length);
+                _cipher.CopyTo(pos, packet, 0, packet.Length);
                 packets.Add(packet);
 
                 pos += packet.Length;
             }
 
-            if (pos > 0) _buffer.RemoveRange(0, pos);
+            if (pos > 0)
+            {
+                _plain.RemoveRange(0, pos);
+                _cipher.RemoveRange(0, pos);
+            }
+
             return packets;
         }
+
+        /// <summary>
+        /// Старый вариант «один поток»: годится только для уже открытых данных
+        /// (так его использует selftest). В рабочем мосте нужен вариант с двумя
+        /// буферами, иначе длины читаются из шифротекста.
+        /// </summary>
+        public List<byte[]> Feed(byte[] data, int offset, int count)
+        {
+            if (data == null || count <= 0) return new List<byte[]>();
+
+            byte[] slice = new byte[count];
+            Buffer.BlockCopy(data, offset, slice, 0, count);
+
+            return Feed(slice, slice, count);
+        }
+
+        /// <summary>Сколько байт накоплено и не отдано (для диагностики).</summary>
+        public int Buffered { get { return _plain.Count; } }
 
         /// <summary>Отдаёт остаток буфера (при закрытии соединения).</summary>
         public byte[] Flush()
         {
-            if (_buffer.Count == 0) return new byte[0];
-            byte[] rest = _buffer.ToArray();
-            _buffer.Clear();
+            if (_cipher.Count == 0) return new byte[0];
+
+            byte[] rest = _cipher.ToArray();
+
+            _cipher.Clear();
+            _plain.Clear();
+
             return rest;
         }
 
@@ -105,7 +152,7 @@ namespace AutoZapret.Proxy
             {
                 if (available < 1) return false;
 
-                int first = _buffer[pos];
+                int first = _plain[pos];
 
                 // quick-ack: бит 0x80 не влияет на длину
                 int lenByte = first & 0x7F;
@@ -113,7 +160,7 @@ namespace AutoZapret.Proxy
                 if (lenByte == 0x7F)
                 {
                     if (available < 4) return false;
-                    int words = _buffer[pos + 1] | (_buffer[pos + 2] << 8) | (_buffer[pos + 3] << 16);
+                    int words = _plain[pos + 1] | (_plain[pos + 2] << 8) | (_plain[pos + 3] << 16);
                     headerLen = 4;
                     payloadLen = words * 4;
                     return true;
@@ -127,8 +174,8 @@ namespace AutoZapret.Proxy
             // intermediate / padded
             if (available < 4) return false;
 
-            int raw = _buffer[pos] | (_buffer[pos + 1] << 8) |
-                      (_buffer[pos + 2] << 16) | (_buffer[pos + 3] << 24);
+            int raw = _plain[pos] | (_plain[pos + 1] << 8) |
+                      (_plain[pos + 2] << 16) | (_plain[pos + 3] << 24);
             raw &= 0x7FFFFFFF;
 
             headerLen = 4;

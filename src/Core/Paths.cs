@@ -123,6 +123,30 @@ namespace AutoZapret.Core
         }
 
         /// <summary>
+        /// Задать каталог данных явно.
+        ///
+        /// Нужно там, где `AppDomain.BaseDirectory` и `LocalApplicationData`
+        /// указывают не туда. На Android оба бесполезны: APK — это zip, писать
+        /// в него нельзя, а «локальные данные приложения» приходится брать у
+        /// `Context.FilesDir`, который знает только Activity.
+        ///
+        /// Поэтому приложение на старте говорит: «данные здесь», и весь
+        /// переносимый код (прокси, кэш, настройки) работает без правок.
+        /// </summary>
+        public static void SetDataDir(string dataDir)
+        {
+            if (string.IsNullOrEmpty(dataDir)) return;
+
+            lock (Gate)
+            {
+                _baseDir = EnsureTrailingSlash(AppDomain.CurrentDomain.BaseDirectory);
+                _dataDir = EnsureTrailingSlash(dataDir);
+                _portable = false;
+                _resolved = true;
+            }
+        }
+
+        /// <summary>
         /// Заставить службу работать в portable-режиме: данные рядом с exe.
         ///
         /// Зачем: служба стартует от LocalSystem, и её %LocalAppData% — это

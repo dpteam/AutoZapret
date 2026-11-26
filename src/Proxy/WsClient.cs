@@ -54,6 +54,16 @@ namespace AutoZapret.Proxy
         public string CloseReason { get; private set; }
 
         /// <summary>
+        /// Почему последнее чтение не дало кадра.
+        ///
+        /// `ReceiveMessage` возвращает null в трёх разных случаях — таймаут,
+        /// обрыв и битый кадр, — а снаружи они выглядят одинаково («прокси
+        /// молчит»). Без этой строки разбор упирается в гадание, поэтому
+        /// причина записывается здесь и попадает в журнал.
+        /// </summary>
+        public string LastError { get; private set; }
+
+        /// <summary>
         /// Выполняет апгрейд. Возвращает клиент или null (с текстом ошибки).
         /// </summary>
         public static WsClient Connect(Stream stream, string host, string path, int timeoutMs, out string error)
@@ -147,6 +157,14 @@ namespace AutoZapret.Proxy
                 if (frame == null)
                 {
                     _closed = true;
+
+                    // Причина обязана быть: «получили null» одинаково выглядит
+                    // при таймауте, обрыве и битом кадре, а чинятся они
+                    // по-разному. Раньше здесь стояла тишина, и разбор
+                    // «прокси молчит» упирался в гадание.
+                    if (string.IsNullOrEmpty(LastError))
+                        LastError = "кадр не получен: таймаут или обрыв";
+
                     return null;
                 }
 
@@ -204,7 +222,11 @@ namespace AutoZapret.Proxy
             fin = true;
 
             byte[] header = ReadExact(2, timeoutMs);
-            if (header == null) return null;
+            if (header == null)
+            {
+                LastError = "таймаут или обрыв на заголовке кадра";
+                return null;
+            }
 
             fin = (header[0] & 0x80) != 0;
             opcode = header[0] & 0x0F;
@@ -228,6 +250,7 @@ namespace AutoZapret.Proxy
             if (length > MaxMessageLen)
             {
                 _closed = true;
+                LastError = "кадр больше предела: " + length + " Б";
                 return null;
             }
 
@@ -239,7 +262,11 @@ namespace AutoZapret.Proxy
             }
 
             byte[] payload = length == 0 ? new byte[0] : ReadExact((int)length, timeoutMs);
-            if (payload == null) return null;
+            if (payload == null)
+            {
+                LastError = "обрыв на теле кадра (" + length + " Б)";
+                return null;
+            }
 
             if (mask != null)
                 for (int i = 0; i < payload.Length; i++)

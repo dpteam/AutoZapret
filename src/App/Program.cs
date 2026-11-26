@@ -84,6 +84,15 @@ namespace AutoZapret.App
             if (HasFlag(args, "--update-lists")) return Diag.DiagCommand.RunUpdateLists(args);
             if (HasFlag(args, "--fakes")) return Diag.DiagCommand.RunFakes(args);
             if (HasFlag(args, "--test-proxy")) return Diag.DiagCommand.RunTestProxy(args);
+
+        // Сквозная проверка Telegram-прокси настоящим запросом: поднимает
+        // прокси, шлёт req_pq и ждёт resPQ. Handshake для этого не годится —
+        // он зелёный и при нерабочем маршруте.
+        if (HasFlag(args, "--tg-roundtrip")) return Diag.TgProxyProbe.Run(args);
+
+        // Только транспорт: SOCKS5 -> TLS -> WS -> init -> req_pq. Отдельно
+        // от полной проверки, чтобы красный результат сразу указывал на слой.
+        if (HasFlag(args, "--ws-direct")) return Diag.TgProxyProbe.RunWsDirect(args);
             if (HasFlag(args, "--cfproxy")) return Diag.DiagCommand.RunCfProxy(args);
             if (HasFlag(args, "--check-updates")) return Diag.DiagCommand.RunCheckUpdates(args);
             if (HasFlag(args, "--hosts")) return Diag.DiagCommand.RunHosts(args);
